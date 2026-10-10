@@ -5,7 +5,7 @@ import time
 import cv2
 import numpy as np
 
-from . import detect_color
+from . import detect_color, segment
 from .config import CUBE_SIZE_MM
 
 SHEET_W_MM, SHEET_H_MM = 215.9, 279.4  # US Letter
@@ -30,12 +30,16 @@ def _yaw_deg(points_mm):
     return float((yaw + 45) % 90 - 45)
 
 
-def build_scene(frame_bgr, localizer, detector=detect_color.detect, names=None):
+def build_scene(frame_bgr, localizer, detector=segment.detect, names=None):
     """Returns (scene dict, pose, detections). scene is None when the sheet isn't visible."""
     pose = localizer.locate(frame_bgr)
     if pose is None:
         return None, None, []
-    detections = detector(frame_bgr, names, roi_mask=sheet_roi_mask(pose, frame_bgr.shape))
+    if detector is segment.detect:
+        tags = {k: v["corners_mm"] for k, v in localizer.spec["tags"].items()}
+        detections = detector(frame_bgr, names, pose=pose, tags=tags)
+    else:  # colour-threshold fallback
+        detections = detector(frame_bgr, names, roi_mask=sheet_roi_mask(pose, frame_bgr.shape))
     # A cube's blob is its top face plus visible sides; its centroid sits near the cube's
     # mid-height point, so map it at half the cube height.
     mid_h = CUBE_SIZE_MM / 2 if CUBE_SIZE_MM else 0.0
@@ -66,7 +70,7 @@ def annotate(frame_bgr, scene, pose, detections):
         return out
     corners = pose.to_image([(0, 0), (SHEET_W_MM, 0), (SHEET_W_MM, SHEET_H_MM), (0, SHEET_H_MM)])
     cv2.polylines(out, [corners.astype(np.int32)], True, (0, 255, 0), 2)
-    colors = {"red_cube": (0, 0, 255), "blue_cube": (255, 0, 0), "yellow_cube": (0, 220, 255)}
+    colors = {"red_cube": (0, 0, 255), "blue_cube": (255, 0, 0), "yellow_cube": (0, 220, 255), "orange_cube": (0, 140, 255)}
     for d, o in zip(detections, scene["objects"]):
         col = colors.get(d.name, (255, 255, 255))
         cv2.drawContours(out, [d.contour.reshape(-1, 1, 2)], -1, col, 3)

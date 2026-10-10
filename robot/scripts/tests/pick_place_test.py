@@ -33,7 +33,10 @@ def look(cam, loc, tag):
     cv2.imwrite(str(out), annotate(frame, scene, pose, dets))
     if scene is None:
         raise SkillError("camera can't see the sheet (need 2+ tags)")
-    return {o["name"]: o for o in scene["objects"]}
+    merged = [o["name"] for o in scene["objects"] if o["score"] < 0]
+    if merged:
+        print(f"  note: {merged} look like touching objects merged together; they won't be picked")
+    return {o["name"]: o for o in scene["objects"] if o["score"] >= 0}
 
 
 def main():

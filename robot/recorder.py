@@ -16,7 +16,7 @@ from robot.perception.scene import build_scene
 
 from .skills import moving_jaw_dir
 
-COLORS = {"red_cube": (0, 0, 255), "blue_cube": (255, 0, 0), "yellow_cube": (0, 220, 255)}
+COLORS = {"red_cube": (0, 0, 255), "blue_cube": (255, 0, 0), "yellow_cube": (0, 220, 255), "orange_cube": (0, 140, 255)}
 
 
 class RunRecorder:
