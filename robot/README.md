@@ -14,9 +14,9 @@ Working today, driven from the command line:
 - Every run saves an annotated photo per phase plus an `events.jsonl`.
 
 **Not built yet:** the HTTP API on `:8770` that `brain/` calls (`/place`, `/pick`, `/hover`,
-`/home`, `/status`), and the `stub.py` fake backend. See [Open questions](#open-questions)
-before building them, because three decisions in README section 3 conflict with what this
-code does today.
+`/home`, `/status`), and the `stub.py` fake backend. See [Decisions](#decisions-robot-owner-2026-10-10)
+before building them: the robot's cell naming is transposed from README section 3 and the
+shared contract, so the API needs an agreed convention or a translation at its boundary.
 
 ## Running
 
@@ -91,24 +91,35 @@ Measure them, do not guess, because they feed straight into position accuracy.
 The placement correction is the weakest link and the first thing to improve. Re-run
 `auto_calibrate` to fit it on all 9 cells.
 
-## Open questions
+## Decisions (robot owner, 2026-10-10)
 
-This module predates README sections 3 and 5, so three things need a team decision. Each one
-is a silent failure if nobody looks at it.
+These were open questions because this module predates README sections 3 and 5. The robot
+owner has decided all three for the robot side.
 
-1. **Cell naming is transposed.** README section 3 says columns are A to C left to right and
-   rows are 1 to 3 front to back, so `A1` is front-left. This code reads the letter as the
-   **row** and the number as the **column**, with row A nearest the arm. `cell_center("B3")`
-   therefore means middle-right here and middle-back in the README. The labels match, the
-   cells do not, and only the diagonal agrees. One of the two has to change.
-2. **Cube size.** README section 3 mandates 1.25 in (31.75 mm) matte wooden cubes in four
-   colors. This code is calibrated for 48 mm foam cubes in three colors, which sets the grasp
-   width, the stack heights and the parallax correction, and it has no green detector. Moving
-   to 1.25 in cubes needs a re-measure of `CUBE_SIZE_MM` plus a colour recalibration.
-3. **Taught poses versus IK.** README section 3 says taught poses, no IK. This module does
-   full IK with a fitted calibration and hits 4.4 mm, which should clear the 8 of 10 arm
-   gate. Keeping IK means the arm reaches arbitrary mm targets instead of only taught cells.
-   Dropping it means rebuilding `place` on recorded poses.
+1. **Cell naming: the robot keeps its own convention.** The letter is the **row** (A nearest
+   the arm, C farthest) and the number is the **column** (1 to 3 left to right, seen from
+   above with the arm at the top):
+
+   ```
+   arm side -> A1  A2  A3
+               B1  B2  B3
+               C1  C2  C3
+   ```
+
+   **Integration warning.** README section 3, `shared/config.py` and `perception/cells.py`
+   (decision D1) use the transposed convention: letter = column, number = row. Only A1, B2
+   and C3 name the same square in both. A cell name passed from perception or brain to this
+   module unchanged lands on the wrong square for the other six cells, with no error. Before
+   the robot API (`:8770`) carries cell names between modules, the team has to agree on one
+   of: perception and shared adopt this convention, or the robot API translates at its
+   boundary. The `shared/` contract is frozen, so changing it needs team sign-off.
+2. **Cubes: 48 mm foam cubes**, not the 1.25 in wooden cubes in README section 3.
+   `CUBE_SIZE_MM`, the grasp, stack heights and colour calibration are set for them.
+3. **Motion: IK**, not taught poses. The arm reaches any sheet-mm target from the fitted
+   calibration (`calibration/`), so placement is not limited to recorded cells.
+
+Still open: where the robot's working set of blocks comes from (a tray with one slot per
+colour, a supply area beside the grid the camera searches, or blocks that start on the grid).
 
 ## Dependencies
 
