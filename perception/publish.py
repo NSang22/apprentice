@@ -241,7 +241,8 @@ async def run(args: argparse.Namespace) -> None:
         for frame_id, frame in enumerate(frames):
             started = time.monotonic()
             state, last_pose, detections = build_grid_state(frame, localizer, last_pose, frame_id)
-            broadcast(publisher.clients, json.dumps(state.to_dict()))
+            # "source" is an extra key GridState.from_dict ignores; brain.server records it as provenance.
+            broadcast(publisher.clients, json.dumps({**state.to_dict(), "source": "perception"}))
             if args.debug:
                 cv2.imshow("Apprentice perception", annotate(frame, last_pose, detections, state))
                 if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
