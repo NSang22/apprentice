@@ -1,6 +1,7 @@
 // Apprentice monitor. Reads SessionState (README 5.4) from the brain on ws :8766 and draws it.
 // Plain script, no dependencies: the 2D monitor must work even if nothing else loads.
-// The 3D view (view3d.js, three.js) loads lazily and is optional.
+// The 3D view (view3d.js, three.js) is the main view; it loads lazily, and the 2D board takes
+// over (key 2, or automatically) if WebGL or the module is unavailable.
 // Keys: Space sends {"cmd":"start"} (ready screen), R sends {"cmd":"reset"}, 2 / 3 switch views.
 (function () {
   "use strict";
@@ -39,7 +40,7 @@
     passUntil: 0,
     passText: null,
     boardKey: null,
-    view: params.get("view") === "3d" ? "3d" : "2d",
+    view: params.get("view") === "2d" ? "2d" : "3d",
     view3d: null,
     showKey: null,
     showFailed: null,
@@ -328,7 +329,10 @@
     app.boardKey = key;
     const faultVisible = !!(s && phase === "running" && s.faultCell &&
       (s.mode === "human" ? isMistake(s) : s.verdict !== "PASS" && s.verdict !== "WAITING"));
-    if (app.view3d && app.view === "3d") guard(app.view3d.update, s, phase, side(), faultVisible);
+    if (app.view3d && app.view === "3d") {
+      guard(app.view3d.update, { s, phase, side: side(), faultVisible, arrow: s ? arrowFrom(s) : null,
+                                 activity: s ? robotActivity(s) : null });
+    }
 
     const W = G.x0 * 2 + G.pitch * 3 - 16, H = G.y0 + G.pitch * 3 + 90;
     const parts = [`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Board">`];
@@ -425,6 +429,7 @@
     const prev = app.state;
     if (prev && prev.lessonId !== s.lessonId) app.passUntil = 0;   // brain restarted on another lesson
     if (s.verdict === "PASS") {
+      if (app.view3d && app.view === "3d") guard(app.view3d.pass, s.expectedCell || (s.expected && s.expected.cell));
       app.passUntil = Date.now() + PASS_HOLD_MS;
       app.passText = s.hintText || "Nice! That's right.";
       setTimeout(render, PASS_HOLD_MS + 50);
@@ -441,14 +446,14 @@
         const mod = await import("./view3d.js");
         app.view3d = mod.createView3D(ui.board3d);
       } catch (err) {
-        console.warn("[ui] 3D view unavailable, staying in 2D:", err);
-        app.view = "2d";
-        ui.board3d.hidden = true;
-        ui.board2d.hidden = false;
-        return;
+        console.warn("[ui] 3D view unavailable, using the 2D board:", err);
+        app.view3dFailed = true;
+        view = "2d";
       }
     }
+    if (view === "3d" && app.view3dFailed) view = "2d";
     app.view = view;
+    ui.stage.classList.toggle("view-3d", view === "3d");
     ui.board2d.hidden = view !== "2d";
     ui.board3d.hidden = view !== "3d";
     if (app.view3d) app.view3d.setActive(view === "3d");
@@ -522,7 +527,7 @@
     } else if (phase === "complete") {
       title = "All done!";
       board = s.board;
-      text = s.hintText || "";
+      text = (s.hintText || "").replace(/^All done!\s*/, "");   // the title already says it
       key = "Press R to start again";
     } else {
       title = "Let's sort it out together";
@@ -540,5 +545,5 @@
 
   render();
   connect();
-  if (app.view === "3d") setView("3d");
+  setView(app.view);
 })();

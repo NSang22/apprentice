@@ -17,8 +17,16 @@ byte ranges so clips can seek.
 
 Keys (nobody clicks during the demo): `Space` starts the lesson from the ready screen (only
 when the board is clear), `R` starts over (the brain ends the session and opens a new one),
-`2` / `3` (or `v`) switch the board between 2D and 3D. Each key shows a short confirmation.
-URL options: `?view=3d`, `?ws=ws://<host>:8766`.
+`2` / `3` (or `v`) switch the board between 2D and 3D. Space and R show a short confirmation.
+URL options: `?view=2d`, `?ws=ws://<host>:8766`.
+
+The 3D table is the main view: wood tabletop, the grid sheet with AprilTag corners and labels
+from the student's side, rounded 48 mm cubes with shadows (new cubes drop in, removed ones fade),
+a bobbing ghost with a light column, an arc arrow at hint level 2, amber floor glow on mistakes,
+and a low-poly arm on the robot side that reaches while `robot_status` is placing/fixing (or
+pointing) and rests otherwise. Ready and complete turn the structure slowly; a lesson finish
+bursts confetti. Everything is drawn at runtime with the vendored three.js, no network. If WebGL
+or the module fails, the 2D board takes over automatically.
 
 ## What it shows
 

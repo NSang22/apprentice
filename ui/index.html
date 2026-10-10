@@ -15,39 +15,47 @@
   </header>
 
   <main class="stage" id="stage" data-phase="nodata">
-    <section class="left">
+    <!-- The board fills the stage: 3D by default, 2D on key 2 or when WebGL is unavailable. -->
+    <div class="board" id="board">
+      <div class="board2d" id="board2d"></div>
+      <div class="board3d" id="board3d" hidden></div>
+    </div>
+
+    <section class="hud-top">
       <div class="banner" id="banner" hidden></div>
       <div class="kicker" id="kicker"></div>
       <h1 class="instruction" id="instruction">Waiting for the camera</h1>
       <div class="subline" id="subline"></div>
-
-      <div class="feedback" id="feedback" data-kind="waiting">
-        <div class="feedback-icon" id="feedback-icon"></div>
-        <div class="feedback-body">
-          <div class="feedback-title" id="feedback-title"></div>
-          <div class="feedback-text" id="feedback-text"></div>
-        </div>
-      </div>
-
-      <div class="robot-panel" id="robot-panel" hidden>
-        <div class="robot-icon" id="robot-icon" aria-hidden="true"></div>
-        <div class="robot-body">
-          <div class="robot-status" id="robot-status"></div>
-          <div class="robot-text" id="robot-text"></div>
-        </div>
-      </div>
-
-      <div class="showme" id="showme" hidden>
-        <div class="showme-label">Watch how it was done</div>
-        <video id="showme-video" muted playsinline preload="auto"></video>
-      </div>
     </section>
 
-    <section class="right">
-      <div class="board" id="board">
-        <div class="board2d" id="board2d"></div>
-        <div class="board3d" id="board3d" hidden></div>
+    <div class="showme" id="showme" hidden>
+      <div class="showme-label">Watch how it was done</div>
+      <video id="showme-video" muted playsinline preload="auto"></video>
+    </div>
+
+    <section class="hud-bottom">
+      <div class="hud-cards">
+        <div class="feedback" id="feedback" data-kind="waiting">
+          <div class="feedback-icon" id="feedback-icon"></div>
+          <div class="feedback-body">
+            <div class="feedback-title" id="feedback-title"></div>
+            <div class="feedback-text" id="feedback-text"></div>
+          </div>
+        </div>
+
+        <div class="robot-panel" id="robot-panel" hidden>
+          <div class="robot-icon" id="robot-icon" aria-hidden="true"></div>
+          <div class="robot-body">
+            <div class="robot-status" id="robot-status"></div>
+            <div class="robot-text" id="robot-text"></div>
+          </div>
+        </div>
       </div>
+
+      <footer class="progress">
+        <div class="strip-row"><div class="strip-label">You</div><div class="strip" id="strip-human"></div></div>
+        <div class="strip-row"><div class="strip-label">Robot</div><div class="strip" id="strip-robot"></div></div>
+      </footer>
     </section>
 
     <div class="screen" id="screen" data-kind="ready" hidden>
@@ -60,11 +68,6 @@
     <div class="toast" id="toast" hidden></div>
     <div class="reconnect" id="reconnect" hidden>Reconnecting to Apprentice...</div>
   </main>
-
-  <footer class="progress">
-    <div class="strip-row"><div class="strip-label">You</div><div class="strip" id="strip-human"></div></div>
-    <div class="strip-row"><div class="strip-label">Robot</div><div class="strip" id="strip-robot"></div></div>
-  </footer>
 
   <script src="config.js"></script>
   <script src="app.js"></script>
