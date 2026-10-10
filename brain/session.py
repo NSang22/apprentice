@@ -56,6 +56,7 @@ READY, RUNNING, COMPLETE, STOPPED = "ready", "running", "complete", "stopped"
 
 CLEAR_BOARD = "Please clear the board to start."
 READY_TO_START = "Ready to start."
+WAITING_FOR_CAMERA = "Waiting for the camera."  # ready, but no stable board seen yet
 
 ROBOT_NEEDS_HAND = "The robot needs a hand. Please check the board, then restart the lesson."
 
@@ -120,7 +121,7 @@ class Session:
         self.robot_moves = 0
         self.expected_cell: Optional[str] = lesson.steps[0].cell
         self.expected_level: Optional[int] = lesson.steps[0].level
-        self.hint_text = READY_TO_START
+        self.hint_text = WAITING_FOR_CAMERA
         self._activity: Optional[str] = None  # robot_status while a robot command is in flight
         self._fixing = False
         self._hover_board: Optional[Board] = None

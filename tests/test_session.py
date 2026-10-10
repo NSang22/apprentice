@@ -451,3 +451,14 @@ def test_start_is_refused_until_the_board_is_clear(tmp_path):
     s.on_board(empty_board())
     assert s.start() is True and s.phase == "running"
     assert robot.calls == [("home",)] and states[-1].robot_status == "checking"
+
+
+def test_ready_hint_waits_for_the_camera_then_reports_the_board(tmp_path):
+    from brain.session import CLEAR_BOARD, READY_TO_START, WAITING_FOR_CAMERA
+    j = Journal("s-ready", "human", directory=tmp_path)
+    s = Session(LESSON, "human", j)
+    assert s.state().phase == "ready" and s.state().hint_text == WAITING_FOR_CAMERA
+    s.on_board(board(A1=["red"]))
+    assert s.state().hint_text == CLEAR_BOARD
+    s.on_board(empty_board())
+    assert s.state().hint_text == READY_TO_START
