@@ -283,6 +283,8 @@ class Progress:
 
 
 MODES = ["human", "robot"]
+PHASES = ["ready", "running", "complete", "stopped"]
+ROBOT_STATUSES = ["idle", "placing", "checking", "fixing", "homing", "stopped"]
 
 
 @dataclass
@@ -298,6 +300,14 @@ class SessionState:
     hint_text: Optional[str] = None
     show_me: Optional[ShowMe] = None
     progress: Progress = field(default_factory=Progress)
+    # Added for the UI. All optional with defaults, so older producers and consumers still work.
+    lesson_title: Optional[str] = None
+    final_board: Optional[Board] = None
+    human_side: Optional[str] = None       # "row1" or "row3", brain/settings.py HUMAN_SIDE
+    phase: str = "running"                 # one of PHASES
+    expected_cell: Optional[str] = None    # slot that needs a cube, from the latest check
+    expected_level: Optional[int] = None
+    robot_status: str = "idle"             # one of ROBOT_STATUSES
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -312,6 +322,13 @@ class SessionState:
             "show_me": None if self.show_me is None else self.show_me.to_dict(),
             "progress": self.progress.to_dict(),
             "board": copy_board(self.board),
+            "lesson_title": self.lesson_title,
+            "final_board": None if self.final_board is None else copy_board(self.final_board),
+            "human_side": self.human_side,
+            "phase": self.phase,
+            "expected_cell": self.expected_cell,
+            "expected_level": self.expected_level,
+            "robot_status": self.robot_status,
         }
 
     @classmethod
@@ -329,6 +346,17 @@ class SessionState:
             _check_cell(fault_cell, f"{w}.fault_cell")
         expected = d.get("expected_step")
         show_me = d.get("show_me")
+        phase = d.get("phase", "running")
+        if phase not in PHASES:
+            raise SchemaError(f"{w}: invalid phase {phase!r}")
+        robot_status = d.get("robot_status", "idle")
+        if robot_status not in ROBOT_STATUSES:
+            raise SchemaError(f"{w}: invalid robot_status {robot_status!r}")
+        expected_cell = d.get("expected_cell")
+        if expected_cell is not None:
+            _check_cell(expected_cell, f"{w}.expected_cell")
+        final_board = d.get("final_board")
+        expected_level = d.get("expected_level")
         return cls(
             mode=mode,
             lesson_id=str(_req(d, "lesson_id", w)),
@@ -341,4 +369,11 @@ class SessionState:
             hint_text=d.get("hint_text"),
             show_me=None if show_me is None else ShowMe.from_dict(show_me),
             progress=Progress.from_dict(d.get("progress") or {}),
+            lesson_title=d.get("lesson_title"),
+            final_board=None if final_board is None else copy_board(validate_board(final_board)),
+            human_side=d.get("human_side"),
+            phase=phase,
+            expected_cell=expected_cell,
+            expected_level=None if expected_level is None else int(expected_level),
+            robot_status=robot_status,
         )
