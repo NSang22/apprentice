@@ -6,14 +6,14 @@
     "wrist_flex": -8.01
   },
   "sheet_to_base": {
-    "theta_deg": 109.24,
-    "tx_mm": 127.96,
-    "ty_mm": -57.31,
+    "theta_deg": 109.817,
+    "tx_mm": 183.93,
+    "ty_mm": -82.52,
     "mirror_y": true
   },
-  "table_z_mm": -7.79,
+  "table_z_mm": -17.85,
   "tip_extension_mm": 9.06,
-  "fit_rms_mm": 1.8,
-  "n_points": 16,
-  "mode": "full"
+  "fit_rms_mm": 2.43,
+  "n_points": 4,
+  "mode": "quick"
 }
