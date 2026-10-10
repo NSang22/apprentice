@@ -9,12 +9,23 @@ nadir, so we slide it toward the camera centre by h / camera_height.
 """
 
 import json
+import time
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
 
-from .config import CAMERA_HEIGHT_MM, SHEET_SPEC
+from .config import CAMERA_HEIGHT_MM, ROOT, SHEET_SPEC
+
+# The camera is fixed, so the sheet only needs one good view. With only the 2 bottom tags (top
+# ones lost to glare or covered by blocks) the pixel->mm map extrapolated the top corners 20-50 px
+# off and the camera position estimate was off by 130-150 mm: cubes measured 7-9 mm toward the
+# arm (runs 17:35, 17:40). So remember the last 3+ tag view (also across runs) and, with fewer
+# tags, reuse it, nudged by how the visible tags moved.
+CAMERA_CACHE = ROOT / "outputs" / "camera_pose.json"
+MOVED_PX = 20.0          # sheet corners shifting more than this in the image = camera or sheet moved
+GOOD_TAGS = 3
+MAX_FIT_PX = 8.0        # tags under glare are detected ~3-5 px noisily (17:24, 17:27); real moves show far more
 
 
 def cell_center(name, spec_path=SHEET_SPEC):
@@ -59,6 +70,13 @@ class SheetLocalizer:
         self.tags = {int(k): np.float64(v["corners_mm"]) for k, v in self.spec["tags"].items()}
         self.camera_height_mm = camera_height_mm
         self.min_tags = min_tags
+        self.cache = None
+        self.warned = False
+        if CAMERA_CACHE.exists():
+            try:
+                self.cache = json.loads(CAMERA_CACHE.read_text())
+            except (ValueError, OSError):
+                self.cache = None
         dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, self.spec["dictionary"]))
         params = cv2.aruco.DetectorParameters()
         params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
@@ -87,10 +105,52 @@ class SheetLocalizer:
         ids = sorted(found)
         img = np.concatenate([found[i] for i in ids])
         obj = np.concatenate([self.tags[i] for i in ids])
-        H, _ = cv2.findHomography(img, obj)
+        if len(ids) >= GOOD_TAGS:
+            H, _ = cv2.findHomography(img, obj)
+            camera_xyz = self._camera_centre(H, img, obj, frame_bgr.shape) if self.camera_height_mm else None
+            self._remember(H, found, camera_xyz)
+        else:
+            H, camera_xyz = self._from_memory(found)
+            if H is None:  # nothing trusted to fall back on: a 2-tag fit, flagged once
+                H, _ = cv2.findHomography(img, obj)
+                camera_xyz = self._camera_centre(H, img, obj, frame_bgr.shape) if self.camera_height_mm else None
+                if not self.warned:
+                    print(f"  (only {len(ids)} sheet tags visible and no earlier 3-tag view of this setup: positions "
+                          "in the upper rows may be off by 10+ mm. Get 3 tags in view once to fix this.)")
+                    self.warned = True
         resid = cv2.perspectiveTransform(img.reshape(-1, 1, 2), H).reshape(-1, 2) - obj
-        camera_xyz = self._camera_centre(H, img, obj, frame_bgr.shape) if self.camera_height_mm else None
         return SheetPose(H, ids, float(np.linalg.norm(resid, axis=1).mean()), camera_xyz)
+
+    def _remember(self, H, found, camera_xyz):
+        self.cache = {"H": H.tolist(), "tags_px": {str(i): c.tolist() for i, c in found.items()},
+                      "camera_xyz": None if camera_xyz is None else camera_xyz.tolist(), "time": time.time()}
+        try:
+            CAMERA_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            CAMERA_CACHE.write_text(json.dumps(self.cache, indent=1))
+        except OSError:
+            pass
+
+    def _from_memory(self, found):
+        """With too few tags for a reliable fit: reuse the last 3+ tag view, nudged by how the
+        visible tags moved since (a 4-parameter similarity fit, well defined even from one tag)."""
+        if not self.cache or "tags_px" not in self.cache:
+            return None, None
+        common = [i for i in found if str(i) in self.cache["tags_px"]]
+        if not common:
+            return None, None
+        then = np.concatenate([np.float64(self.cache["tags_px"][str(i)]) for i in common])
+        now = np.concatenate([found[i] for i in common])
+        S, _ = cv2.estimateAffinePartial2D(then, now)
+        if S is None:
+            return None, None
+        moved = float(np.abs(now - then).max())
+        fit = float(np.abs(then @ S[:, :2].T + S[:, 2] - now).max())
+        if moved > MOVED_PX or fit > MAX_FIT_PX:  # the camera or sheet really moved: don't trust the old view
+            return None, None
+        S3 = np.vstack([S, [0, 0, 1]])
+        H = np.float64(self.cache["H"]) @ np.linalg.inv(S3)  # now-pixels -> then-pixels -> sheet mm
+        cam = self.cache.get("camera_xyz")
+        return H, (None if cam is None else np.float64(cam))
 
     def _camera_centre(self, H, img, obj, shape):
         """Camera centre in sheet mm, from the tags plus the measured lens height.
