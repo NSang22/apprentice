@@ -1,0 +1,25 @@
+{
+  "lesson_id": "staircase-v1",
+  "title": "Staircase",
+  "source_video": null,
+  "steps": [
+    {"color": "red", "cell": "A1", "level": 0, "t_video": null, "narration": "Start with red in the front-left corner."},
+    {"color": "green", "cell": "B1", "level": 0, "t_video": null, "narration": "Green goes front-middle."},
+    {"color": "blue", "cell": "C1", "level": 0, "t_video": null, "narration": "Blue goes front-right."},
+    {"color": "blue", "cell": "A1", "level": 1, "t_video": null, "narration": "Stack blue on the red."},
+    {"color": "red", "cell": "B1", "level": 1, "t_video": null, "narration": "Stack red on the green."},
+    {"color": "yellow", "cell": "A1", "level": 2, "t_video": null, "narration": "Finish with yellow on top of the left tower."}
+  ],
+  "final_board": {
+    "A1": ["red", "blue", "yellow"],
+    "A2": [],
+    "A3": [],
+    "B1": ["green", "red"],
+    "B2": [],
+    "B3": [],
+    "C1": ["blue"],
+    "C2": [],
+    "C3": []
+  },
+  "gate": null
+}

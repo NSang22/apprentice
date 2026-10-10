@@ -255,11 +255,9 @@ python -m perception.setup_gui --camera-index 1
 # size in perception/setup_gui.py, or need another copy to print)
 python -m perception.generate_grid_pdf
 
-# Brain only, no hardware
-=======
-# Setup (Python 3.11+), run from the repo root
-pip install websockets pytest
-pytest                                   # unit tests
+# Tests (Python 3.11+, run from the repo root)
+pip install pytest
+pytest
 
 # Fake perception feed (GridState on ws :8765 at ~10 Hz)
 python -m brain.fake_feed --script tests/scripts/staircase_clean.json            # add --loop to repeat
@@ -268,11 +266,19 @@ python -m brain.fake_feed --script tests/scripts/jitter_and_hands.json --seed 1 
 python -m brain.fake_feed --interactive  # type: place red B2 | remove B2 | hands | arm | jitter | clear | show | quit
 python -m tests.listen                   # second terminal: print each GridState on one line
 
-# Brain only, no hardware (not built yet)
->>>>>>> Stashed changes
+# Live check: stabilizer + checker against the feed (second terminal; prints step, verdict, hint)
+python -m brain.check_live --lesson tests/fixtures/staircase-v1.json
+
+# Brain server, no hardware: stabilizer + session + journal, SessionState on ws :8766
+# Journal: data/sessions/<session_id>.jsonl. Hint directions follow HUMAN_SIDE in brain/settings.py.
+# Human mode: start the feed, then the server (second terminal)
 python -m brain.fake_feed --script tests/scripts/staircase_with_mistake.json
-python -m robot.stub
-python -m brain.server --lesson lessons/staircase-v1.json --mode human
+python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode human               # hints stop at level 3
+python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode human --robot fake  # level 4 hover (fake arm)
+# Robot mode: fake arm plus an in-process feed of its board, one command, no feed needed
+python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode robot --robot fake --grid sim
+python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode robot --robot fake --grid sim --fake-wrong-on 2  # 2nd place lands on the wrong cell, robot fixes it
+python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode robot --robot fake --grid sim --fake-wrong-on 2 --fake-wrong-on 3 --fake-wrong-on 4  # hits the retry cap and stops
 
 # Extract a lesson from an expert video (offline)
 python -m brain.extractor --video videos/expert_staircase.mp4 --out lessons/staircase-v1.json
@@ -280,7 +286,7 @@ python -m brain.extractor --video videos/expert_staircase.mp4 --out lessons/stai
 # Full system
 # Jetson:  python -m perception.publish
 # Robot:   python -m robot.api
-# Laptop:  python -m brain.server --grid ws://<jetson-ip>:8765 --robot http://localhost:8770
+# Laptop:  python -m brain.server --lesson lessons/staircase-v1.json --mode robot --grid ws://<jetson-ip>:8765 --robot http://localhost:8770
 # Monitor: open ui at http://localhost:<ui-port>
 ```
 
