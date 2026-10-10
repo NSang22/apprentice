@@ -16,9 +16,12 @@ import time
 
 import cv2
 import numpy as np
-import requests
 
 from .config import BLOCK_COLORS, ROOT
+
+# `requests` is imported only when the model is actually called: robot.perception must stay
+# importable with just OpenCV and numpy (perception/publish.py reuses it; see
+# tests/test_perception_publish.py).
 
 API = "https://generativelanguage.googleapis.com/v1beta"
 TIMEOUT_S = 30
@@ -56,7 +59,7 @@ def available():
 _model_cache = {}
 
 
-def _model(key):
+def _model(key, requests):
     if os.environ.get("GEMINI_MODEL"):
         return os.environ["GEMINI_MODEL"]
     if "name" not in _model_cache:
@@ -106,9 +109,13 @@ def name_segments(frame_bgr, contours):
                                 {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(jpg).decode()}}]}],
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0},
     }
+    try:
+        import requests
+    except ImportError:
+        raise NamerUnavailable("the 'requests' package isn't installed") from None
     t = time.time()
     try:
-        model = _model(key)
+        model = _model(key, requests)
         r = requests.post(f"{API}/models/{model}:generateContent", params={"key": key}, json=body, timeout=TIMEOUT_S)
         r.raise_for_status()
         text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
