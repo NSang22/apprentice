@@ -247,14 +247,6 @@ apprentice/
 ## 8. How to run (fill in as modules land)
 
 ```bash
-# Camera setup and calibration (run once per camera placement, and again at the demo table)
-pip install -r requirements.txt
-python -m perception.setup_gui --camera-index 1
-
-# Regenerate the printable AprilTag grid sheet (only needed if you change cell/tag
-# size in perception/setup_gui.py, or need another copy to print)
-python -m perception.generate_grid_pdf
-
 # Brain only, no hardware
 python -m brain.fake_feed --script tests/scripts/staircase_with_mistake.json
 python -m robot.stub
