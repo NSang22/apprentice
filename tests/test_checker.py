@@ -6,6 +6,7 @@ import pytest
 
 from brain.checker import CheckResult, check, direction, expected_board, slot_diff
 from brain.fake_feed import make_frame, parse_script
+from brain.settings import HUMAN_SIDES
 from brain.stabilizer import Stabilizer
 from shared.schemas import Lesson, Verdict, empty_board
 
@@ -138,16 +139,39 @@ def test_check_only_reads_its_inputs():
 @pytest.mark.parametrize(
     "src,dst,row1_text,row3_text",
     [
-        ("A1", "B1", "one cell right", "one cell left"),
-        ("B1", "A1", "one cell left", "one cell right"),
+        ("A1", "B1", "one cell left", "one cell right"),
+        ("B1", "A1", "one cell right", "one cell left"),
         ("B1", "B2", "one cell away from you", "one cell toward you"),
         ("B2", "B1", "one cell toward you", "one cell away from you"),
-        ("C3", "A1", "two cells left and two cells toward you", "two cells right and two cells away from you"),
+        ("C3", "A1", "two cells right and two cells toward you", "two cells left and two cells away from you"),
     ],
 )
 def test_direction_both_sides(src, dst, row1_text, row3_text):
     assert direction(src, dst, "row1") == row1_text
     assert direction(src, dst, "row3") == row3_text
+
+
+# Where column A and the nearest row sit for a human on each side of the printed sheet.
+SIDE_LAYOUT = {
+    "row3": {"column_a": "left", "nearest_row": "3"},   # opposite the arm
+    "row1": {"column_a": "right", "nearest_row": "1"},  # the arm's side
+}
+
+
+def test_side_layout_covers_every_human_side():
+    assert set(SIDE_LAYOUT) == set(HUMAN_SIDES)
+
+
+@pytest.mark.parametrize("side", HUMAN_SIDES)
+def test_direction_matches_where_the_human_stands(side):
+    a_side = SIDE_LAYOUT[side]["column_a"]
+    other = "right" if a_side == "left" else "left"
+    near = SIDE_LAYOUT[side]["nearest_row"]
+    far = "1" if near == "3" else "3"
+    assert direction("B2", "A2", side) == f"one cell {a_side}"  # toward column A
+    assert direction("B2", "C2", side) == f"one cell {other}"
+    assert direction(f"B{far}", f"B{near}", side) == "two cells toward you"
+    assert direction(f"B{near}", f"B{far}", side) == "two cells away from you"
 
 
 def test_direction_defaults_to_settings_side():

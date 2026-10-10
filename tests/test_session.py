@@ -344,6 +344,35 @@ def test_robot_stops_when_wrong_cube_is_buried(tmp_path):
     assert not any(c[0] == "pick" for c in robot.calls)
 
 
+def test_robot_stops_instead_of_picking_a_stacked_cube(tmp_path):
+    h, robot = robot_harness(tmp_path)
+    while h.session.step_index < 3:
+        h.feed(robot.board)
+    # Step 3 (blue on A1, level 1) is placed but lands as the wrong color, on top of the stack.
+    assert robot.board["A1"] == ["red", "blue"]
+    robot.board["A1"][1] = "yellow"
+    n_calls = len(robot.calls)
+    h.feed(robot.board)
+    s = h.session
+    v = h.events("verdict")[-1]["data"]
+    assert (v["verdict"], v["fault_cell"], v["fault_level"]) == ("WRONG_COLOR", "A1", 1)
+    assert s.phase == STOPPED and "stacked" in s.error
+    assert robot.calls[n_calls:] == [("home",)]  # homes, never picks
+    st = s.state()
+    assert st.hint_text == "The robot needs a hand. It can't lift the yellow cube off the stack on A1. Please take it off, then restart the lesson."
+    assert st.progress.robot[3] == "error"
+    end = h.events("session_end")[-1]["data"]
+    assert end["outcome"] == "robot_stopped" and "level 1" in end["reason"]
+
+
+def test_robot_still_picks_a_wrong_cube_at_level_0(tmp_path):
+    h, robot = robot_harness(tmp_path)
+    h.feed(robot.board)  # places step 0, red on A1
+    robot.board["A1"][0] = "blue"
+    h.feed(robot.board)
+    assert ("pick", "A1", 0) in robot.calls and h.session.phase == RUNNING
+
+
 class HomeFails(FakeRobot):
     def home(self):
         self.calls.append(("home",))

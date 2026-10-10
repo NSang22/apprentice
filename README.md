@@ -246,17 +246,11 @@ apprentice/
 
 ## 8. How to run (fill in as modules land)
 
+Run everything from the repo root. The default demo lesson is `lessons/sample-flat-v1.json` (5 cubes, all on the board, red, blue and yellow). Commands that take `--lesson` use it when you leave the flag out.
+
 ```bash
-# Camera setup and calibration (run once per camera placement, and again at the demo table)
-pip install -r requirements.txt
-python -m perception.setup_gui --camera-index 1
-
-# Regenerate the printable AprilTag grid sheet (only needed if you change cell/tag
-# size in perception/setup_gui.py, or need another copy to print)
-python -m perception.generate_grid_pdf
-
-# Tests (Python 3.11+, run from the repo root)
-pip install pytest
+# Tests (Python 3.11+)
+pip install -r requirements.txt pytest
 pytest
 
 # Fake perception feed (GridState on ws :8765 at ~10 Hz)
@@ -267,27 +261,36 @@ python -m brain.fake_feed --interactive  # type: place red B2 | remove B2 | hand
 python -m tests.listen                   # second terminal: print each GridState on one line
 
 # Live check: stabilizer + checker against the feed (second terminal; prints step, verdict, hint)
+# The scripted feeds build the staircase, so pass its lesson. With --interactive, the default lesson works.
 python -m brain.check_live --lesson tests/fixtures/staircase-v1.json
+python -m brain.check_live
 
 # Brain server, no hardware: stabilizer + session + journal, SessionState on ws :8766
 # Journal: data/sessions/<session_id>.jsonl. Hint directions follow HUMAN_SIDE in brain/settings.py.
-# Human mode: start the feed, then the server (second terminal)
+# Human mode: start a feed, then the server (second terminal)
 python -m brain.fake_feed --script tests/scripts/staircase_with_mistake.json
 python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode human               # hints stop at level 3
 python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode human --robot fake  # level 4 hover (fake arm)
 # Robot mode: fake arm plus an in-process feed of its board, one command, no feed needed
-python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode robot --robot fake --grid sim
-python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode robot --robot fake --grid sim --fake-wrong-on 2  # 2nd place lands on the wrong cell, robot fixes it
-python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode robot --robot fake --grid sim --fake-wrong-on 2 --fake-wrong-on 3 --fake-wrong-on 4  # hits the retry cap and stops
+python -m brain.server --mode robot --robot fake --grid sim                                 # default demo lesson
+python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2               # 2nd place lands on the wrong cell, robot fixes it
+python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --fake-wrong-on 3 --fake-wrong-on 4  # hits the retry cap and stops
 
-# Extract a lesson from an expert video (offline)
-python -m brain.extractor --video videos/expert_staircase.mp4 --out lessons/staircase-v1.json
+# Robot module on its own (LeRobot venv, see robot/README.md and docs/SETUP_NOTES.md)
+python -m robot.scripts.tests.scene_snapshot robot/samples/overhead_02.png   # offline, no hardware
+python -m robot.scripts.tests.pick_place_test red_cube B2                     # moves the arm
+```
 
-# Full system
-# Jetson:  python -m perception.publish
-# Robot:   python -m robot.api
-# Laptop:  python -m brain.server --lesson lessons/staircase-v1.json --mode robot --grid ws://<jetson-ip>:8765 --robot http://localhost:8770
-# Monitor: open ui at http://localhost:<ui-port>
+Planned, not built yet:
+
+```bash
+python -m brain.extractor --video videos/expert_staircase.mp4 --out lessons/staircase-v1.json  # planned: lesson from an expert video
+python -m perception.publish   # planned: real GridState on ws :8765
+python -m robot.api            # planned: robot HTTP API on :8770
+# planned full system: perception.publish + robot.api, then the brain (this flag already works;
+# with --robot http, arm_clear also requires the robot's GET /status at_home)
+#   python -m brain.server --mode robot --robot http://localhost:8770 --grid ws://<perception-host>:8765
+# planned: the monitor UI on SessionState ws :8766
 ```
 
 ---
