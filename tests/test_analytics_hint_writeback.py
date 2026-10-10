@@ -53,7 +53,11 @@ def test_hints_file_from_real_data_only(tmp_path):
 
     # Sessions that stood on different sides: no safe direction, so name the cells.
     mixed = [replace(s, human_side="row1") if s.session == "S6" else s for s in SESSIONS]
-    assert build_hints("L", mixed, ATTEMPTS, min_n=3)["steps"][0]["watch_out"] == "Most people put this in B2. It goes in A2."
+    assert build_hints("L", mixed, ATTEMPTS, min_n=3)["steps"][0]["watch_out"] == "Most people put this cube on B2. It goes on A2."
+
+    # A two-part move (A2 -> B3 is right and toward you) also names the cells.
+    diagonal = [replace(a, fault_cell="B3") if a.fault_cell == "B2" else a for a in ATTEMPTS]
+    assert build_hints("L", SESSIONS, diagonal, min_n=3)["steps"][0]["watch_out"] == "Most people put this cube on B3. It goes on A2."
 
     # Below min_n: 8 failed attempts < 9 and level 1 has 5 < 9 next tries -> no step qualifies, no file.
     assert build_hints("L", SESSIONS, ATTEMPTS, min_n=9) is None

@@ -36,10 +36,10 @@ FIRST_TRY_BELOW = 0.5   # start at level 2 only for steps whose first-try rate i
 MIN_GAIN = 0.25         # ... and where level 2 fixes at least this much more often than level 1
 MAX_START_LEVEL = 2
 
-# One fixed template per verdict; WRONG_CELL falls back to cell names when no direction is safe.
+# One fixed template per verdict. WRONG_CELL names the cells when no single-move direction is safe.
 TEMPLATES = {
     "WRONG_CELL": "Most people put this cube {direction} of its spot.",
-    "WRONG_CELL_NAMED": "Most people put this in {fault}. It goes in {expected}.",
+    "WRONG_CELL_NAMED": "Most people put this cube on {fault}. It goes on {expected}.",
     "WRONG_COLOR": "Easy to mix up: this step needs a {color} cube.",
     "WRONG_LEVEL": "Most people stack this one at the wrong height. It goes {level}.",
     "EXTRA": "Most people leave an extra cube on {fault}. This step adds just one cube.",
@@ -48,14 +48,17 @@ TEMPLATES = {
 
 
 def _direction(expected: str, fault: str, sides: set) -> Optional[str]:
-    """The brain's wording for where the cube went, or None when it is not safe to use."""
+    """The brain's wording for where the cube went, or None when it is not safe to use:
+    sessions on different sides, no brain helper, or a two-part move ("... and ...")."""
     if brain_direction is None or len(sides) != 1 or None in sides:
         return None
     try:
         words = brain_direction(expected, fault, next(iter(sides)))
     except (ValueError, KeyError, IndexError):
         return None
-    return words or None
+    if not words or " and " in words:
+        return None
+    return words
 
 
 def watch_out(verdict: str, rows: list[Attempt], sides: set) -> Optional[str]:
