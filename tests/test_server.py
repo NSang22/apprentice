@@ -1,7 +1,9 @@
 import asyncio
 import json
+import time
 from pathlib import Path
 
+import pytest
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 
@@ -9,7 +11,8 @@ from brain.fake_robot import FakeRobot
 from brain.journal import Journal, read_journal
 from brain.server import BrainServer
 from brain.session import COMPLETE, STOPPED, Session
-from shared.config import CELLS
+from brain.settings import ROBOT_STATUS_MAX_AGE_S
+from shared.config import CELLS, STABLE_FRAMES
 from shared.schemas import GridState, Lesson, empty_board
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -89,3 +92,89 @@ def test_bad_frames_are_skipped_and_journaled_sparingly(tmp_path):
     journal.close()
     notes = [l for l in read_journal(journal.path) if l["kind"] == "note"]
     assert [n["data"]["count"] for n in notes] == [1, 101]
+
+
+# ---------------------------------------------------------------- robot /status gates arm_clear
+
+
+class StatusOnly:
+    """Just the status() half of a robot client, with a reply the test can change."""
+
+    def __init__(self, reply):
+        self.reply = reply
+
+    def status(self):
+        return dict(self.reply)
+
+
+def frame(arm_clear=True, frame_id=0):
+    b = empty_board()
+    b["A1"] = ["red"]
+    return GridState(t=0.0, board=b, arm_clear=arm_clear, hands_clear=True,
+                     confidence={c: 1.0 for c in CELLS}, frame_id=frame_id)
+
+
+def gated_server(tmp_path, at_home, age_s=0.0):
+    journal = Journal("s-test", "human", directory=tmp_path)
+    server = BrainServer(Session(LESSON, "human", journal), journal, robot_status=StatusOnly({}))
+    server.at_home, server.at_home_t = at_home, time.monotonic() - age_s
+    return server
+
+
+def test_without_robot_status_arm_clear_passes_through(tmp_path):
+    server, _, _ = make_server(tmp_path, mode="human")
+    assert server.gate_arm(frame()).arm_clear is True
+    assert server.gate_arm(frame(arm_clear=False)).arm_clear is False
+
+
+def test_robot_at_home_and_fresh_keeps_arm_clear(tmp_path):
+    assert gated_server(tmp_path, at_home=True).gate_arm(frame()).arm_clear is True
+
+
+def test_robot_away_from_home_clears_arm_clear(tmp_path):
+    assert gated_server(tmp_path, at_home=False).gate_arm(frame()).arm_clear is False
+
+
+def test_stale_robot_status_counts_as_not_home(tmp_path):
+    server = gated_server(tmp_path, at_home=True, age_s=ROBOT_STATUS_MAX_AGE_S + 0.5)
+    assert server.gate_arm(frame()).arm_clear is False
+
+
+def test_perception_arm_not_clear_wins_even_when_robot_is_home(tmp_path):
+    assert gated_server(tmp_path, at_home=True).gate_arm(frame(arm_clear=False)).arm_clear is False
+
+
+def test_never_any_status_reply_means_not_home(tmp_path):
+    journal = Journal("s-test", "human", directory=tmp_path)
+    server = BrainServer(Session(LESSON, "human", journal), journal, robot_status=StatusOnly({}))
+    assert server.gate_arm(frame()).arm_clear is False
+
+
+def test_stabilizer_only_settles_once_the_robot_is_home(tmp_path):
+    server = gated_server(tmp_path, at_home=False)
+    assert [server.accept(frame(frame_id=i)) for i in range(STABLE_FRAMES * 3)] == [None] * (STABLE_FRAMES * 3)
+    server.at_home, server.at_home_t = True, time.monotonic()
+    out = [server.accept(frame(frame_id=i)) for i in range(STABLE_FRAMES)]
+    assert out[:-1] == [None] * (STABLE_FRAMES - 1) and out[-1]["A1"] == ["red"]
+
+
+@pytest.mark.parametrize(
+    "reply,expected",
+    [
+        ({"ok": True, "busy": False, "at_home": True, "last_error": None}, True),
+        ({"ok": True, "busy": True, "at_home": False, "last_error": None}, False),
+        ({"ok": False, "error": "GET /status: timed out"}, False),
+        ({"ok": True}, False),  # no at_home field: unknown is never home
+    ],
+)
+def test_poll_robot_status_reads_at_home(tmp_path, reply, expected):
+    server = gated_server(tmp_path, at_home=not expected, age_s=100.0)
+
+    async def poll_briefly():
+        task = asyncio.create_task(server.poll_robot_status(StatusOnly(reply), hz=200.0))
+        await asyncio.sleep(0.1)
+        task.cancel()
+
+    asyncio.run(poll_briefly())
+    assert server.at_home is expected
+    assert time.monotonic() - server.at_home_t < ROBOT_STATUS_MAX_AGE_S

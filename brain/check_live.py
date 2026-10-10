@@ -20,6 +20,7 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 from brain.checker import check
+from brain.settings import DEMO_LESSON
 from brain.stabilizer import Stabilizer
 from shared.config import GRID_WS_PORT
 from shared.schemas import GridState, Lesson, SchemaError, Verdict
@@ -61,11 +62,15 @@ async def run(url: str, lesson: Lesson) -> None:
             await asyncio.sleep(RETRY_S)
 
 
-def main() -> None:
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--lesson", default="tests/fixtures/staircase-v1.json")
+    p.add_argument("--lesson", default=str(DEMO_LESSON))
     p.add_argument("--url", default=f"ws://localhost:{GRID_WS_PORT}")
-    args = p.parse_args()
+    return p
+
+
+def main() -> None:
+    args = parser().parse_args()
     lesson = Lesson.from_dict(json.loads(Path(args.lesson).read_text()))
     try:
         asyncio.run(run(args.url, lesson))

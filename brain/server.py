@@ -1,7 +1,7 @@
 """Brain server: grid feed -> stabilizer -> session -> journal, SessionState out to the UI.
 
+    python -m brain.server --mode robot --robot fake --grid sim       # default demo lesson
     python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode human
-    python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode robot --robot fake --grid sim
 
 Reads GridState from --grid (perception or brain.fake_feed on ws :8765) and broadcasts
 SessionState JSON on ws :8766 to every connected UI. A UI that connects late gets the
@@ -11,6 +11,10 @@ current state right away. The journal goes to data/sessions/<session_id>.jsonl.
 fake board, so pair it with --grid sim (in-process feed of the fake board; arm_clear is
 false while the fake arm is away from home). --robot http://host:8770 talks to the real
 robot API. Without --robot, human mode works but its hint ladder stops at level 3.
+
+With --robot http the server also polls the robot's GET /status and ANDs at_home into each
+frame's arm_clear before the stabilizer sees it. No reply, a failed reply, or a reply older
+than ROBOT_STATUS_MAX_AGE_S counts as not at home, so the board waits instead of passing.
 
 After any robot command the server resets the stabilizer and drops frames that arrived
 while the robot was moving, so the session always checks a board seen after the move.
@@ -25,6 +29,7 @@ import asyncio
 import json
 import time
 import traceback
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional, Union
 
@@ -36,10 +41,10 @@ from brain.fake_robot import FakeRobot
 from brain.journal import Journal
 from brain.robot_client import HttpRobotClient, RobotClient
 from brain.session import RUNNING, Session
-from brain.settings import FAKE_MOTION_S, SIM_FEED_HZ
+from brain.settings import DEMO_LESSON, FAKE_MOTION_S, ROBOT_STATUS_MAX_AGE_S, ROBOT_STATUS_POLL_HZ, SIM_FEED_HZ
 from brain.stabilizer import Stabilizer
 from shared.config import BRAIN_WS_PORT, CELLS, GRID_WS_PORT
-from shared.schemas import GridState, Lesson, SchemaError, SessionState
+from shared.schemas import Board, GridState, Lesson, SchemaError, SessionState
 
 RETRY_S = 1.0
 BAD_FRAME_JOURNAL_EVERY = 100  # journal the 1st, 101st, ... bad frame so a broken feed can't flood the log
@@ -48,10 +53,20 @@ Frame = Union[str, GridState]  # raw JSON from a ws feed, or a GridState from th
 
 
 class BrainServer:
-    def __init__(self, session: Session, journal: Journal, stabilizer: Optional[Stabilizer] = None):
+    def __init__(
+        self,
+        session: Session,
+        journal: Journal,
+        stabilizer: Optional[Stabilizer] = None,
+        robot_status: Optional[RobotClient] = None,
+    ):
+        """robot_status: a robot whose /status at_home gates arm_clear (the real arm over HTTP)."""
         self.session = session
         self.journal = journal
         self.stabilizer = stabilizer or Stabilizer()
+        self.robot_status = robot_status
+        self.at_home = False
+        self.at_home_t = float("-inf")  # time.monotonic() of the last status reply
         self.clients: set[ServerConnection] = set()
         self.latest: Optional[str] = None
         self.frames: asyncio.Queue[tuple[float, Frame]] = asyncio.Queue()
@@ -108,7 +123,26 @@ class BrainServer:
             frame_id += 1
             await asyncio.sleep(1.0 / hz)
 
+    async def poll_robot_status(self, robot: RobotClient, hz: float = ROBOT_STATUS_POLL_HZ) -> None:
+        while True:
+            reply = await asyncio.to_thread(robot.status)
+            self.at_home = reply.get("ok") is True and reply.get("at_home") is True
+            self.at_home_t = time.monotonic()
+            await asyncio.sleep(1.0 / hz)
+
     # ------------------------------------------------------------ pipeline
+
+    def gate_arm(self, gs: GridState) -> GridState:
+        """arm_clear AND the robot's at_home, when a robot status source is attached."""
+        if self.robot_status is None or not gs.arm_clear:
+            return gs
+        fresh = time.monotonic() - self.at_home_t <= ROBOT_STATUS_MAX_AGE_S
+        return gs if (self.at_home and fresh) else replace(gs, arm_clear=False)
+
+    def accept(self, item: Frame) -> Optional[Board]:
+        """One raw frame through parse, the arm gate, and the stabilizer. A stable board or None."""
+        gs = self.parse(item)
+        return None if gs is None else self.stabilizer.feed(self.gate_arm(gs))
 
     def parse(self, item: Frame) -> Optional[GridState]:
         if isinstance(item, GridState):
@@ -128,8 +162,7 @@ class BrainServer:
             arrived, item = await self.frames.get()
             if arrived < self.discard_before:
                 continue  # seen while the robot was moving
-            gs = self.parse(item)
-            board = None if gs is None else self.stabilizer.feed(gs)
+            board = self.accept(item)
             if board is None:
                 continue
             moves = self.session.robot_moves
@@ -152,10 +185,13 @@ class BrainServer:
                 feed = asyncio.create_task(self.sim_feed(robot))
             else:
                 feed = asyncio.create_task(self.ws_feed(grid))
+            status = None if self.robot_status is None else asyncio.create_task(self.poll_robot_status(self.robot_status))
             try:
                 await self.process()
             finally:
                 feed.cancel()
+                if status is not None:
+                    status.cancel()
                 self.loop = None  # later events (session.end at shutdown) only update self.latest
 
 
@@ -170,9 +206,9 @@ def make_robot(spec: Optional[str], wrong_on: list[int], fail_on: list[int]) -> 
     return HttpRobotClient(spec)
 
 
-def main(argv: Optional[list[str]] = None) -> None:
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--lesson", required=True, help="lesson JSON, e.g. tests/fixtures/staircase-v1.json")
+    p.add_argument("--lesson", default=str(DEMO_LESSON), help=f"lesson JSON (default: {DEMO_LESSON.name})")
     p.add_argument("--mode", choices=["human", "robot"], default="human")
     p.add_argument("--grid", default=f"ws://localhost:{GRID_WS_PORT}",
                    help="GridState feed URL, or 'sim' for an in-process feed of the fake robot's board")
@@ -183,6 +219,11 @@ def main(argv: Optional[list[str]] = None) -> None:
                    help="fake robot: the Nth place returns ok=false (repeatable)")
     p.add_argument("--ui-host", default="localhost")
     p.add_argument("--ui-port", type=int, default=BRAIN_WS_PORT)
+    return p
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    p = parser()
     args = p.parse_args(argv)
 
     if args.mode == "robot" and args.robot is None:
@@ -196,7 +237,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     robot = make_robot(args.robot, args.fake_wrong_on, args.fake_fail_on)
     journal = Journal.open_new(args.mode)
     session = Session(lesson, args.mode, journal, robot=robot)
-    server = BrainServer(session, journal)
+    server = BrainServer(session, journal, robot_status=robot if isinstance(robot, HttpRobotClient) else None)
     print(f"[brain] session {journal.session_id}: lesson {lesson.lesson_id}, mode {args.mode}, "
           f"robot {args.robot or 'none'}, journal {journal.path}", flush=True)
     try:
