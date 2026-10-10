@@ -1,12 +1,12 @@
 // Apprentice monitor. Reads SessionState (README 5.4) from the brain on ws :8766 and draws it.
 // Plain script, no dependencies: the 2D monitor must work even if nothing else loads.
 // The 3D view (view3d.js, three.js) loads lazily and is optional.
+// Keys: Space sends {"cmd":"start"} (ready screen), R sends {"cmd":"reset"}, 2 / 3 switch views.
 (function () {
   "use strict";
 
   const CFG = window.APPRENTICE_CONFIG || {};
   const params = new URLSearchParams(location.search);
-  const HUMAN_SIDE = params.get("side") || CFG.HUMAN_SIDE || "row3";
   const WS_URL = params.get("ws") || `ws://${location.hostname || "localhost"}:${CFG.BRAIN_WS_PORT || 8766}`;
   const PASS_HOLD_MS = CFG.PASS_HOLD_MS || 1600;
 
@@ -15,6 +15,9 @@
   const CELLS = COLUMNS.flatMap((c) => ROWS.map((r) => c + r));
   const COLORS = ["red", "blue", "yellow", "green"];
   const VERDICTS = ["PASS", "WRONG_CELL", "WRONG_COLOR", "WRONG_LEVEL", "EXTRA", "MISSING", "WAITING"];
+  const PHASES = ["ready", "running", "complete", "stopped"];
+  const ROBOT_STATUSES = ["idle", "placing", "checking", "fixing", "homing", "stopped"];
+  const WAITING_CAMERA = /waiting for the camera/i;
   const LEVEL_WORDS = ["", "second", "third"];
 
   const $ = (id) => document.getElementById(id);
@@ -26,6 +29,8 @@
     showme: $("showme"), video: $("showme-video"),
     board2d: $("board2d"), board3d: $("board3d"), reconnect: $("reconnect"),
     stripHuman: $("strip-human"), stripRobot: $("strip-robot"),
+    screen: $("screen"), screenTitle: $("screen-title"), screenThumb: $("screen-thumb"),
+    screenText: $("screen-text"), screenKey: $("screen-key"), toast: $("toast"),
   };
 
   const app = {
@@ -38,7 +43,12 @@
     view3d: null,
     showKey: null,
     showFailed: null,
+    ws: null,
+    toastTimer: 0,
   };
+
+  // The student's side comes from the brain (SessionState.human_side); row3 until the first state.
+  function side() { return (app.state && app.state.humanSide) || "row3"; }
 
   // ------------------------------------------------------------ input: normalize every field
 
@@ -46,13 +56,19 @@
   function str(v) { return typeof v === "string" && v.trim() ? v : null; }
   function num(v) { return typeof v === "number" && isFinite(v) ? v : null; }
 
-  function normalize(d) {
-    if (!d || typeof d !== "object" || (d.mode !== "human" && d.mode !== "robot")) return null;
+  function boardOf(b) {
     const board = {};
     for (const c of CELLS) {
-      const stack = d.board && Array.isArray(d.board[c]) ? d.board[c] : [];
+      const stack = b && Array.isArray(b[c]) ? b[c] : [];
       board[c] = stack.filter((x) => typeof x === "string");
     }
+    return board;
+  }
+  function isClear(board) { return CELLS.every((c) => board[c].length === 0); }
+
+  function normalize(d) {
+    if (!d || typeof d !== "object" || (d.mode !== "human" && d.mode !== "robot")) return null;
+    const board = boardOf(d.board);
     let expected = null;
     const e = d.expected_step;
     if (e && typeof e === "object" && cell(e.cell) && typeof e.color === "string") {
@@ -77,6 +93,13 @@
       hintText: str(d.hint_text),
       showMe,
       progress: { human: marks(p.human), robot: marks(p.robot) },
+      phase: PHASES.includes(d.phase) ? d.phase : null,
+      lessonTitle: str(d.lesson_title),
+      finalBoard: d.final_board && typeof d.final_board === "object" ? boardOf(d.final_board) : null,
+      humanSide: d.human_side === "row1" || d.human_side === "row3" ? d.human_side : null,
+      expectedCell: cell(d.expected_cell),
+      expectedLevel: Number.isInteger(d.expected_level) ? d.expected_level : null,
+      robotStatus: ROBOT_STATUSES.includes(d.robot_status) ? d.robot_status : "idle",
     };
   }
 
@@ -84,9 +107,17 @@
 
   function phaseOf(s) {
     if (!s) return "nodata";
-    if ((s.progress[s.mode] || []).includes("error")) return "stopped";
+    if (s.phase) return s.phase;
+    if ((s.progress[s.mode] || []).includes("error")) return "stopped";   // older brains: derive it
     if (!s.expected) return "complete";
     return "running";
+  }
+
+  // "pointing" is not a brain robot_status (shared ROBOT_STATUSES is frozen): the level-4 hover
+  // runs as "fixing" in human mode, so that combination is the robot pointing at the right cell.
+  function robotActivity(s) {
+    if (s.mode === "human" && s.hintLevel >= 4 && s.robotStatus === "fixing") return "pointing";
+    return s.robotStatus;
   }
 
   function isMistake(s) {
@@ -103,14 +134,15 @@
   };
 
   function robotStatus(s, phase) {
-    const t = (s.hintText || "").toLowerCase();
-    if (phase === "stopped" || t.includes("needs a hand")) return { word: "Needs a hand", kind: "hand" };
+    const a = robotActivity(s);
+    if (phase === "stopped" || a === "stopped") return { word: "Needs a hand", kind: "hand" };
     if (phase === "complete") return { word: "All done", kind: "done" };
-    if (t.includes("getting ready")) return { word: "Getting ready", kind: "busy" };
-    if (t.includes("taking")) return { word: "Fixing it", kind: "busy" };
-    if (t.includes("placing")) return { word: "Placing", kind: "busy" };
-    if (t.includes("caught a problem")) return { word: "Fixing it", kind: "busy" };
+    if (a === "placing") return { word: "Placing", kind: "busy" };
+    if (a === "fixing") return { word: "Fixing it", kind: "busy" };
+    if (a === "pointing") return { word: "Pointing", kind: "busy" };
+    if (a === "homing") return { word: "Going home", kind: "busy" };
     if (s.verdict === "PASS") return { word: "Checks out", kind: "done" };
+    if (a === "checking") return { word: "Checking", kind: "idle" };
     return { word: "Watching", kind: "idle" };
   }
 
@@ -152,6 +184,7 @@
     guard(renderLeft, s, phase);
     guard(renderBoard, s, phase);
     guard(renderStrips, s);
+    guard(renderScreen, s, phase);
   }
 
   function guard(fn, ...args) {
@@ -159,7 +192,7 @@
   }
 
   function renderHeader(s) {
-    ui.lesson.textContent = s ? s.lessonId : "";
+    ui.lesson.textContent = s ? s.lessonTitle || s.lessonId : "";
     ui.mode.textContent = !s ? "" : s.mode === "robot" ? "Robot builds" : "You build";
   }
 
@@ -173,6 +206,10 @@
       instruction = "Waiting for the camera";
       subline = app.conn === "live" ? "The lesson starts in a moment." : "Starting Apprentice...";
       fb = null;
+    } else if (phase === "ready") {
+      kicker = total ? `${total} steps` : "";
+      instruction = s.lessonTitle || "Get ready";
+      fb = null;   // the ready screen carries hint_text and the start prompt
     } else if (phase === "complete") {
       kicker = total ? `All ${total} steps` : "";
       instruction = s.mode === "robot" ? "The robot finished!" : "All done!";
@@ -182,8 +219,7 @@
       kicker = `Step ${s.stepIndex + 1} of ${total}`;
       instruction = "The robot needs a hand";
       subline = "";
-      const why = (s.hintText || "").replace(/^The robot needs a hand\.\s*/, "");
-      fb = { kind: "stopped", icon: "!", title: "Let's sort it out together", text: why || "Please check the board, then restart the lesson." };
+      fb = null;   // the stopped screen says it once, calmly
     } else {
       kicker = `${s.mode === "robot" ? "Robot step" : "Step"} ${s.stepIndex + 1} of ${total}`;
       instruction = s.mode === "robot" ? robotSentence(s.expected) : stepSentence(s.expected);
@@ -198,7 +234,7 @@
       } else {
         fb = { kind: "watching", icon: "", title: "I'm watching the board", text: "" };
       }
-      if (s.mode === "human" && s.hintLevel >= 4) banner = "The robot will point to the right spot.";
+      if (robotActivity(s) === "pointing") banner = "The robot is pointing to the right spot.";
     }
 
     ui.banner.hidden = !banner;
@@ -260,9 +296,9 @@
   // ------------------------------------------------------------ board (2D)
 
   // Screen position of a cell as the student sees it: x left to right, y far to near.
-  function screenXY(c) {
+  function screenXY(c, sd = side()) {
     const col = COLUMNS.indexOf(c[0]), row = ROWS.indexOf(c[1]);
-    return HUMAN_SIDE === "row1" ? [2 - col, 2 - row] : [col, row];
+    return sd === "row1" ? [2 - col, 2 - row] : [col, row];
   }
 
   const G = { x0: 70, y0: 70, pitch: 200, size: 184, inset: 22, step: 18 };
@@ -279,22 +315,20 @@
   function fill(color) { return COLORS.includes(color) ? `var(--cube-${color})` : "var(--cube-unknown)"; }
 
   function arrowFrom(s) {
-    // Hint level 2+: arrow from the misplaced cube to where it goes. Only when the fault cube is
-    // clearly the current step's cube (SessionState has no expected_cell for older cubes).
-    if (s.mode !== "human" || s.hintLevel < 2 || s.verdict !== "WRONG_CELL" || !s.faultCell || !s.expected) return null;
-    if (s.faultCell === s.expected.cell) return null;
-    const stack = s.board[s.faultCell];
-    if (!stack.length || stack[stack.length - 1] !== s.expected.color) return null;
-    return [s.faultCell, s.expected.cell];
+    // Hint level 2+: arrow from the misplaced cube (fault_cell) to the slot that needs it
+    // (expected_cell, from the checker, so it is right for knocked older cubes too).
+    if (s.mode !== "human" || s.hintLevel < 2 || !isMistake(s) || !s.faultCell || !s.expectedCell) return null;
+    if (s.faultCell === s.expectedCell) return null;
+    return [s.faultCell, s.expectedCell];
   }
 
   function renderBoard(s, phase) {
-    const key = JSON.stringify(s ? [s.board, s.expected, s.faultCell, s.hintLevel, s.verdict, phase, HUMAN_SIDE] : null);
+    const key = JSON.stringify(s ? [s.board, s.expected, s.faultCell, s.expectedCell, s.hintLevel, s.verdict, phase, side(), s.robotStatus] : null);
     if (key === app.boardKey) return;
     app.boardKey = key;
     const faultVisible = !!(s && phase === "running" && s.faultCell &&
       (s.mode === "human" ? isMistake(s) : s.verdict !== "PASS" && s.verdict !== "WAITING"));
-    if (app.view3d && app.view === "3d") guard(app.view3d.update, s, phase, HUMAN_SIDE, faultVisible);
+    if (app.view3d && app.view === "3d") guard(app.view3d.update, s, phase, side(), faultVisible);
 
     const W = G.x0 * 2 + G.pitch * 3 - 16, H = G.y0 + G.pitch * 3 + 90;
     const parts = [`<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Board">`];
@@ -370,6 +404,7 @@
   function connect() {
     let ws;
     try { ws = new WebSocket(WS_URL); } catch (err) { return retry(); }
+    app.ws = ws;
     ws.onopen = () => { app.conn = "live"; backoff = CFG.RECONNECT_MIN_MS || 500; render(); };
     ws.onmessage = (ev) => {
       let d;
@@ -421,10 +456,87 @@
     render();
   }
   document.addEventListener("keydown", (ev) => {
+    if (ev.repeat) return;
     if (ev.key === "3") setView("3d");
     else if (ev.key === "2") setView("2d");
     else if (ev.key === "v") setView(app.view === "3d" ? "2d" : "3d");
+    else if (ev.key === " " || ev.code === "Space") { ev.preventDefault(); startLesson(); }
+    else if (ev.key === "r" || ev.key === "R") resetLesson();
   });
+
+  // ------------------------------------------------------------ commands to the brain (ws :8766)
+
+  function send(cmd) {
+    const ws = app.ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) { toast("Not connected to Apprentice yet"); return false; }
+    ws.send(JSON.stringify({ cmd }));
+    return true;
+  }
+  function startLesson() {
+    const s = app.state;
+    if (!s || phaseOf(s) !== "ready") return;
+    if (!isClear(s.board)) { toast("Please clear the board first"); return; }
+    if (send("start")) toast("Starting...");
+  }
+  function resetLesson() {
+    if (send("reset")) toast("Starting over...");
+  }
+  function toast(text) {
+    ui.toast.textContent = text;
+    ui.toast.hidden = false;
+    clearTimeout(app.toastTimer);
+    app.toastTimer = setTimeout(() => { ui.toast.hidden = true; }, 1600);
+  }
+
+  // ------------------------------------------------------------ ready / complete / stopped screens
+
+  function thumbSVG(board, sd) {
+    // Small top-down picture of a board from the student's side; stacks show as layered squares.
+    const P = 64, S = 56, parts = [`<svg viewBox="0 0 ${P * 3 + 8} ${P * 3 + 8}" xmlns="http://www.w3.org/2000/svg">`];
+    for (const c of CELLS) {
+      const [sx, sy] = screenXY(c, sd);
+      const x = 4 + sx * P + (P - S) / 2, y = 4 + sy * P + (P - S) / 2;
+      parts.push(`<rect class="t-cell" x="${x}" y="${y}" width="${S}" height="${S}" rx="8"/>`);
+      (board[c] || []).forEach((color, level) => {
+        const i = 6 + level * 7;
+        parts.push(`<rect class="t-cube" x="${x + i}" y="${y + i}" width="${S - 2 * i}" height="${S - 2 * i}" rx="6" style="fill:${fill(color)}"/>`);
+      });
+    }
+    parts.push("</svg>");
+    return parts.join("");
+  }
+
+  function renderScreen(s, phase) {
+    let show = s && (phase === "ready" || phase === "complete" || phase === "stopped");
+    ui.screen.hidden = !show;
+    ui.stage.classList.toggle("screened", !!show);
+    if (!show) return;
+    ui.screen.dataset.kind = phase;
+    let title = "", text = "", key = "", board = null;
+    if (phase === "ready") {
+      title = s.lessonTitle || "Ready";
+      board = s.finalBoard;
+      const camera = WAITING_CAMERA.test(s.hintText || "");
+      text = camera ? "Waiting for the camera" : isClear(s.board) ? (s.mode === "robot" ? "The robot is ready to build this." : "Build this, one cube at a time.") : (s.hintText || "Please clear the board to start.");
+      key = !camera && isClear(s.board) ? "Press Space to start" : "";
+    } else if (phase === "complete") {
+      title = "All done!";
+      board = s.board;
+      text = s.hintText || "";
+      key = "Press R to start again";
+    } else {
+      title = "Let's sort it out together";
+      text = s.hintText || "The robot needs a hand. Please check the board.";
+      key = "Press R to try again";
+    }
+    ui.screenTitle.textContent = title;
+    ui.screenText.textContent = text;
+    ui.screenKey.textContent = key;
+    ui.screenKey.hidden = !key;
+    const thumb = board ? thumbSVG(board, side()) : "";
+    if (ui.screenThumb.innerHTML !== thumb) ui.screenThumb.innerHTML = thumb;
+    ui.screenThumb.hidden = !board;
+  }
 
   render();
   connect();

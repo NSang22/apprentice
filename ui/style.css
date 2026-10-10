@@ -207,6 +207,40 @@ body {
 .seg.error { background: repeating-linear-gradient(135deg, var(--warn) 0 12px, #b9802a 12px 24px); border-color: var(--warn); color: #33230a; }
 .seg.active { border-color: var(--text); color: var(--text); animation: breathe 1.6s ease-in-out infinite; }
 
+/* ---------------------------------------------------------------- ready / complete / stopped screens */
+.screen {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  min-width: min(720px, 80vw); max-width: 86vw; padding: var(--s4) var(--s5);
+  display: flex; flex-direction: column; align-items: center; gap: var(--s3); text-align: center;
+  background: rgba(22, 27, 35, 0.94); border: 2px solid var(--line); border-radius: 28px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+}
+.screen[hidden] { display: none; }
+.screen-title { font-size: var(--s6); font-weight: 750; line-height: 1.05; }
+.screen-thumb svg { width: 260px; height: 260px; display: block; }
+.screen-thumb[hidden] { display: none; }
+.screen-text { font-size: var(--s3); color: var(--muted); max-width: 30ch; }
+.screen-text:empty { display: none; }
+.screen-key {
+  font-size: var(--s4); font-weight: 750; padding: 14px var(--s4); border-radius: 999px;
+  background: var(--ok); color: #0b2a17; animation: breathe 2s ease-in-out infinite;
+}
+.screen-key[hidden] { display: none; }
+.screen[data-kind="complete"] .screen-title { color: var(--ok); }
+.screen[data-kind="complete"] .screen-key { background: var(--panel-2); color: var(--text); animation: none; }
+.screen[data-kind="stopped"] { border-color: var(--warn); }
+.screen[data-kind="stopped"] .screen-key { background: var(--warn); color: #33230a; animation: none; }
+.t-cell { fill: var(--panel-2); stroke: var(--line); stroke-width: 2; }
+.t-cube { stroke: rgba(0, 0, 0, 0.5); stroke-width: 2; }
+.stage.screened .left { opacity: 0.25; }
+
+.toast {
+  position: absolute; left: 50%; bottom: var(--s3); transform: translateX(-50%);
+  font-size: var(--s3); font-weight: 600; padding: 14px var(--s4); border-radius: 999px;
+  background: var(--panel-2); border: 2px solid var(--info); color: var(--text);
+}
+.toast[hidden] { display: none; }
+
 /* ---------------------------------------------------------------- phases and connection */
 .reconnect {
   position: absolute; left: 50%; top: var(--s3); transform: translateX(-50%);
