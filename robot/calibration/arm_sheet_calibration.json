@@ -1,0 +1,19 @@
+{
+  "joint_offsets_deg": {
+    "shoulder_pan": 2.392,
+    "shoulder_lift": -2.407,
+    "elbow_flex": -5.298,
+    "wrist_flex": -8.01
+  },
+  "sheet_to_base": {
+    "theta_deg": 109.24,
+    "tx_mm": 127.96,
+    "ty_mm": -57.31,
+    "mirror_y": true
+  },
+  "table_z_mm": -7.79,
+  "tip_extension_mm": 9.06,
+  "fit_rms_mm": 1.8,
+  "n_points": 16,
+  "mode": "full"
+}

@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NSang22/apprentice/docs/proposals/video-pipeline/task_plan.schema.json",
+  "title": "task_plan v1",
+  "description": "The hand-off between the video pipeline and the robot executor. Authoritative prose lives in SPEC.md beside this file; this file is the machine-checkable form. The rules the schema cannot express (steps in time order, final_state agreeing with a symbolic replay of the steps, stacks at most 2 high, confidence < 0.6 adding a warning) stay the producer's responsibility.",
+  "type": "object",
+  "required": ["version", "run_id", "source_video", "sheet_visible", "objects", "steps", "final_state", "warnings"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": "1.0"},
+    "run_id": {"type": "string", "minLength": 1},
+    "source_video": {"type": "string", "minLength": 1},
+    "sheet_visible": {"type": "boolean"},
+    "objects": {"type": "array", "items": {"$ref": "#/$defs/object_id"}},
+    "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}},
+    "final_state": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["object", "on"],
+        "additionalProperties": false,
+        "properties": {
+          "object": {"$ref": "#/$defs/object_id"},
+          "on": {"oneOf": [{"const": "table"}, {"$ref": "#/$defs/object_id"}]},
+          "cell": {"$ref": "#/$defs/cell"}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "object_id": {
+      "description": "Must be an id from catalog.json beside this file. v1 ids are listed here so the schema alone can catch typos.",
+      "enum": ["red_cube", "blue_cube", "yellow_cube"]
+    },
+    "cell": {"type": "string", "pattern": "^[ABC][123]$"},
+    "step": {
+      "type": "object",
+      "required": ["index", "action", "object", "goal", "yaw_deg", "pose", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "index": {"type": "integer", "minimum": 1},
+        "action": {"enum": ["PLACE", "STACK"]},
+        "object": {"$ref": "#/$defs/object_id"},
+        "goal": {"$ref": "#/$defs/goal"},
+        "yaw_deg": {"type": ["number", "null"]},
+        "pose": {"const": "flat"},
+        "evidence": {
+          "type": "object",
+          "required": ["t_start_s", "t_end_s", "confidence"],
+          "additionalProperties": false,
+          "properties": {
+            "t_start_s": {"type": "number", "minimum": 0},
+            "t_end_s": {"type": "number", "minimum": 0},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "notes": {"type": "string"}
+          }
+        }
+      },
+      "allOf": [
+        {
+          "description": "action is STACK exactly when goal.type is on_top",
+          "if": {"properties": {"goal": {"properties": {"type": {"const": "on_top"}}}}},
+          "then": {"properties": {"action": {"const": "STACK"}}},
+          "else": {"properties": {"action": {"const": "PLACE"}}}
+        }
+      ]
+    },
+    "goal": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type", "reference", "side"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {"const": "beside"},
+            "reference": {"$ref": "#/$defs/object_id"},
+            "side": {"enum": ["left", "right", "top", "bottom"]},
+            "gap_mm": {"type": "number", "minimum": 0, "default": 10}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "reference"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {"const": "on_top"},
+            "reference": {"$ref": "#/$defs/object_id"}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["type", "cell"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {"const": "cell"},
+            "cell": {"$ref": "#/$defs/cell"}
+          }
+        },
+        {
+          "type": "object",
+          "description": "STRETCH: sheet mm, within the US Letter sheet (215.9 x 279.4 mm).",
+          "required": ["type", "position_mm"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {"const": "position"},
+            "position_mm": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {"type": "number", "minimum": 0, "maximum": 215.9},
+                {"type": "number", "minimum": 0, "maximum": 279.4}
+              ],
+              "items": false
+            }
+          }
+        }
+      ]
+    }
+  }
+}

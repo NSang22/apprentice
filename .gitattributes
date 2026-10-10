@@ -1,0 +1,19 @@
+# core.autocrlf is on for at least one dev machine, and git mis-sniffed the printable
+# AprilTag sheet as text. Line-ending conversion would corrupt it (and every PNG), so
+# binaries are declared explicitly here.
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.mp4  binary
+*.mov  binary
+
+# Text, normalised to LF in the repo regardless of platform.
+*.py     text eol=lf
+*.md     text eol=lf
+*.json   text eol=lf
+*.jsonl  text eol=lf
+*.urdf   text eol=lf
+*.txt    text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
