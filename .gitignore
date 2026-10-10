@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# per-machine camera calibration, recalibrated at the demo table
+perception/calib/*.json
+
+# journals, except tiny committed samples
+data/sessions/*
+!data/sessions/.gitkeep
+
+# recordings
+videos/*
+!videos/.gitkeep

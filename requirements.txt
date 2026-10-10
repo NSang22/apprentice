@@ -1,0 +1,6 @@
+opencv-python
+numpy
+websockets
+fastapi
+uvicorn
+pymupdf  # only for perception/generate_grid_pdf.py, not the live pipeline
