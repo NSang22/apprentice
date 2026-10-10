@@ -7,11 +7,12 @@ then moves one joint relative to that pose and returns. At the end you support
 the arm before torque turns off.
 """
 
+import os
 import time
 
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
-PORT = "COM7"
+PORT = os.environ.get("ROBOT_PORT", "COM7")
 ROBOT_ID = "my_follower"
 SPEED = 20.0          # deg/s (gripper: percent/s)
 STEP_DT = 0.05        # seconds between commands

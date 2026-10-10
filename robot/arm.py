@@ -6,12 +6,13 @@
 - After a move, a short outer loop can correct gravity sag on the shoulder, elbow and wrist.
 """
 
+import os
 import time
 
 import numpy as np
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
-PORT = "COM7"
+PORT = os.environ.get("ROBOT_PORT", "COM7")  # COM7 on Windows; a /dev/tty* path on Jetson (jetson-kushi/env.example)
 ROBOT_ID = "my_follower"
 JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 SAG_JOINTS = ["shoulder_lift", "elbow_flex", "wrist_flex"]

@@ -1,0 +1,11 @@
+# Jetson-specific Python deps. Installed into the SAME venv as lerobot (see setup.sh) -
+# robot/ imports lerobot directly, they can't live in separate environments.
+#
+# NOT listed here: opencv-python. Use JetPack's preinstalled OpenCV instead of
+# `pip install opencv-python` - the pip wheel lacks the GStreamer/CUDA support the
+# system build has. Verify with: python -c "import cv2; print(cv2.getBuildInformation())"
+
+numpy
+websockets   # brain/'s ws :8766 server, once brain/ exists
+fastapi      # robot/api.py's HTTP :8770, once it's built (robot/README.md: "Not built yet")
+uvicorn

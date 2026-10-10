@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Apprentice robot control</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 12px 12px 40px;
+    font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
+    background: #121212; color: #eee; font-size: 16px;
+  }
+  h1 { font-size: 20px; margin: 4px 0 2px; }
+  .sub { color: #999; font-size: 13px; margin-bottom: 12px; }
+  .banner { padding: 8px 10px; border-radius: 8px; font-size: 13px; margin-bottom: 10px; }
+  .banner.ok { background: #1c3a1c; color: #8fd98f; }
+  .banner.warn { background: #3a2f1c; color: #e0b05a; }
+  .banner.err { background: #3a1c1c; color: #e08a8a; }
+  section {
+    background: #1c1c1c; border-radius: 10px; padding: 12px; margin-bottom: 12px;
+  }
+  section h2 { font-size: 15px; margin: 0 0 8px; color: #bbb; text-transform: uppercase; letter-spacing: .03em; }
+  img#preview { width: 100%; border-radius: 6px; background: #000; display: block; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+  button {
+    font-size: 15px; padding: 10px 14px; border-radius: 8px; border: none;
+    background: #2d6cdf; color: white; min-height: 44px;
+  }
+  button.secondary { background: #333; color: #eee; }
+  button.danger { background: #a33; }
+  button:active { opacity: .8; }
+  input[type=text], input[type=number] {
+    font-size: 15px; padding: 8px 10px; border-radius: 8px; border: 1px solid #444;
+    background: #111; color: #eee; min-height: 44px;
+  }
+  label { font-size: 13px; color: #aaa; }
+  .pre { font-family: ui-monospace, monospace; font-size: 13px; white-space: pre-wrap; line-height: 1.5; }
+  .step { border-bottom: 1px solid #2a2a2a; padding: 10px 0; }
+  .step:last-child { border-bottom: none; }
+  .step-title { font-weight: 600; }
+  .step-desc { color: #aaa; font-size: 13px; margin: 2px 0 8px; }
+  #terminal-overlay {
+    position: fixed; inset: 0; background: #0a0a0a; display: none; flex-direction: column; z-index: 10;
+  }
+  #term-log {
+    flex: 1; overflow-y: auto; padding: 10px; font-family: ui-monospace, monospace;
+    font-size: 13px; white-space: pre-wrap; color: #ddd;
+  }
+  #term-input-row { display: flex; gap: 8px; padding: 10px; background: #1c1c1c; }
+  #term-input-row input { flex: 1; }
+</style>
+</head>
+<body>
+
+<h1>Apprentice robot control</h1>
+<div class="sub">Calibration and robot commands, from the phone - see docs/SETUP_NOTES.md if something looks wrong.</div>
+
+<div id="python-banner" class="banner"></div>
+<div id="open-questions" class="banner warn" style="display:none"></div>
+
+<section>
+  <h2>Camera / sheet check</h2>
+  <div class="row">
+    <button onclick="refreshPreview()">Check now</button>
+    <label><input type="checkbox" id="auto-refresh" onchange="toggleAutoRefresh()"> Auto-refresh</label>
+    <label><input type="checkbox" id="dev-mode" onchange="toggleDevMode()"> Dev mode (sample images)</label>
+  </div>
+  <img id="preview" src="" alt="camera preview">
+  <div id="sheet-status" class="pre"></div>
+</section>
+
+<section>
+  <h2>Rig constants</h2>
+  <div id="rig-readonly" class="pre"></div>
+  <div class="row">
+    <label>Camera height (mm)</label>
+    <input type="number" id="height-input" step="0.1">
+    <button class="secondary" onclick="saveConstant('CAMERA_HEIGHT_MM','height-input')">Save</button>
+  </div>
+  <div class="row">
+    <label>Cube size (mm)</label>
+    <input type="number" id="cube-input" step="0.1">
+    <button class="secondary" onclick="saveConstant('CUBE_SIZE_MM','cube-input')">Save</button>
+  </div>
+  <div id="config-msg" class="pre"></div>
+</section>
+
+<section>
+  <h2>Calibration file status</h2>
+  <div id="calib-status" class="pre"></div>
+</section>
+
+<section>
+  <h2>Order of operations</h2>
+  <div id="steps-order"></div>
+</section>
+
+<section>
+  <h2>Extra diagnostics</h2>
+  <div id="steps-extra"></div>
+</section>
+
+<div id="terminal-overlay">
+  <div id="term-log"></div>
+  <div id="term-input-row">
+    <input type="text" id="term-input" placeholder="type, or leave blank for ENTER" autocomplete="off">
+    <button onclick="termSend()">Send</button>
+    <button class="secondary" onclick="termSend('')">Enter</button>
+    <button class="danger" onclick="termClose()">Close</button>
+  </div>
+</div>
+
+<script>
+let autoRefreshTimer = null;
+let devMode = false;
+let ws = null;
+
+async function refreshStatus() {
+  const r = await fetch('/status');
+  const s = await r.json();
+  devMode = s.dev_mode;
+  document.getElementById('dev-mode').checked = devMode;
+
+  const pb = document.getElementById('python-banner');
+  if (s.python_exe) {
+    pb.className = 'banner ' + (s.python_source === 'current interpreter' ? 'ok' : 'warn');
+    pb.textContent = 'Run buttons use: ' + s.python_exe + ' (' + s.python_source + ')';
+  } else {
+    pb.className = 'banner err';
+    pb.textContent = 'No Python with lerobot found (' + s.python_source + '). Run buttons will fail.';
+  }
+
+  const oq = document.getElementById('open-questions');
+  if (s.open_questions && s.open_questions.length) {
+    oq.style.display = 'block';
+    oq.textContent = 'Open questions vs README: ' + s.open_questions.join(' | ');
+  }
+
+  document.getElementById('rig-readonly').textContent =
+    `Camera index: ${s.rig.camera_index}\nFrame size: ${s.rig.frame_size}\nObjects: ${s.rig.objects.join(', ')}`;
+  if (document.activeElement.id !== 'height-input') document.getElementById('height-input').value = s.rig.camera_height_mm ?? '';
+  if (document.activeElement.id !== 'cube-input') document.getElementById('cube-input').value = s.rig.cube_size_mm ?? '';
+
+  const sheetEl = document.getElementById('sheet-status');
+  const prefix = s.dev_mode ? '[DEV MODE - sample image] ' : '';
+  if (s.sheet_error) {
+    sheetEl.textContent = 'Camera error: ' + s.sheet_error;
+  } else if (!s.scene) {
+    sheetEl.textContent = prefix + 'SHEET NOT FOUND (need 2+ tags visible)';
+  } else {
+    let lines = [prefix + `Sheet OK: tags ${JSON.stringify(s.scene.sheet.tags)}, fit error ${s.scene.sheet.fit_error_mm.toFixed(2)} mm`];
+    if (s.scene.objects.length) {
+      for (const o of s.scene.objects) {
+        lines.push(`  ${o.name}: (${o.center_mm[0].toFixed(0)}, ${o.center_mm[1].toFixed(0)}) mm, yaw ${o.yaw_deg.toFixed(0)}, score ${o.score.toFixed(2)}`);
+      }
+    } else {
+      lines.push('  no cubes detected');
+    }
+    sheetEl.textContent = lines.join('\n');
+  }
+
+  const calibEl = document.getElementById('calib-status');
+  let calibLines = [];
+  if (s.arm_calib.exists) {
+    calibLines.push(`arm_sheet_calibration.json: fit RMS ${s.arm_calib.fit_rms_mm} mm, ${s.arm_calib.n_points} points, mode ${s.arm_calib.mode} (${s.arm_calib.age})`);
+  } else {
+    calibLines.push('arm_sheet_calibration.json: MISSING - run full touch calibration first.');
+  }
+  if (s.placement.exists) {
+    const flag = s.placement_ok ? '' : '  (provisional, consider re-running with more placements)';
+    calibLines.push(`placement_correction.json: ${s.placement.rms_after_fit_mm} mm RMS from ${s.placement.n_placements} placements (${s.placement.age})${flag}`);
+  } else {
+    calibLines.push('placement_correction.json: MISSING - run auto-calibrate.');
+  }
+  calibEl.textContent = calibLines.join('\n');
+}
+
+function refreshPreview() {
+  document.getElementById('preview').src = '/preview.png?t=' + Date.now();
+  refreshStatus();
+}
+
+function toggleAutoRefresh() {
+  const on = document.getElementById('auto-refresh').checked;
+  if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+  if (on) autoRefreshTimer = setInterval(refreshPreview, 800);
+}
+
+async function toggleDevMode() {
+  const enabled = document.getElementById('dev-mode').checked;
+  await fetch('/dev-mode', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({enabled}) });
+  refreshPreview();
+}
+
+async function saveConstant(name, inputId) {
+  const value = parseFloat(document.getElementById(inputId).value);
+  const r = await fetch('/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name, value}) });
+  const msgEl = document.getElementById('config-msg');
+  if (r.ok) { msgEl.textContent = `Saved ${name} = ${value}. Restart scripts to pick it up.`; }
+  else { msgEl.textContent = 'Could not save: ' + await r.text(); }
+}
+
+async function loadSteps() {
+  const r = await fetch('/steps');
+  const allSteps = await r.json();
+  const orderEl = document.getElementById('steps-order');
+  const extraEl = document.getElementById('steps-extra');
+  orderEl.innerHTML = ''; extraEl.innerHTML = '';
+  for (const step of allSteps) {
+    const div = document.createElement('div');
+    div.className = 'step';
+    let btnHtml = step.buttons.map(b => `<button onclick="openTerminal('${b.key}','${b.label}')">${b.label}</button>`).join(' ');
+    div.innerHTML = `<div class="step-title">${step.id}. ${step.title}</div><div class="step-desc">${step.desc}</div><div class="row">${btnHtml}</div>`;
+    (step.group === 'order' ? orderEl : extraEl).appendChild(div);
+  }
+}
+
+function openTerminal(key, label) {
+  const overlay = document.getElementById('terminal-overlay');
+  const log = document.getElementById('term-log');
+  log.textContent = '';
+  overlay.style.display = 'flex';
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/terminal/${key}`);
+  ws.onmessage = (ev) => {
+    log.textContent += ev.data + '\n';
+    log.scrollTop = log.scrollHeight;
+  };
+  ws.onclose = () => { log.textContent += '\n[connection closed]\n'; log.scrollTop = log.scrollHeight; };
+}
+
+function termSend(forceValue) {
+  const input = document.getElementById('term-input');
+  const value = forceValue !== undefined ? forceValue : input.value;
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(value);
+  input.value = '';
+}
+
+function termClose() {
+  if (ws) ws.close();
+  document.getElementById('terminal-overlay').style.display = 'none';
+}
+
+refreshStatus();
+refreshPreview();
+loadSteps();
+setInterval(refreshStatus, 3000);
+</script>
+</body>
+</html>

@@ -13,6 +13,7 @@ horizontal line 1 crosses vertical line 2.
 """
 
 import json
+import os
 import shutil
 import sys
 import time
@@ -24,7 +25,7 @@ from robot.perception.config import ROOT, SHEET_SPEC
 from robot import arm_calibration as ac
 from robot.kinematics import SO101Kinematics
 
-PORT = "COM7"
+PORT = os.environ.get("ROBOT_PORT", "COM7")
 ROBOT_ID = "my_follower"
 FULL_POINTS = [f"r{r}c{c}" for r in range(4) for c in range(4)]  # row by row, left to right
 QUICK_POINTS = ["r0c0", "r0c3", "r3c0", "r3c3"]
