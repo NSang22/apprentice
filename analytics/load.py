@@ -29,7 +29,8 @@ FIELDS: dict[str, dict[str, Optional[str]]] = {
         "lesson_id": "lesson_id",
         "steps": "steps",                # a count today; a list of step dicts is used directly
         "robot": "robot",                # "FakeRobot" / "HttpRobotClient" today; "none" / "fake" / "http:<url>" soon
-        "grid_source": "grid_source",    # coming: "sim", "fake_feed", "fake_feed_script:<name>", "perception:<url>"
+        "grid_source": "grid_source",
+        "human_side": "human_side",      # "row1" or "row3": which edge the human stands at    # coming: "sim", "fake_feed", "fake_feed_script:<name>", "perception:<url>"
         "commit": None,                  # coming: git commit hash, name not set yet
         "dirty": None,                   # coming: working tree dirty flag, name not set yet
         "hints_file_hash": None,         # coming: sha256 of the hints file the session loaded, name not set yet
@@ -96,6 +97,7 @@ class SessionRow:
     end_reason: Optional[str]
     steps_completed: int
     skipped_lines: int
+    human_side: Optional[str] = None
 
 
 @dataclass
@@ -364,6 +366,7 @@ def build_session(events: list[dict], lessons: dict[str, Lesson], path: str = ""
         end_reason=None if end is None else field_of(end, "reason"),
         steps_completed=sum(1 for e in events if e["kind"] == "step_advance"),
         skipped_lines=skipped,
+        human_side=field_of(start, "human_side"),
     )
 
 
