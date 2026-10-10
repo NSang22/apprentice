@@ -5,8 +5,9 @@ import numpy as np
 from .arm import ArmPushed, ArmStopped
 
 PARK_XY, PARK_H = (-50.0, 20.0), 120.0  # left of the sheet, out of the camera's way
-REST_XY, REST_H = (108.0, 25.0), 8.0      # end of a run: set the arm down on the strip between tags 0
-                                          # and 1 (nothing is placed there), then release torque
+REST_XY, REST_H = PARK_XY, 8.0            # end of a run: straight down from the parking spot, on the
+                                          # table left of the sheet (keep it clear). The old spot between
+                                          # tags 0 and 1 was too close to the base once the arm moved nearer.
 TRAVEL_SPEED = 60.0    # deg/s (largest joint) for moves between cells at travel height
 NEAR_SPEED = 25.0      # deg/s for descents, lifts and anything near the table or a cube
 GRIPPER_SPEED = 150.0  # percent/s for opening the jaw

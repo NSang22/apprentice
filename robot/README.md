@@ -32,8 +32,8 @@ python -m robot.scripts.tests.pick_place_test red_cube --onto blue_cube  # stack
 ```
 
 Scripts that move the arm are hands-free (`session.py`): a 3 s countdown, then the arm turns on
-where it is, rises straight up and parks. At the end it sets itself down on the strip between
-tags 0 and 1 (keep that strip clear) and releases torque. Motion streams at 50 Hz with smooth
+where it is, rises straight up and parks. At the end it sets itself down on the table just left of
+the sheet, below its parking spot (keep that spot clear), and releases torque. Motion streams at 50 Hz with smooth
 speed ramps (`Arm.follow`). Ctrl+C stops the arm and holds it, then asks what to do; the 12V
 plug is the hard stop.
 
