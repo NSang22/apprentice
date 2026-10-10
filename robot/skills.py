@@ -2,9 +2,15 @@
 
 import numpy as np
 
-from .arm import ArmPushed
+from .arm import ArmPushed, ArmStopped
 
 PARK_XY, PARK_H = (-50.0, 20.0), 120.0  # left of the sheet, out of the camera's way
+REST_XY, REST_H = PARK_XY, 8.0            # end of a run: straight down from the parking spot, on the
+                                          # table left of the sheet (keep it clear). The old spot between
+                                          # tags 0 and 1 was too close to the base once the arm moved nearer.
+TRAVEL_SPEED = 60.0    # deg/s (largest joint) for moves between cells at travel height
+NEAR_SPEED = 25.0      # deg/s for descents, lifts and anything near the table or a cube
+GRIPPER_SPEED = 150.0  # percent/s for opening the jaw
 TRAVEL_H = 120.0       # tip height for moving between cells (cube is 48 mm tall)
 GRASP_H = 14.0         # tip height when closing on a cube resting on the table
 CUBE_MM = 48.0
@@ -24,7 +30,8 @@ TILT_LOW, TILT_HIGH = 25.0, 50.0
 def max_tilt(h):
     return TILT_LOW if h < PRECISE_BELOW_MM else TILT_HIGH
 ROLL_SPEED = 30.0
-BLOCKED_MM = 10.0      # mid-descent: tips this far above the waypoint = something is underneath
+BLOCKED_MM = 15.0      # mid-descent: tips this far above the command = something is underneath
+                       # (streamed motion lags its command by a few mm, so this is looser than 10)
 # End of descent (after sag fix). Tuned on runs 04:01-04:33: good grasps stopped 0-1 mm high and
 # <=5.5 mm sideways; the failed A3 grasp stopped 3.9 mm high (jaw resting on the cube).
 BOTTOM_HIGH_MM = 3.0
@@ -147,13 +154,9 @@ class Skills:
         self.pos = None  # current tip target (x, y, h) in the sheet frame, None = unknown
         self.roll = 0.0
 
-    def _follow(self, path, gripper, speed=None):
-        for q in path[:-1]:
-            self.arm.move_to({**q, "gripper": gripper}, speed_deg_s=speed, fix_sag=False)
-        self.arm.move_to({**path[-1], "gripper": gripper}, speed_deg_s=speed)
-
     def go(self, xy, h, roll=None, gripper=None, speed=None):
-        """Straight-line move of the jaw tips to (xy, h)."""
+        """Smooth move of the jaw tips to (xy, h): straight down/up, or an arc around the base
+        when crossing the table. Streams as one motion."""
         roll = self.roll if roll is None else roll
         gripper = self.arm.goal["gripper"] if gripper is None else gripper
         here = self.arm.read()
@@ -163,31 +166,64 @@ class Skills:
                                   max_err_mm=TRAVEL_ERR_MM if h >= PRECISE_BELOW_MM else 1.0)
             except ValueError as e:
                 raise SkillError(f"unreachable: {e}") from None
-            self.arm.move_to({**q, "gripper": gripper}, speed_deg_s=speed)
+            self.arm.follow([{**q, "gripper": gripper}], speed_deg_s=speed or NEAR_SPEED)
+        elif h < self.pos[2] - 1.0:
+            self._descend(xy, h, roll, gripper, speed, here)
         else:
-            going_down = h < self.pos[2] - 1.0
             path = line_path(self.ws, self.pos, (*xy, h), self.roll, roll, here)
-            if going_down:
-                self._descend(path, gripper, speed, h)
-            else:
-                self._follow(path, gripper, speed)
+            self.arm.follow([{**q, "gripper": gripper} for q in path], speed_deg_s=speed or TRAVEL_SPEED)
         self.pos, self.roll = (float(xy[0]), float(xy[1]), float(h)), roll
 
-    def _descend(self, path, gripper, speed, h):
-        """Follow a downward path, checking after each waypoint that nothing blocks it."""
-        for i, q in enumerate(path):
-            last = i == len(path) - 1
-            self.arm.move_to({**q, "gripper": gripper}, speed_deg_s=speed, fix_sag=last)
-            want_xy, want_h = self.ws.tip_sheet(q)
-            got_xy, got_h = self.ws.tip_sheet(self.arm.read())
-            limit = BOTTOM_HIGH_MM if last else BLOCKED_MM
-            off_side = float(np.hypot(*(got_xy - want_xy)))
-            if got_h - want_h > limit or (last and off_side > BOTTOM_SIDE_MM):
-                back = path[max(0, i - 2)]
-                self.arm.move_to({**back, "gripper": gripper}, speed_deg_s=speed, fix_sag=False)
-                self.pos = None  # we backed off mid-path; next move re-plans from here
-                raise SkillError(f"blocked: tips {got_h - want_h:.0f} mm high, {off_side:.0f} mm sideways "
-                                 f"while descending to {h:.0f} mm; backed off")
+    def _descend(self, xy, h, roll, gripper, speed, here):
+        """Stream down, watching for anything underneath; strict check at the bottom."""
+        path = line_path(self.ws, self.pos, (*xy, h), self.roll, roll, here)
+        wps = [{**q, "gripper": gripper} for q in path]
+
+        def blocked(cmd, present):
+            _, want_h = self.ws.tip_sheet(cmd)
+            _, got_h = self.ws.tip_sheet(present)
+            if got_h - want_h > BLOCKED_MM:
+                return f"blocked: tips {got_h - want_h:.0f} mm above the command while descending to {h:.0f} mm"
+            return None
+
+        try:
+            self.arm.follow(wps, speed_deg_s=speed or NEAR_SPEED, check=blocked, fix_sag=True)
+        except ArmStopped as e:
+            self.arm.follow([wps[0]], speed_deg_s=NEAR_SPEED)  # back to where the descent started
+            raise SkillError(f"{e}; backed off") from None
+        want_xy, want_h = self.ws.tip_sheet(path[-1])
+        got_xy, got_h = self.ws.tip_sheet(self.arm.read())
+        off_side = float(np.hypot(*(got_xy - want_xy)))
+        if got_h - want_h > BOTTOM_HIGH_MM or off_side > BOTTOM_SIDE_MM:
+            self.arm.follow([wps[0]], speed_deg_s=NEAR_SPEED)
+            raise SkillError(f"blocked: tips {got_h - want_h:.0f} mm high, {off_side:.0f} mm sideways "
+                             f"at the bottom of the descent to {h:.0f} mm; backed off")
+
+    def set_gripper(self, pct):
+        self.arm.follow([{"gripper": pct}], speed_deg_s=GRIPPER_SPEED)
+
+    def wake(self):
+        """Start from wherever the arm is (torque just turned on): rise straight up, then park."""
+        here = self.arm.read()
+        xy, h = self.ws.tip_sheet(here)
+        self.roll = 0.0
+        self.log(f"wake: tips at ({xy[0]:.0f}, {xy[1]:.0f}) mm, {h:.0f} mm up")
+        if h < TRAVEL_H - 5:
+            try:
+                path = line_path(self.ws, (*xy, max(h, 2.0)), (*xy, TRAVEL_H), here["wrist_roll"], 0.0, here)
+                self.arm.follow([{**q, "gripper": here["gripper"]} for q in path], speed_deg_s=NEAR_SPEED)
+                self.pos = (float(xy[0]), float(xy[1]), TRAVEL_H)
+            except SkillError:
+                self.pos = None  # odd starting pose: a slow joint-space move to park instead
+        self.park()
+
+    def rest(self):
+        """End of a run: set the arm down on its rest spot so torque can be released safely."""
+        self.log("rest")
+        if self.pos is not None and self.pos[2] < TRAVEL_H:
+            self.go(self.pos[:2], TRAVEL_H)
+        self.go(REST_XY, TRAVEL_H, roll=0.0, gripper=0.0)
+        self.go(REST_XY, REST_H, speed=NEAR_SPEED)
 
     def park(self):
         self.log("park")
@@ -208,20 +244,20 @@ class Skills:
         self.log(f"  jaw tips go to ({tip[0]:.1f}, {tip[1]:.1f}), roll {roll:.1f}")
         self.go(tip, TRAVEL_H, roll=roll, gripper=GRIPPER_OPEN)
         self.on_phase("above_grasp", cube_xy=list(xy), tip_target=tip.tolist())
-        self.go(tip, GRASP_H, speed=15)
+        self.go(tip, GRASP_H)
         self.on_phase("at_grasp_open", cube_xy=list(xy), tip_target=tip.tolist())
         try:
             g = self.arm.close_gripper_on_contact()
         except ArmPushed as e:
             self.on_phase("pushed", reason=str(e))
-            self.go(tip, TRAVEL_H, gripper=GRIPPER_OPEN, speed=15)
+            self.go(tip, TRAVEL_H, gripper=GRIPPER_OPEN, speed=NEAR_SPEED)
             raise SkillError(f"grip aborted: {e} (jaw probably on top of the cube)") from None
         self.log(f"  gripper contact at {g:.1f}%")
         self.on_phase("closed", cube_xy=list(xy), contact_pct=g)
         if g < MIN_GRASP:
-            self.go(tip, TRAVEL_H, gripper=GRIPPER_OPEN)
+            self.go(tip, TRAVEL_H, gripper=GRIPPER_OPEN, speed=NEAR_SPEED)
             raise SkillError("grasp failed: jaws closed on nothing")
-        self.go(tip, TRAVEL_H, speed=15)
+        self.go(tip, TRAVEL_H, speed=NEAR_SPEED)
         self.on_phase("lifted")
         if self.arm.read()["gripper"] < MIN_GRASP:
             raise SkillError("cube slipped out while lifting")
@@ -237,11 +273,11 @@ class Skills:
             raise SkillError(f"can't place there: {e}") from None
         self.go(tip, TRAVEL_H, roll=roll)
         self.on_phase("above_place", target_xy=list(xy), tip_target=tip.tolist())
-        self.go(tip, h, speed=15)
+        self.go(tip, h)
         self.on_phase("at_place", target_xy=list(xy))
-        self.arm.move_to({"gripper": GRIPPER_OPEN})  # full 50%: 30% didn't let go of the foam cube
+        self.set_gripper(GRIPPER_OPEN)  # full 50%: 30% didn't let go of the foam cube
         self.on_phase("released", target_xy=list(xy))
         away = tip - moving_jaw_dir(self.ws, self.arm.read()) * BACKOFF_MM  # fixed jaw moves off the cube face
-        self.go(away, h, speed=10)
-        self.go(away, TRAVEL_H, speed=15)
+        self.go(away, h, speed=NEAR_SPEED)
+        self.go(away, TRAVEL_H, speed=NEAR_SPEED)
         self.on_phase("retreated", target_xy=list(xy))

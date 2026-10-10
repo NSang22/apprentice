@@ -7,11 +7,13 @@ import numpy as np
 
 # OpenCV HSV: H 0-179, S 0-255, V 0-255. Red wraps around 0, so it gets two ranges.
 HSV_RANGES = {
-    # Saturation floors sit well above the white paper (S ~10) but below the pale,
-    # overexposed cube tops (blue measured S ~110, yellow ~134, red ~166).
+    # Saturation floors sit well above the white paper (S 0-10) but below washed-out cube tops.
+    # Dim room (2026-10-10 night): blue top S ~110, yellow ~134, red ~166.
+    # Bright room (new location, 15:30): blue top S ~62 (H ~90), yellow top S ~50, red ~161.
+    # An orange cube (top H ~24) overlaps yellow's hue in bright light; keep it off the sheet.
     "red_cube": [((0, 100, 70), (8, 255, 255)), ((170, 100, 70), (179, 255, 255))],
-    "blue_cube": [((95, 60, 60), (125, 255, 255))],
-    "yellow_cube": [((18, 80, 110), (35, 255, 255))],
+    "blue_cube": [((88, 35, 60), (125, 255, 255))],
+    "yellow_cube": [((22, 35, 110), (35, 255, 255))],
 }
 
 
