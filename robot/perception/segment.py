@@ -1,10 +1,11 @@
 """Find objects on the sheet without fixed colour thresholds.
 
-An object is anything on the sheet that is more colourful than the paper. The paper's
-saturation is measured in every frame, so the threshold follows the room's lighting
-(dim room: paper S ~8; bright room with a clipping camera: S ~0, cube tops washed out to
-S ~50). Touching objects are split by hue *relative to each other*. Colour names are only
-a rough local guess; a vision model can rename the segments later.
+An object is anything on the sheet that is more colourful (Lab chroma) than the paper. The
+paper's chroma is measured in every frame, so the threshold follows the room. Lab chroma, not
+HSV saturation: HSV saturation inflates in shadows (shaded paper read S ~40 in the dim room,
+as high as a washed-out cube top in the bright one), while paper chroma stays 0-3 everywhere
+and blocks read 25-70. Touching objects are split by hue *relative to each other*. Names come
+later, from scene naming (colour calibration / memory / vision model).
 
 Same interface as detect_color.detect, so scene.build_scene can use either.
 """
@@ -15,16 +16,21 @@ import numpy as np
 from .config import CUBE_SIZE_MM
 from .detect_color import Detection
 
-MIN_DELTA_S = 22         # object pixels must beat the paper's median saturation by at least this
+MIN_DELTA_C = 12.0       # object pixels must beat the paper's chroma by at least this (Lab units)
 MAD_K = 5.0              # ...or by this many median-absolute-deviations, whichever is larger
 HUE_BIN = 3              # OpenCV hue units (0-179) per histogram bin
-MIN_PEAK_FRACTION = 0.15  # a hue peak must hold this share of a segment's pixels to split it off
+MIN_PEAK_FRACTION = 0.15  # without a known cube size: a hue peak must hold this share of a segment
+MIN_PEAK_FACES = 0.35     # with one: a hue peak needs this many cube faces' worth of pixels. A share of
+                          # the segment failed when glow linked three diagonal blocks into one blob and
+                          # the washed-out yellow among them fell under 15% (snapshot 17:27).
 MIN_PEAK_SEPARATION = 9   # hue units; a single cube's lit top and shaded side differ by ~5
 
 MIN_AREA_FACES = 0.5     # smaller than half a cube face = fragment (cable, LED glint, tape sliver)
 MERGED_FACES = 2.8       # one cube seen at an angle (top + two sides) reaches ~2.2 faces
 SHEET_W_MM, SHEET_H_MM = 215.9, 279.4
-CENTER_TOL_MM = 5.0      # an object's centre must lie on the sheet (within this)
+CENTER_TOL_MM = 0.0      # an object's centre must lie on the paper
+MIN_ASPECT = 0.45        # a block seen from above is squarish (top + one side ~0.6); thin strips are
+                         # glare or the mat's sheen along the sheet edge (snapshot 16:55)
 
 # Rough names from the hue of a segment's most saturated pixels (its sides, usually: tops wash
 # out in bright light). Measured: orange 18 (bright); yellow 30 (bright), 23-24 (dim); blue 100-107;
@@ -42,8 +48,9 @@ def _circ_dist(a, b):
     return np.minimum(d, 180 - d)
 
 
-def _hue_peaks(hues):
-    """Peaks of a circular hue histogram that each hold a decent share of the pixels."""
+def _hue_peaks(hues, min_count=None):
+    """Peaks of a circular hue histogram that each hold enough pixels to be a block of their own
+    (min_count pixels, or MIN_PEAK_FRACTION of the segment when no count is given)."""
     nb = 180 // HUE_BIN
     hist = np.bincount((hues // HUE_BIN).astype(int) % nb, minlength=nb).astype(float)
     smooth = (np.roll(hist, 1) + hist + np.roll(hist, -1)) / 3
@@ -52,26 +59,60 @@ def _hue_peaks(hues):
     kept = []
     for i in peaks:
         center = i * HUE_BIN + HUE_BIN / 2
-        mass = hist[[j % nb for j in range(i - 3, i + 4)]].sum() / max(len(hues), 1)
-        if mass >= MIN_PEAK_FRACTION and all(_circ_dist(center, k) >= MIN_PEAK_SEPARATION for k in kept):
+        mass = hist[[j % nb for j in range(i - 3, i + 4)]].sum()
+        enough = mass >= min_count if min_count else mass / max(len(hues), 1) >= MIN_PEAK_FRACTION
+        if enough and all(_circ_dist(center, k) >= MIN_PEAK_SEPARATION for k in kept):
             kept.append(center)
     return kept or [float(np.median(hues))]
 
 
-def object_mask(hsv, roi_mask):
-    s = hsv[..., 1].astype(np.int16)
-    paper = s[roi_mask > 0]
+def lab_chroma(frame_bgr):
+    lab = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+    return np.hypot(lab[..., 1] - 128, lab[..., 2] - 128)
+
+
+def object_mask(frame_bgr, roi_mask, chroma=None):
+    """Pixels on the sheet more colourful than the paper. Returns (mask, threshold)."""
+    c = lab_chroma(frame_bgr) if chroma is None else chroma
+    sheet = c[roi_mask > 0]
+    # The paper is the least colourful part of the sheet: use the lowest 30% of pixels. A plain
+    # median assumed paper covers most of the sheet; with six blocks out (over half of it) the
+    # old saturation threshold jumped to S>354 and nothing was detected (colour calibration 17:1x).
+    paper = sheet[sheet <= np.percentile(sheet, 30)]
     med = float(np.median(paper))
     mad = float(np.median(np.abs(paper - med)))
-    thr = med + max(MIN_DELTA_S, MAD_K * mad)
-    mask = ((s > thr) & (roi_mask > 0)).astype(np.uint8) * 255
+    thr = med + max(MIN_DELTA_C, MAD_K * mad)
+    mask = ((c > thr) & (roi_mask > 0)).astype(np.uint8) * 255
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
     return mask, thr
 
 
-def detection_roi(pose, shape, spec_tags, margin_mm=10.0, corner_pad_mm=6.0):
+CORE_CHROMA = 0.5   # a segment's core: pixels at least this colourful relative to its 90th percentile
+KEEP_CHROMA = 0.3   # grow the core into connected pixels at least this colourful
+# Under bright light a block tints the paper and its own shadow (Lab chroma 16-18 next to a
+# yellow block whose sides are 62-68). That halo dragged a segment's centre and turned its
+# measured yaw to -34 deg (snapshot 16:58). A washed-out top is still ~24, so relative
+# thresholds with growth from the core keep the top and drop the halo.
+
+
+def refine(mask, chroma):
+    """Trim the colour halo off one segment's mask, keeping the block body."""
+    c = chroma[mask > 0]
+    if len(c) == 0:
+        return mask
+    c90 = np.percentile(c, 90)
+    core = (mask > 0) & (chroma >= CORE_CHROMA * c90)
+    keep = ((mask > 0) & (chroma >= KEEP_CHROMA * c90)).astype(np.uint8)
+    n, labels = cv2.connectedComponents(keep)
+    hit = np.unique(labels[core])
+    out = np.isin(labels, hit[hit > 0]).astype(np.uint8) * 255
+    out = cv2.morphologyEx(out, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
+    return cv2.morphologyEx(out, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
+
+
+def detection_roi(pose, shape, spec_tags, margin_mm=5.0, corner_pad_mm=6.0):
     """Sheet (plus a small margin) minus the corner squares holding the tags: objects must not
     cover the tags anyway, and that is where the tape holding the sheet down sits."""
     m = margin_mm
@@ -106,7 +147,8 @@ def detect(frame_bgr, names=None, roi_mask=None, pose=None, tags=None):
     roi = roi_mask if roi_mask is not None else np.full(hsv.shape[:2], 255, np.uint8)
     face_px = (CUBE_SIZE_MM * px_per_mm) ** 2 if (px_per_mm and CUBE_SIZE_MM) else None
     min_area_px = MIN_AREA_FACES * face_px if face_px else 3000
-    mask, _ = object_mask(hsv, roi)
+    chroma = lab_chroma(frame_bgr)
+    mask, _ = object_mask(frame_bgr, roi, chroma)
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
     pieces = []
     for i in range(1, n):
@@ -114,7 +156,7 @@ def detect(frame_bgr, names=None, roi_mask=None, pose=None, tags=None):
             continue
         comp = labels == i
         hues = hsv[..., 0][comp].astype(float)
-        peaks = _hue_peaks(hues)
+        peaks = _hue_peaks(hues, MIN_PEAK_FACES * face_px if face_px else None)
         if len(peaks) == 1:
             pieces.append(comp.astype(np.uint8) * 255)
             continue
@@ -129,6 +171,9 @@ def detect(frame_bgr, names=None, roi_mask=None, pose=None, tags=None):
                 if s2[k, cv2.CC_STAT_AREA] >= min_area_px:
                     pieces.append((l2 == k).astype(np.uint8) * 255)
 
+    pieces = [refine(m, chroma) for m in pieces]
+    pieces = [m for m in pieces if cv2.countNonZero(m) >= min_area_px]
+
     out, seen = [], {}
     for m in sorted(pieces, key=lambda t: -cv2.countNonZero(t)):
         contours, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -136,6 +181,8 @@ def detect(frame_bgr, names=None, roi_mask=None, pose=None, tags=None):
         area = cv2.contourArea(c)
         mo = cv2.moments(c)
         (_, _), (rw, rh), _ = cv2.minAreaRect(c)
+        if min(rw, rh) < MIN_ASPECT * max(rw, rh):
+            continue
         x, y, w, h = cv2.boundingRect(c)
         center = (mo["m10"] / mo["m00"], mo["m01"] / mo["m00"])
         if pose is not None:

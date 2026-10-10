@@ -2,11 +2,15 @@
 
     python -m robot.scripts.tests.scene_snapshot                     # live camera
     python -m robot.scripts.tests.scene_snapshot robot/samples/overhead_02.png
-Saves an annotated image to robot/outputs/scene_latest.png.
+
+Live captures are kept: robot/outputs/snapshots/<time>_raw.png (the untouched frame, for
+re-testing perception later) and <time>_scene.jpg (annotated). robot/outputs/scene_latest.png is
+always the newest annotated image.
 """
 
 import json
 import sys
+import time
 
 import cv2
 
@@ -17,18 +21,27 @@ from robot.perception.sheet import SheetLocalizer
 
 
 def main():
-    if len(sys.argv) > 1:
+    live = len(sys.argv) == 1
+    if live:
+        with Camera() as cam:
+            frame = cam.read()
+    else:
         frame = cv2.imread(sys.argv[1])
         if frame is None:
             raise SystemExit(f"Can't read {sys.argv[1]}")
-    else:
-        with Camera() as cam:
-            frame = cam.read()
 
     scene, pose, detections = build_scene(frame, SheetLocalizer())
+    annotated = annotate(frame, scene, pose, detections)
     out_path = ROOT / "outputs" / "scene_latest.png"
     out_path.parent.mkdir(exist_ok=True)
-    cv2.imwrite(str(out_path), annotate(frame, scene, pose, detections))
+    cv2.imwrite(str(out_path), annotated)
+    if live:
+        snaps = ROOT / "outputs" / "snapshots"
+        snaps.mkdir(exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        cv2.imwrite(str(snaps / f"{stamp}_raw.png"), frame)
+        cv2.imwrite(str(snaps / f"{stamp}_scene.jpg"), annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        print(f"Saved robot/outputs/snapshots/{stamp}_raw.png and _scene.jpg")
     print(json.dumps(scene, indent=2) if scene else "Sheet not found: need at least 2 tags visible.")
     print("Annotated image:", out_path)
 
