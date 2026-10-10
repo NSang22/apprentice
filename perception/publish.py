@@ -4,6 +4,17 @@ Examples:
   python -m perception.publish --camera 1 --debug
   python -m perception.publish --video videos/demo.mp4
   python -m perception.publish --images "robot/samples/overhead_*.png" --debug
+
+Per-cell confidence is the minimum of three scores in [0, 1] for the cube's blob:
+  area  1.0 when the blob area fits one cube at this spot (the 48 mm cube projected through
+        the sheet pose: from 0.6x its top face up to 1.15x its full silhouette), falling off
+        as the ratio outside that range, so two merged cubes or a sliver score low
+  hue   1.0 when the blob's median hue sits at least HUE_MARGIN inside its color band,
+        lower near a band edge, and at most 0.5 if that hue also falls in another color's band
+  fill  fill ratio (blob area / min-area rectangle) rescaled so >= 0.5 maps to 1.0; cubes
+        seen at an angle show their sides and fill only 0.58-0.73, which is fine
+A cube whose centre sits less than EDGE_MARGIN_MM inside its cell gets at most 0.5, so a
+cube straddling two cells never passes MIN_CONFIDENCE. --debug prints the scores per cube.
 """
 
 from __future__ import annotations
@@ -21,7 +32,7 @@ import cv2
 import numpy as np
 from websockets.asyncio.server import ServerConnection, broadcast, serve
 
-from perception.cells import DEFAULT_SHEET_SPEC, mm_to_cell
+from perception.cells import DEFAULT_SHEET_SPEC, edge_margin_mm, mm_to_cell
 from robot.perception import detect_color
 from robot.perception.config import CUBE_SIZE_MM
 from robot.perception.sheet import SheetLocalizer, SheetPose
@@ -34,13 +45,101 @@ MIN_CUBE_AREA_PX = 1200
 HAND_AREA_FRACTION = 0.08
 GREEN_RANGES = [((36, 55, 45), (90, 255, 255))]
 
+# Confidence scoring (see module docstring).
+AREA_MIN_OF_TOP = 0.6      # smallest believable blob: this fraction of the cube's top face
+AREA_MAX_OF_HULL = 1.15    # largest: this multiple of the cube's full projected silhouette
+HUE_MARGIN = 4.0           # OpenCV hue units (0-179) inside the band edge for a full hue score
+FILL_FULL = 0.5            # fill ratio at or above this scores 1.0
+EDGE_MARGIN_MM = 8.0       # cube centre must sit this far inside its cell
+STRADDLE_CONFIDENCE = 0.5  # confidence cap for a cube too close to a cell boundary
+
+
+def hue_bands() -> dict[str, list[tuple[float, float]]]:
+    """Color -> hue intervals (OpenCV 0-179), from the same ranges the masks use."""
+    bands = {name.removesuffix("_cube"): [(float(lo[0]), float(hi[0])) for lo, hi in ranges]
+             for name, ranges in detect_color.HSV_RANGES.items()}
+    bands["green"] = [(float(lo[0]), float(hi[0])) for lo, hi in GREEN_RANGES]
+    return bands
+
+
+def merge_wrapped(intervals: list[tuple[float, float]]) -> tuple[float, float]:
+    """One circular interval (start, length) for a color's hue ranges. Red's 170-179 and
+    0-8 join across the wrap into start 170, length 18."""
+    if len(intervals) == 1:
+        lo, hi = intervals[0]
+        return lo, hi - lo
+    (lo_a, hi_a), (lo_b, hi_b) = sorted(intervals)[:1] + sorted(intervals)[-1:]
+    if lo_a <= 0.0 and hi_b >= 179.0:
+        return lo_b, (180.0 - lo_b) + hi_a
+    return lo_a, hi_b - lo_a
+
+
+def band_depth(hue: float, band: tuple[float, float]) -> float:
+    """How far (hue units) a hue sits inside a circular band; negative when outside."""
+    start, length = band
+    offset = (hue - start) % 180.0
+    if offset <= length:
+        return min(offset, length - offset)
+    return -min(offset - length, 180.0 - offset)
+
+
+def circular_median_hue(hues: np.ndarray, center: float) -> float:
+    """Median hue measured around `center`, so a red blob straddling 0/179 stays red."""
+    delta = (np.asarray(hues, np.float64) - center + 90.0) % 180.0 - 90.0
+    if delta.size == 0:
+        return float(center)
+    return float((center + np.median(delta)) % 180.0)
+
+
+def hue_score(color: str, median_hue: float, bands: Optional[dict] = None) -> float:
+    bands = bands or hue_bands()
+    score = max(0.0, min(1.0, band_depth(median_hue, merge_wrapped(bands[color])) / HUE_MARGIN))
+    for other, ranges in bands.items():
+        if other != color and band_depth(median_hue, merge_wrapped(ranges)) >= 0.0:
+            score = min(score, 0.5)  # this hue could be either color
+    return score
+
+
+def fill_score(fill_ratio: float) -> float:
+    return max(0.0, min(1.0, fill_ratio / FILL_FULL))
+
+
+def area_score(area_px: float, expected: tuple[float, float]) -> float:
+    lo, hi = expected
+    if area_px < lo:
+        return max(0.0, area_px / lo)
+    if area_px > hi:
+        return hi / area_px
+    return 1.0
+
+
+def expected_area_px(pose: SheetPose, x_mm: float, y_mm: float,
+                     cube_mm: float = CUBE_SIZE_MM or 48.0) -> tuple[float, float]:
+    """(min, max) pixel area for one cube centred at sheet (x_mm, y_mm): its top face times
+    AREA_MIN_OF_TOP, and the convex hull of its 8 projected corners (the silhouette a pinhole
+    camera sees, sides included) times AREA_MAX_OF_HULL."""
+    h = cube_mm / 2.0
+    square = [(x_mm - h, y_mm - h), (x_mm + h, y_mm - h), (x_mm + h, y_mm + h), (x_mm - h, y_mm + h)]
+    top = pose.to_image(square, cube_mm).astype(np.float32)
+    bottom = pose.to_image(square, 0.0).astype(np.float32)
+    hull = cv2.convexHull(np.vstack([top, bottom]))
+    return AREA_MIN_OF_TOP * float(cv2.contourArea(top)), AREA_MAX_OF_HULL * float(cv2.contourArea(hull))
+
 
 @dataclass
 class CubeDetection:
     color: str
     center_px: tuple[float, float]
     contour: np.ndarray
-    score: float
+    score: float              # min of the component scores (before the cell-edge rule)
+    area_px: float = 0.0
+    fill_ratio: float = 0.0
+    median_hue: float = 0.0
+    fill_score: float = 0.0
+    hue_score: float = 0.0
+    area_score: float = 1.0   # set once the sheet pose gives an expected area
+    cell: Optional[str] = None
+    edge_mm: float = 0.0
 
 
 def _mask_for_color(frame_bgr: np.ndarray, color: str, roi_mask: np.ndarray) -> np.ndarray:
@@ -64,9 +163,12 @@ def detect_all_cubes(
     """Return every qualifying color blob, rather than one blob per color."""
     detections: list[CubeDetection] = []
     combined = np.zeros(frame_bgr.shape[:2], np.uint8)
+    hue = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)[:, :, 0]
+    bands = hue_bands()
     for color in ("red", "blue", "yellow", "green"):
         mask = _mask_for_color(frame_bgr, color, roi_mask)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        start, length = merge_wrapped(bands[color])
         for contour in contours:
             area = cv2.contourArea(contour)
             if area < min_area_px:
@@ -75,13 +177,24 @@ def detect_all_cubes(
             if moments["m00"] == 0:
                 continue
             (_, _), (width, height), _ = cv2.minAreaRect(contour)
-            detections.append(CubeDetection(
+            blob = np.zeros(mask.shape, np.uint8)
+            cv2.drawContours(blob, [contour], -1, 255, thickness=cv2.FILLED)
+            median = circular_median_hue(hue[(blob > 0) & (mask > 0)], start + length / 2.0)
+            fill = float(min(1.0, area / max(width * height, 1.0)))
+            d = CubeDetection(
                 color=color,
                 center_px=(moments["m10"] / moments["m00"], moments["m01"] / moments["m00"]),
                 contour=contour.reshape(-1, 2),
-                score=float(min(1.0, area / max(width * height, 1.0))),
-            ))
-            cv2.drawContours(combined, [contour], -1, 255, thickness=cv2.FILLED)
+                score=0.0,
+                area_px=float(area),
+                fill_ratio=fill,
+                median_hue=median,
+                fill_score=fill_score(fill),
+                hue_score=hue_score(color, median, bands),
+            )
+            d.score = min(d.fill_score, d.hue_score)
+            detections.append(d)
+            combined |= blob
     return detections, combined
 
 
@@ -126,17 +239,25 @@ def build_grid_state(
         roi = grid_roi_mask(pose, frame_bgr.shape)
         detections, cube_mask = detect_all_cubes(frame_bgr, roi)
         mid_height = (CUBE_SIZE_MM or 0.0) / 2.0
+        for detection in detections:
+            x_mm, y_mm = (float(v) for v in pose.to_sheet([detection.center_px], mid_height)[0])
+            detection.cell = mm_to_cell(x_mm, y_mm)
+            detection.edge_mm = edge_margin_mm(x_mm, y_mm)
+            detection.area_score = area_score(detection.area_px, expected_area_px(pose, x_mm, y_mm))
+            detection.score = min(detection.area_score, detection.hue_score, detection.fill_score)
         for detection in sorted(detections, key=lambda d: d.score, reverse=True):
-            x_mm, y_mm = pose.to_sheet([detection.center_px], mid_height)[0]
-            cell = mm_to_cell(float(x_mm), float(y_mm))
+            cell = detection.cell
             if cell is None:
                 continue
+            conf = detection.score
+            if detection.edge_mm < EDGE_MARGIN_MM:
+                conf = min(conf, STRADDLE_CONFIDENCE)  # may straddle two cells: never a pass
             if board[cell]:
                 hands_clear = False
-                confidence[cell] = min(confidence[cell], detection.score)
+                confidence[cell] = min(confidence[cell], conf)
                 continue
             board[cell] = [detection.color]
-            confidence[cell] = detection.score
+            confidence[cell] = conf
         if current_pose is not None:
             hands_clear = hands_clear and not large_non_cube_blob(frame_bgr, roi, cube_mask)
             for cell in CELLS:
@@ -180,6 +301,19 @@ def annotate(frame: np.ndarray, pose: SheetPose | None, detections: list[CubeDet
     cv2.putText(out, status, (30, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4)
     cv2.putText(out, status, (30, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     return out
+
+
+def debug_lines(detections: list[CubeDetection], state: GridState) -> list[str]:
+    """One line per cube: cell, color, the three component scores, and the published confidence."""
+    lines = []
+    for d in sorted(detections, key=lambda d: (d.cell or "~", d.color)):
+        final = state.confidence.get(d.cell, 0.0) if d.cell else 0.0
+        lines.append(
+            f"{d.cell or 'off-grid':<8} {d.color:<6} area={d.area_score:.2f} ({d.area_px:.0f}px) "
+            f"hue={d.hue_score:.2f} (H {d.median_hue:.1f}) fill={d.fill_score:.2f} ({d.fill_ratio:.2f}) "
+            f"edge={d.edge_mm:.1f}mm final={final:.2f}"
+        )
+    return lines
 
 
 def image_frames(pattern: str) -> Iterator[np.ndarray]:
@@ -238,9 +372,17 @@ async def run(args: argparse.Namespace) -> None:
     period = 1.0 / HZ
     async with serve(publisher.handler, args.host, args.port):
         print(f"[perception] publishing GridState on ws://{args.host}:{args.port} at {HZ:g} Hz", flush=True)
+        last_report: list[str] = []
         for frame_id, frame in enumerate(frames):
             started = time.monotonic()
             state, last_pose, detections = build_grid_state(frame, localizer, last_pose, frame_id)
+            if args.debug:
+                report = debug_lines(detections, state)
+                if report != last_report:  # print on change, not 10 times a second
+                    print(f"[perception] frame {frame_id}: {len(detections)} cube(s)", flush=True)
+                    for line in report:
+                        print("  " + line, flush=True)
+                    last_report = report
             # "source" is an extra key GridState.from_dict ignores; brain.server records it as provenance.
             broadcast(publisher.clients, json.dumps({**state.to_dict(), "source": "perception"}))
             if args.debug:
