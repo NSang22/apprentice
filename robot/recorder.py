@@ -16,11 +16,11 @@ import cv2
 import numpy as np
 
 from robot.perception.config import ROOT
-from robot.perception.scene import build_scene
+from robot.perception.scene import OUTLINE_COLORS, build_scene
 
 from .skills import moving_jaw_dir
 
-COLORS = {"red_cube": (0, 0, 255), "blue_cube": (255, 0, 0), "yellow_cube": (0, 220, 255), "orange_cube": (0, 140, 255)}
+COLORS = OUTLINE_COLORS
 
 
 class RunRecorder:
@@ -55,7 +55,7 @@ class RunRecorder:
         jaw = moving_jaw_dir(self.ws, q)
         if frame is None:
             frame = np.zeros((1080, 1920, 3), np.uint8)
-        scene, pose, dets = build_scene(frame, self.loc)
+        scene, pose, dets = build_scene(frame, self.loc, naming="local")  # never call the model here
 
         if pose is not None:
             for d in dets:

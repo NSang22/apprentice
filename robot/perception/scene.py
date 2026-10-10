@@ -6,10 +6,16 @@ import cv2
 import numpy as np
 
 from . import detect_color, segment
+from . import naming as naming_mod
 from .config import CUBE_SIZE_MM
 
 SHEET_W_MM, SHEET_H_MM = 215.9, 279.4  # US Letter
 ROI_MARGIN_MM = 40.0                   # objects may hang a little off the sheet
+
+
+OUTLINE_COLORS = {"red_cube": (0, 0, 255), "orange_cube": (0, 140, 255), "yellow_cube": (0, 220, 255),
+                  "green_cube": (0, 180, 0), "teal_cube": (160, 160, 0), "light_blue_cube": (255, 200, 80),
+                  "blue_cube": (255, 0, 0), "purple_cube": (200, 0, 140), "pink_cube": (180, 120, 255)}
 
 
 def sheet_roi_mask(pose, shape, margin_mm=ROI_MARGIN_MM):
@@ -30,14 +36,39 @@ def _yaw_deg(points_mm):
     return float((yaw + 45) % 90 - 45)
 
 
-def build_scene(frame_bgr, localizer, detector=segment.detect, names=None):
-    """Returns (scene dict, pose, detections). scene is None when the sheet isn't visible."""
+_namers = {}
+
+
+def _namer(naming):
+    """One ColorNamer per mode per process, sharing the session's colour memory."""
+    if naming not in _namers:
+        shared = next(iter(_namers.values())).memory if _namers else None
+        _namers[naming] = naming_mod.ColorNamer(memory=shared, use_model=(naming == "auto"))
+    return _namers[naming]
+
+
+def build_scene(frame_bgr, localizer, detector=segment.detect, names=None, naming="auto"):
+    """Returns (scene dict, pose, detections). scene is None when the sheet isn't visible.
+
+    naming: "auto" names blocks from the session's colour memory and asks the vision model when
+    unsure; "local" never calls the model (memory, then a rough guess); "off" keeps the
+    segmenter's own hue labels.
+    """
     pose = localizer.locate(frame_bgr)
     if pose is None:
         return None, None, []
     if detector is segment.detect:
         tags = {k: v["corners_mm"] for k, v in localizer.spec["tags"].items()}
-        detections = detector(frame_bgr, names, pose=pose, tags=tags)
+        detections = detector(frame_bgr, None, pose=pose, tags=tags)
+        if naming != "off" and detections:
+            colours = _namer(naming).name(frame_bgr, [d.contour for d in detections], pose, tags)
+            seen = {}
+            for d, c in zip(detections, colours):
+                base = naming_mod.object_name(c)
+                seen[base] = seen.get(base, 0) + 1
+                d.name = base if seen[base] == 1 else f"{base}_{seen[base]}"
+        if names:
+            detections = [d for d in detections if d.name in names]
     else:  # colour-threshold fallback
         detections = detector(frame_bgr, names, roi_mask=sheet_roi_mask(pose, frame_bgr.shape))
     # A cube's blob is its top face plus visible sides; its centroid sits near the cube's
@@ -70,7 +101,7 @@ def annotate(frame_bgr, scene, pose, detections):
         return out
     corners = pose.to_image([(0, 0), (SHEET_W_MM, 0), (SHEET_W_MM, SHEET_H_MM), (0, SHEET_H_MM)])
     cv2.polylines(out, [corners.astype(np.int32)], True, (0, 255, 0), 2)
-    colors = {"red_cube": (0, 0, 255), "blue_cube": (255, 0, 0), "yellow_cube": (0, 220, 255), "orange_cube": (0, 140, 255)}
+    colors = OUTLINE_COLORS
     for d, o in zip(detections, scene["objects"]):
         col = colors.get(d.name, (255, 255, 255))
         cv2.drawContours(out, [d.contour.reshape(-1, 1, 2)], -1, col, 3)

@@ -15,3 +15,9 @@ CAMERA_HEIGHT_MM: float | None = 432.0  # 9 cubes, measured 2026-10-10 at the ne
 # Test objects: name -> edge length in mm. None until measured.
 CUBE_SIZE_MM: float | None = 48.0  # foam cubes, measured
 OBJECTS = ["red_cube", "blue_cube", "yellow_cube"]
+
+# The block colours this kit actually has. Guesses only choose from these. The order is also
+# colour calibration's default spot order (A1, A3, B2, C1, C2, C3). Six blocks on a 3x3 grid
+# can't all avoid neighbours, so the only neighbours (row C, and B2 above C2) are dissimilar
+# colours: similar colours that touch merge and can't be split (teal + light blue at 17:24).
+BLOCK_COLORS = ["orange", "yellow", "purple", "teal", "red", "light blue"]

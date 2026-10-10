@@ -17,6 +17,7 @@ from robot.arm import Arm
 from robot.correction import Correction
 from robot.perception.camera import Camera
 from robot.perception.config import ROOT
+from robot.perception.naming import object_name
 from robot.perception.scene import annotate, build_scene
 from robot.perception.sheet import SheetLocalizer, cell_center
 from robot.recorder import RunRecorder
@@ -46,6 +47,10 @@ def main():
     ap.add_argument("cell", nargs="?")
     ap.add_argument("--onto")
     args = ap.parse_args()
+    as_object = lambda c: c if c.endswith("_cube") else object_name(c)
+    args.cube = as_object(args.cube)  # "red", "light blue" and "red_cube" all work
+    if args.onto:
+        args.onto = as_object(args.onto)
     if not (args.cell or args.onto):
         ap.error("give a target cell (e.g. B2) or --onto <cube>")
 
