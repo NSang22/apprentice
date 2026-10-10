@@ -22,6 +22,7 @@ from robot.perception.config import ROOT
 from robot.perception.scene import build_scene
 from robot.perception.sheet import SheetLocalizer, cell_center
 from robot.recorder import RunRecorder
+from robot.session import ArmSession
 from robot.skills import SkillError, Skills
 from robot.workspace import Workspace
 
@@ -42,57 +43,45 @@ def find(cam, loc, name, tries=3):
 def main():
     cube = sys.argv[1] if len(sys.argv) > 1 else "red_cube"
     ws, loc, cam, arm = Workspace(), SheetLocalizer(), Camera(), Arm()
-    arm.connect()
     rec = RunRecorder(cam, loc, ws, arm, label=f"autocal_{cube}")
     sk = Skills(arm, ws, log=lambda m: print(f"  [{time.strftime('%H:%M:%S')}] {m}"), on_phase=rec)  # no correction: measure raw
     data, fails_in_a_row = [], 0
     try:
-        input("\nHold the arm up above the sheet (well clear of the table), keep holding, press ENTER...")
-        arm.enable()
-        input("Torque on. Let go, step back, hand near the 12V plug. ENTER to start (about 10 min)...")
-        sk.park()
-        for cell in ORDER:
-            target = np.array(cell_center(cell))
-            where, yaw = find(cam, loc, cube)
-            if where is None:
-                raise SkillError(f"lost sight of {cube}")
-            if np.hypot(*(where - target)) < SKIP_IF_WITHIN_MM:
-                print(f"\n{cell}: cube already there, skipping")
-                continue
-            print(f"\n{cell}: cube at ({where[0]:.0f}, {where[1]:.0f}) -> target ({target[0]:.0f}, {target[1]:.0f})")
-            try:
-                sk.pick(where, yaw)
-                sk.place(target, 0.0)
-                sk.park()
-                fails_in_a_row = 0
-            except SkillError as e:
-                print(f"  failed: {e}")
-                rec("error", reason=str(e))
-                fails_in_a_row += 1
-                if fails_in_a_row >= 2:
-                    raise SkillError("two failures in a row; stopping")
-                sk.park()
-                continue
-            got, _ = find(cam, loc, cube)
-            if got is None:
-                print("  can't see the cube after placing; skipping this point")
-                continue
-            err = got - target
-            data.append({"cell": cell, "commanded": target.tolist(), "observed": got.tolist()})
-            print(f"  landed at ({got[0]:.1f}, {got[1]:.1f}), error ({err[0]:+.1f}, {err[1]:+.1f}) = {np.hypot(*err):.1f} mm")
+        with ArmSession(arm, sk):
+            for cell in ORDER:
+                target = np.array(cell_center(cell))
+                where, yaw = find(cam, loc, cube)
+                if where is None:
+                    raise SkillError(f"lost sight of {cube}")
+                if np.hypot(*(where - target)) < SKIP_IF_WITHIN_MM:
+                    print(f"\n{cell}: cube already there, skipping")
+                    continue
+                print(f"\n{cell}: cube at ({where[0]:.0f}, {where[1]:.0f}) -> target ({target[0]:.0f}, {target[1]:.0f})")
+                try:
+                    sk.pick(where, yaw)
+                    sk.place(target, 0.0)
+                    sk.park()
+                    fails_in_a_row = 0
+                except SkillError as e:
+                    print(f"  failed: {e}")
+                    rec("error", reason=str(e))
+                    fails_in_a_row += 1
+                    if fails_in_a_row >= 2:
+                        raise SkillError("two failures in a row; stopping")
+                    sk.park()
+                    continue
+                got, _ = find(cam, loc, cube)
+                if got is None:
+                    print("  can't see the cube after placing; skipping this point")
+                    continue
+                err = got - target
+                data.append({"cell": cell, "commanded": target.tolist(), "observed": got.tolist()})
+                print(f"  landed at ({got[0]:.1f}, {got[1]:.1f}), error ({err[0]:+.1f}, {err[1]:+.1f}) = {np.hypot(*err):.1f} mm")
     except SkillError as e:
         print(f"\nSTOPPED: {e}")
-    except KeyboardInterrupt:
-        print("\nStopped (Ctrl+C). Arm is holding its current position.")
     finally:
         cam.close()
-        if arm.torque_on:
-            try:
-                input("\nSupport the arm with your hand (it goes limp next), then press ENTER...")
-            except (EOFError, KeyboardInterrupt):
-                pass
-        arm.disconnect()
-        print("Disconnected, torque off.")
+        print(f"Run evidence: {rec.save()}")
 
     out = ROOT / "outputs" / f"autocal_{time.strftime('%Y%m%d_%H%M%S')}.json"
     out.write_text(json.dumps({"cube": cube, "points": data, "evidence": str(rec.dir)}, indent=2))

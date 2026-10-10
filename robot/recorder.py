@@ -1,5 +1,9 @@
 """Per-run evidence: an annotated overhead photo and a JSON event at every skill phase.
 
+Capturing is instant (the joint reading and the camera's latest frame are just stored), and
+the slow part -- finding objects, drawing, writing files -- runs in save() after the arm has
+finished, so evidence never stalls or jitters the motion.
+
 outputs/runs/<YYYYmmdd_HHMMSS>/
     NN_<phase>.jpg   photo with the model's jaw-tip crosshair, moving-jaw arrow, and cubes
     events.jsonl     one line per phase: joints (present + goal), model tip, extra info
@@ -26,18 +30,31 @@ class RunRecorder:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.n = 0
         self.t0 = time.time()
+        self.pending = []
 
     def __call__(self, phase, **info):
         try:
-            self._record(phase, info)
+            frame = self.cam.latest()
+            self.pending.append((phase, info, self.arm.read(), dict(self.arm.goal or {}), frame,
+                                 time.time() - self.t0))
         except Exception as e:  # evidence capture must never break the run
             print(f"  (recorder: {phase} failed: {e})")
 
-    def _record(self, phase, info):
-        q = self.arm.read()
+    def save(self):
+        """Process everything captured so far. Call after the arm has stopped."""
+        for item in self.pending:
+            try:
+                self._record(*item)
+            except Exception as e:
+                print(f"  (recorder: {item[0]} failed: {e})")
+        self.pending = []
+        return self.dir
+
+    def _record(self, phase, info, q, goal, frame, t):
         tip_xy, tip_h = self.ws.tip_sheet(q)
         jaw = moving_jaw_dir(self.ws, q)
-        frame = self.cam.read()
+        if frame is None:
+            frame = np.zeros((1080, 1920, 3), np.uint8)
         scene, pose, dets = build_scene(frame, self.loc)
 
         if pose is not None:
@@ -53,7 +70,7 @@ class RunRecorder:
                     p = pose.to_image([info[key]], 0.0)[0].astype(int)
                     cv2.drawMarker(frame, tuple(p), (0, 255, 0), cv2.MARKER_TILTED_CROSS, 25, 2)
                     cv2.putText(frame, key, tuple(p + [8, 20]), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        lines = [f"{self.n:02d} {phase}  t={time.time() - self.t0:.1f}s",
+        lines = [f"{self.n:02d} {phase}  t={t:.1f}s",
                  f"model tips ({tip_xy[0]:.0f}, {tip_xy[1]:.0f}) mm  h {tip_h:.0f} mm  gripper {q['gripper']:.0f}%"]
         for i, line in enumerate(lines):
             cv2.putText(frame, line, (20, 40 + 35 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 5)
@@ -61,9 +78,9 @@ class RunRecorder:
         cv2.imwrite(str(self.dir / f"{self.n:02d}_{phase}.jpg"), frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
         event = {
-            "n": self.n, "phase": phase, "t": round(time.time() - self.t0, 2),
+            "n": self.n, "phase": phase, "t": round(t, 2),
             "joints": {k: round(float(v), 2) for k, v in q.items()},
-            "goal": {k: round(float(v), 2) for k, v in (self.arm.goal or {}).items()},
+            "goal": {k: round(float(v), 2) for k, v in goal.items()},
             "model_tip_sheet_mm": [round(float(tip_xy[0]), 1), round(float(tip_xy[1]), 1)],
             "model_tip_height_mm": round(float(tip_h), 1),
             "moving_jaw_dir": [round(float(jaw[0]), 3), round(float(jaw[1]), 3)],

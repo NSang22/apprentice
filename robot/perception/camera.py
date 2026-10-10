@@ -48,6 +48,11 @@ class Camera:
             time.sleep(0.01)
         raise RuntimeError("Camera returned no fresh frame")
 
+    def latest(self):
+        """The most recent frame, without waiting (None before the first frame arrives)."""
+        with self._lock:
+            return None if self._frame is None else self._frame.copy()
+
     def close(self):
         self._running = False
         self._thread.join(timeout=2)
