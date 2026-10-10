@@ -1,0 +1,122 @@
+{
+  "source": "Apprentice_AprilTag_Grid.pdf (US Letter, printed at 100%)",
+  "frame": "sheet: origin at paper top-left corner, x right (ID0->ID1), y down the page (ID0->ID3), mm",
+  "dictionary": "DICT_APRILTAG_36h11",
+  "tag_size_mm": 31.75,
+  "tags": {
+    "0": {
+      "center_mm": [
+        38.1,
+        27.305
+      ],
+      "corners_mm": [
+        [
+          22.225,
+          11.43
+        ],
+        [
+          53.975,
+          11.43
+        ],
+        [
+          53.975,
+          43.18
+        ],
+        [
+          22.225,
+          43.18
+        ]
+      ]
+    },
+    "1": {
+      "center_mm": [
+        177.8,
+        27.305
+      ],
+      "corners_mm": [
+        [
+          161.925,
+          11.43
+        ],
+        [
+          193.675,
+          11.43
+        ],
+        [
+          193.675,
+          43.18
+        ],
+        [
+          161.925,
+          43.18
+        ]
+      ]
+    },
+    "2": {
+      "center_mm": [
+        177.8,
+        240.665
+      ],
+      "corners_mm": [
+        [
+          161.925,
+          224.79
+        ],
+        [
+          193.675,
+          224.79
+        ],
+        [
+          193.675,
+          256.54
+        ],
+        [
+          161.925,
+          256.54
+        ]
+      ]
+    },
+    "3": {
+      "center_mm": [
+        38.1,
+        240.665
+      ],
+      "corners_mm": [
+        [
+          22.225,
+          224.79
+        ],
+        [
+          53.975,
+          224.79
+        ],
+        [
+          53.975,
+          256.54
+        ],
+        [
+          22.225,
+          256.54
+        ]
+      ]
+    }
+  },
+  "grid": {
+    "origin_mm": [
+      22.225,
+      48.26
+    ],
+    "cell_mm": 57.15,
+    "rows": [
+      "A",
+      "B",
+      "C"
+    ],
+    "cols": [
+      1,
+      2,
+      3
+    ]
+  },
+  "print_check": "the scale bar at the bottom must measure 50.8 mm (2.00 in)"
+}
