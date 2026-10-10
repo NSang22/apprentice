@@ -24,6 +24,9 @@ def cell_center(name, spec_path=SHEET_SPEC):
     return (g["origin_mm"][0] + (c + 0.5) * g["cell_mm"], g["origin_mm"][1] + (r + 0.5) * g["cell_mm"])
 
 
+_DARKEN_LUT = (np.linspace(0, 1, 256) ** 3 * 255).astype(np.uint8)
+
+
 @dataclass
 class SheetPose:
     H: np.ndarray                 # image px -> sheet mm, on the table plane
@@ -63,6 +66,15 @@ class SheetLocalizer:
 
     def detect_tags(self, frame_bgr):
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        found = self._detect(gray)
+        if len(found) < len(self.tags):
+            # Bright rooms overexpose the paper and lift the tags' black to grey, with dark
+            # sharpening halos that break detection (2026-10-10 new location: 0 of 4 tags).
+            # A gamma curve pushes the grey back toward black; white stays white.
+            found = {**self._detect(cv2.LUT(gray, _DARKEN_LUT)), **found}
+        return found
+
+    def _detect(self, gray):
         corners, ids, _ = self.detector.detectMarkers(gray)
         if ids is None:
             return {}
