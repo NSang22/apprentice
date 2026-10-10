@@ -1,6 +1,8 @@
 """Session state machine: one lesson, one student (README section 6.5).
 
-Feed it stable boards with on_board(). It checks each one, advances on PASS, and drives
+A session begins in phase "ready": it tracks stable boards but checks nothing. start()
+begins the lesson, and refuses while the last stable board seen still has cubes on it
+(hint_text asks to clear the board). Then feed it stable boards with on_board(). It checks each one, advances on PASS, and drives
 hints (human mode) or the robot (robot mode). All I/O goes through the injected journal,
 robot client, and on_state callback; sleep is injectable so tests run instantly.
 
@@ -50,7 +52,10 @@ from shared.schemas import (
     empty_board,
 )
 
-RUNNING, COMPLETE, STOPPED = "running", "complete", "stopped"
+READY, RUNNING, COMPLETE, STOPPED = "ready", "running", "complete", "stopped"
+
+CLEAR_BOARD = "Please clear the board to start."
+READY_TO_START = "Ready to start."
 
 ROBOT_NEEDS_HAND = "The robot needs a hand. Please check the board, then restart the lesson."
 
@@ -95,7 +100,7 @@ class Session:
         self.max_retries = max_retries
         self.max_hint_level = MAX_HINT_LEVEL if robot is not None else MAX_HINT_LEVEL - 1
 
-        self.phase = RUNNING
+        self.phase = READY
         self.error: Optional[str] = None
         self.step_index = 0
         self.board: Board = empty_board()
@@ -109,7 +114,13 @@ class Session:
         self.retries = 0           # robot: failed retries on the current step
         self.placed_current = False  # robot: first place of the current step already issued
         self.robot_moves = 0
+        self.expected_cell: Optional[str] = lesson.steps[0].cell
+        self.expected_level: Optional[int] = lesson.steps[0].level
+        self.hint_text = READY_TO_START
+        self._activity: Optional[str] = None  # robot_status while a robot command is in flight
+        self._fixing = False
         self._hover_board: Optional[Board] = None
+        self._started = False
         self._ended = False
 
     # ------------------------------------------------------------ public
@@ -132,9 +143,32 @@ class Session:
                 human=marks if self.mode == "human" else [],
                 robot=marks if self.mode == "robot" else [],
             ),
+            lesson_title=self.lesson.title,
+            final_board=copy_board(self.lesson.final_board),
+            human_side=self.human_side,
+            phase=self.phase,
+            expected_cell=self.expected_cell,
+            expected_level=self.expected_level,
+            robot_status=self.robot_status(),
         )
 
-    def start(self) -> None:
+    def robot_status(self) -> str:
+        if self.phase == STOPPED:
+            return "stopped"
+        if self._activity is not None:
+            return self._activity
+        return "checking" if self.mode == "robot" and self.phase == RUNNING else "idle"
+
+    def start(self) -> bool:
+        """Begin the lesson. Returns False (and stays ready) if the board still has cubes on it."""
+        if self.phase != READY:
+            return False
+        if any(self.board.values()):
+            self.hint_text = CLEAR_BOARD
+            self._publish()
+            return False
+        self.phase = RUNNING
+        self._started = True
         first = self.lesson.steps[0]
         self.hint_text = (
             f"Place a {first.color} cube on {first.cell}." if self.mode == "human" else "The robot is getting ready."
@@ -153,31 +187,49 @@ class Session:
             self._event("note", {"warning": "lesson gate missing or failed"})
         if self.mode == "robot":
             self._home_or_stop()
+            self._settle()
+        return True
 
     def on_board(self, board: Board) -> None:
         self.board = copy_board(board)
+        if self.phase == READY:
+            self.hint_text = CLEAR_BOARD if any(board.values()) else READY_TO_START
         self._event("board", {"step": self.step_index, "board": copy_board(board)})
         if self.phase != RUNNING:
             return
-        if self.mode == "human":
-            self._human_on_board(board)
-        else:
-            self._robot_on_board(board)
+        try:
+            if self.mode == "human":
+                self._human_on_board(board)
+            else:
+                self._robot_on_board(board)
+        finally:
+            self._settle()
 
     def end(self, reason: str = "stopped") -> None:
-        """Close the session from outside (server shutdown). Safe to call more than once."""
+        """Close the session from outside (server shutdown, reset). Safe to call more than once.
+        A session that never started writes nothing."""
         self._finish(reason)
 
     # ------------------------------------------------------------ shared
 
     def _event(self, kind: str, data: dict[str, Any]) -> None:
         self.journal.write(kind, data)
+        self._publish()
+
+    def _publish(self) -> None:
         if self.on_state is not None:
             self.on_state(self.state())
+
+    def _settle(self) -> None:
+        """The robot commands for this board are done: robot_status falls back to idle/checking."""
+        if self._activity is not None:
+            self._activity = None
+            self._publish()
 
     def _check(self, board: Board) -> CheckResult:
         r = check(board, self.lesson, self.step_index, self.human_side)
         self.verdict, self.fault_cell = r.verdict, r.fault_cell
+        self.expected_cell, self.expected_level = r.expected_cell, r.expected_level
         self.hint_text = r.hint_text if self.mode == "human" else self._robot_check_text(r)
         data = {
             "step": self.step_index,
@@ -201,6 +253,8 @@ class Session:
         self.hint_level, self.show_me, self.fault_cell = 0, None, None
         self.mistakes, self.retries, self.placed_current = 0, 0, False
         done = self.step_index == len(self.lesson.steps)
+        nxt = None if done else self.lesson.steps[self.step_index]
+        self.expected_cell, self.expected_level = (None, None) if nxt is None else (nxt.cell, nxt.level)
         if done:
             self.phase = COMPLETE
             self.verdict = Verdict.PASS
@@ -212,7 +266,7 @@ class Session:
             self._finish("complete")
 
     def _finish(self, outcome: str, **data: Any) -> None:
-        if self._ended:
+        if self._ended or not self._started:
             return
         self._ended = True
         self._event("session_end", {"outcome": outcome, "step": self.step_index, **data})
@@ -298,6 +352,13 @@ class Session:
         self._home_or_stop()
 
     def _robot_fix(self, r: CheckResult, board: Board) -> None:
+        self._fixing = True
+        try:
+            self._robot_fix_steps(r, board)
+        finally:
+            self._fixing = False
+
+    def _robot_fix_steps(self, r: CheckResult, board: Board) -> None:
         picked_from = None
         if r.fault_level is not None and r.fault_cell is not None:
             stack = board[r.fault_cell]
@@ -333,6 +394,8 @@ class Session:
 
     def _robot_cmd(self, cmd: str, **args: Any) -> RobotReply:
         self.robot_moves += 1
+        self._activity = {"home": "homing", "pick": "fixing", "hover": "fixing"}.get(
+            cmd, "fixing" if self._fixing else "placing")
         self._event("robot_cmd", {"step": self.step_index, "cmd": cmd, **args})
         try:
             reply = getattr(self.robot, cmd)(**args)

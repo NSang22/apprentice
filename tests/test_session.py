@@ -210,7 +210,7 @@ def test_a_state_is_published_after_every_event(tmp_path):
     h = Harness(tmp_path, robot=FakeRobot())
     wrong = board(A1=["red"], B1=["green"], C2=["blue"])
     h.feed(after(0), after(1), wrong, wrong, wrong, wrong, after(2))
-    assert len(h.states) == len(h.events())
+    assert len(h.states) >= len(h.events())  # plus one when robot_status settles after a robot move
     for st in h.states:
         assert SessionState.from_dict(json.loads(json.dumps(st.to_dict()))) == st
 
@@ -421,3 +421,33 @@ def test_robot_text_never_tells_the_watcher_to_move_cubes(tmp_path):
     texts = {st.hint_text for st in h.states}
     assert "The camera caught a problem at B2. The robot will fix it." in texts
     assert not any(t and ("Move the" in t or "Swap the" in t or "Take the" in t) for t in texts)
+
+
+# ================================================================ ready / start
+
+
+def ready_session(tmp_path, mode="human", robot=None):
+    states = []
+    s = Session(LESSON, mode, Journal("s-test", mode, directory=tmp_path, clock=lambda: 0.0),
+                robot=robot, on_state=states.append)
+    return s, states
+
+
+def test_session_waits_in_ready_and_checks_nothing(tmp_path):
+    s, states = ready_session(tmp_path)
+    s.on_board(after(0))  # a correct first step, but the lesson has not started
+    assert s.phase == "ready" and s.step_index == 0
+    st = states[-1]
+    assert st.phase == "ready" and st.verdict is Verdict.WAITING
+    assert st.lesson_title == LESSON.title and st.final_board == LESSON.final_board and st.human_side == "row3"
+
+
+def test_start_is_refused_until_the_board_is_clear(tmp_path):
+    robot = FakeRobot()
+    s, states = ready_session(tmp_path, mode="robot", robot=robot)
+    s.on_board(board(B2=["red"]))
+    assert states[-1].hint_text == "Please clear the board to start."
+    assert s.start() is False and s.phase == "ready" and robot.calls == []
+    s.on_board(empty_board())
+    assert s.start() is True and s.phase == "running"
+    assert robot.calls == [("home",)] and states[-1].robot_status == "checking"
