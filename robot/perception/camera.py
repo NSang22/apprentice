@@ -5,6 +5,7 @@ DirectShow can hand back frames buffered seconds ago when the camera sat idle (e
 the arm was moving), which showed the arm where it no longer was.
 """
 
+import sys
 import threading
 import time
 
@@ -12,10 +13,15 @@ import cv2
 
 from .config import CAMERA_INDEX, FRAME_H, FRAME_W
 
+# DirectShow on Windows; Video4Linux2 elsewhere (e.g. Jetson). Index numbering and
+# available controls differ by backend - re-verify CAMERA_INDEX on each platform
+# (`v4l2-ctl --list-devices` on Linux), don't assume it carries over.
+CAPTURE_BACKEND = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_V4L2
+
 
 class Camera:
     def __init__(self, index=CAMERA_INDEX, width=FRAME_W, height=FRAME_H, warmup_s=1.5):
-        self.cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+        self.cap = cv2.VideoCapture(index, CAPTURE_BACKEND)
         if not self.cap.isOpened():
             raise RuntimeError(
                 f"Can't open camera {index}. Close the Windows Camera app or anything else using it."
