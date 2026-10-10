@@ -72,6 +72,7 @@ def _step_summary(tries_per_session: list[list[Attempt]]) -> dict[str, Any]:
     return {
         **rate(sum(tries[0].passed for tries in tries_per_session), len(tries_per_session)),
         "n_passed": len(passed),
+        "n_not_passed": len(tries_per_session) - len(passed),  # started but never passed
         "mean_attempts": _mean(to_pass),          # attempts until the pass, over session-steps that passed
         "median_seconds_to_pass": _median(seconds),
     }

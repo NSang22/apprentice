@@ -95,9 +95,10 @@ def test_every_metric_by_hand():
     # L s0 robot: R1 [P@12], R2 [P@14] -> 2/2; mean 1; median 13.
     # L s1 robot: R1 [W, P@30], R2 [W, W, W] -> 0/2; passed 1; mean 2; median 30.
     # L s2 robot: R1 [W, M, P@50] -> 0/1; mean 3; median 50.
+    # n_not_passed = n - n_passed: L s0 human (H3), L s1 robot (R2).
     def sd(step, mode, n, passes, rate, n_passed, mean, median, lesson="L"):
-        return {"lesson_id": lesson, "step": step, "mode": mode, **r(n, passes, rate),
-                "n_passed": n_passed, "mean_attempts": mean, "median_seconds_to_pass": median}
+        return {"lesson_id": lesson, "step": step, "mode": mode, **r(n, passes, rate), "n_passed": n_passed,
+                "n_not_passed": n - n_passed, "mean_attempts": mean, "median_seconds_to_pass": median}
     assert step_difficulty(ATTEMPTS) == [
         sd(0, "human", 3, 2, 0.6667, 2, 1.0, 6.0),
         sd(0, "robot", 2, 2, 1.0, 2, 1.0, 13.0),
@@ -180,9 +181,9 @@ def test_every_metric_by_hand():
     # without = H1 [W, P@10] -> 0/1, mean 2, median 10. M s0 with nobody -> n 0, rate None.
     with_hash = [replace(s, hints_file_hash="abc") if s.session == "H2" else s for s in SESSIONS]
     effect = {(e["lesson_id"], e["step"]): e for e in hints_file_effect(with_hash, ATTEMPTS)}
-    assert effect[("L", 1)]["with_file"] == {**r(1, 1, 1.0), "n_passed": 1, "mean_attempts": 1.0, "median_seconds_to_pass": 6.0}
-    assert effect[("L", 1)]["without_file"] == {**r(1, 0, 0.0), "n_passed": 1, "mean_attempts": 2.0, "median_seconds_to_pass": 10.0}
-    assert effect[("M", 0)]["with_file"] == {**r(0, 0, None), "n_passed": 0, "mean_attempts": None, "median_seconds_to_pass": None}
+    assert effect[("L", 1)]["with_file"] == {**r(1, 1, 1.0), "n_passed": 1, "n_not_passed": 0, "mean_attempts": 1.0, "median_seconds_to_pass": 6.0}
+    assert effect[("L", 1)]["without_file"] == {**r(1, 0, 0.0), "n_passed": 1, "n_not_passed": 0, "mean_attempts": 2.0, "median_seconds_to_pass": 10.0}
+    assert effect[("M", 0)]["with_file"] == {**r(0, 0, None), "n_passed": 0, "n_not_passed": 0, "mean_attempts": None, "median_seconds_to_pass": None}
 
     # L: 5 sessions; 3 had a gate (H1 pass, H2 pass, R1 fail) -> 2/3. M: H4 had none -> n 0, rate None.
     assert gate_stats(SESSIONS) == [
