@@ -311,7 +311,7 @@ python -m robot.scripts.tests.scene_snapshot robot/samples/overhead_02.png   # o
 python -m robot.scripts.tests.pick_place_test red_cube B2                     # moves the arm
 
 # Analytics (offline, standard library only)
-python -m analytics.fake_journal --seed 7   # sample journals in data/sessions/ and lessons/sample_staircase.json, all marked sample
+python -m analytics.fake_journal --seed 7   # synthetic_*.jsonl journals in data/sessions/, written by the real brain; --lesson picks the lesson
 ```
 
 Planned, not built yet:
