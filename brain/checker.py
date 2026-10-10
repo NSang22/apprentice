@@ -105,13 +105,15 @@ def direction(src: str, dst: str, human_side: str = HUMAN_SIDE) -> str:
     """How to move a cube from src to dst, as seen by the human: "one cell left",
     "one cell right and two cells away from you".
 
-    From the row1 side, columns run A to C left to right and higher rows are farther away.
-    From the row3 side the human faces the other way, so both axes flip."""
+    On the printed sheet, columns A to C run from tag 0 toward tag 1 and rows 1 to 3 from
+    tag 0 toward tag 3. From the row3 side (opposite the arm) that puts A on the human's
+    left and row 3 nearest. From the row1 side (the arm's side) the human faces the other
+    way, so both flip: A is on their right and row 1 is nearest."""
     if human_side not in HUMAN_SIDES:
         raise ValueError(f"human_side must be one of {HUMAN_SIDES}, got {human_side!r}")
     (sx, sy), (dx, dy) = cell_xy(src), cell_xy(dst)
-    sign = 1 if human_side == "row1" else -1
-    right, away = sign * (dx - sx), sign * (dy - sy)
+    sign = 1 if human_side == "row3" else -1
+    right, away = sign * (dx - sx), -sign * (dy - sy)
     parts = []
     if right:
         parts.append(f"{_COUNT[abs(right)]} {'right' if right > 0 else 'left'}")
