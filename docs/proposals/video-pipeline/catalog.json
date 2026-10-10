@@ -1,0 +1,24 @@
+{
+  "version": "1.0",
+  "note": "Object catalog shared by the video pipeline and the robot executor. A plan may only reference ids listed here. Add an object here first, then to both sides' code.",
+  "objects": [
+    {
+      "id": "red_cube",
+      "description": "Red foam cube, raised letter on faces",
+      "edge_mm": 48.0,
+      "color_hint": "red"
+    },
+    {
+      "id": "blue_cube",
+      "description": "Blue foam cube, raised letter on faces",
+      "edge_mm": 48.0,
+      "color_hint": "blue"
+    },
+    {
+      "id": "yellow_cube",
+      "description": "Yellow foam cube, raised letter on faces",
+      "edge_mm": 48.0,
+      "color_hint": "yellow"
+    }
+  ]
+}
