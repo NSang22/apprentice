@@ -38,8 +38,12 @@ Re-run it after any touch calibration:
 python -m robot.scripts.calibration.auto_calibrate     # about 10 min, the arm moves a cube through 9 cells
 ```
 
-The current fit comes from only 7 placements and lands at 36 mm RMS, so treat it as
-provisional. A full 9-cell run should do considerably better.
+There is currently **no** correction file: the earlier fit (7 placements, 36 mm RMS) included two
+placements where the cube had been moved by hand, and it scaled x by 0.35. It was moved to
+`robot/outputs/placement_correction_BROKEN_36mm_rms.json`. Without the file, no correction is
+applied. `auto_calibrate` now drops failed placements (over 30 mm off, or outliers after fitting)
+and refuses to save a fit that is implausible or still over 6 mm RMS. Don't move the cube by hand
+while it runs.
 
 ## Order of operations after moving anything
 

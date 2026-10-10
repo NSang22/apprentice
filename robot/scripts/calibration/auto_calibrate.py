@@ -33,7 +33,7 @@ def find(cam, loc, name, tries=3):
     for _ in range(tries):
         scene, _, _ = build_scene(cam.read(), loc)
         for o in (scene or {}).get("objects", []):
-            if o["name"] == name:
+            if o["name"] == name and o["score"] >= 0:  # negative score = merged blob
                 return np.array(o["center_mm"]), o["yaw_deg"]
         time.sleep(0.5)
     return None, None
@@ -102,13 +102,22 @@ def main():
         return
     C = [d["commanded"] for d in data]
     O = [d["observed"] for d in data]
-    A, b, before, after = correction.fit(C, O)
+    A, b, before, after, keep, problem = correction.fit_robust(C, O)
+    for d, k in zip(data, keep):
+        if not k:
+            err = np.hypot(*np.subtract(d["observed"], d["commanded"]))
+            print(f"  ignoring {d['cell']}: {err:.0f} mm off (failed placement, or the cube was moved)")
+    if problem:
+        print(f"NOT saving a correction: {problem}. The previous correction (if any) is unchanged.")
+        return
+    Ck = [c for c, k in zip(C, keep) if k]
+    Ok = [o for o, k in zip(O, keep) if k]
     loo = []
-    for i in range(len(data)):  # leave-one-out: predict where an unseen placement lands
-        Ai, bi, _, _ = correction.fit(C[:i] + C[i + 1:], O[:i] + O[i + 1:])
-        loo.append(float(np.hypot(*(Ai @ np.array(C[i]) + bi - np.array(O[i])))))
-    correction.save(A, b, before, after, len(data))
-    print(f"Placement error RMS: {before:.1f} mm uncorrected -> {after:.1f} mm after correction (fit)")
+    for i in range(len(Ck)):  # leave-one-out: predict where an unseen placement lands
+        Ai, bi, _, _ = correction.fit(Ck[:i] + Ck[i + 1:], Ok[:i] + Ok[i + 1:])
+        loo.append(float(np.hypot(*(Ai @ np.array(Ck[i]) + bi - np.array(Ok[i])))))
+    correction.save(A, b, before, after, len(Ck))
+    print(f"Placement error RMS ({len(Ck)} placements): {before:.1f} mm uncorrected -> {after:.1f} mm after correction (fit)")
     print(f"Leave-one-out predicted error: mean {np.mean(loo):.1f} mm, max {np.max(loo):.1f} mm")
     print(f"Saved {correction.CORRECTION_FILE.name}; pick_place_test.py uses it automatically.")
 
