@@ -15,7 +15,9 @@ Human mode
 Robot mode
   place(step) -> home -> next stable board -> check. PASS places the next step right away.
   Anything else is a failed attempt: pick the wrong cube (fault_cell, fault_level), place
-  the missing one (expected_cell, expected_level), home, check again. After
+  the missing one (expected_cell, expected_level), home, check again. The arm only picks
+  cubes resting on the table, so a wrong cube above level 0 stops the session at once
+  (home, error state, a message asking for a human) instead of attempting the pick. After
   MAX_ROBOT_RETRIES failed retries on one step it homes, stops, and reports the error in
   hint_text and progress ("error"). {"ok": false} from the robot is journaled and counts
   as a failed attempt; a failed home() stops the session at once, since the camera can't
@@ -51,6 +53,11 @@ from shared.schemas import (
 RUNNING, COMPLETE, STOPPED = "running", "complete", "stopped"
 
 ROBOT_NEEDS_HAND = "The robot needs a hand. Please check the board, then restart the lesson."
+
+
+def robot_stack_help(color: str, cell: str) -> str:
+    return (f"The robot needs a hand. It can't lift the {color} cube off the stack on {cell}. "
+            "Please take it off, then restart the lesson.")
 
 
 def is_mistake(r: CheckResult) -> bool:
@@ -297,6 +304,13 @@ class Session:
             if r.fault_level != len(stack) - 1:
                 self._robot_stop(f"wrong cube on {r.fault_cell} level {r.fault_level} is under another cube")
                 return
+            if r.fault_level > 0:
+                # The arm only grasps cubes resting on the table, so it can't lift one off a stack.
+                self._robot_stop(
+                    f"wrong cube on {r.fault_cell} level {r.fault_level} is stacked; the robot only picks at level 0",
+                    hint=robot_stack_help(stack[r.fault_level], r.fault_cell),
+                )
+                return
             self.hint_text = f"The robot is taking the {stack[r.fault_level]} cube off {r.fault_cell}."
             reply = self._robot_cmd("pick", cell=r.fault_cell, level=r.fault_level)
             if not reply["ok"]:
@@ -333,13 +347,13 @@ class Session:
         if not self._robot_cmd("home")["ok"]:
             self._robot_stop("robot could not return home", home=False)
 
-    def _robot_stop(self, reason: str, home: bool = True) -> None:
+    def _robot_stop(self, reason: str, home: bool = True, hint: str = ROBOT_NEEDS_HAND) -> None:
         if home:
             self._robot_cmd("home")
         self.phase = STOPPED
         self.error = reason
         if self.step_index < len(self.marks):
             self.marks[self.step_index] = "error"
-        self.hint_text = ROBOT_NEEDS_HAND
+        self.hint_text = hint
         self._event("note", {"step": self.step_index, "error": reason})
         self._finish("robot_stopped", reason=reason)

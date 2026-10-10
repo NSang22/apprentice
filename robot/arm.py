@@ -1,8 +1,9 @@
 """Safe joint-space motion for the SO-101 follower. All arm motion goes through here.
 
 - Goal_Position is synced to the present position before torque turns on (no jump).
-- Moves are linear joint ramps at a capped speed.
-- After a move, a short outer loop corrects gravity sag on the shoulder, elbow and wrist.
+- follow(): one smooth streamed motion through a list of waypoints (trapezoidal speed
+  profile, 50 Hz), no stops in between. move_to() is the older single-target ramp.
+- After a move, a short outer loop can correct gravity sag on the shoulder, elbow and wrist.
 """
 
 import time
@@ -18,10 +19,16 @@ DT = 0.05
 SETTLE_S = 0.3
 MAX_SAG_FIX_DEG = 6.0
 PUSHED_DEG = 3.0  # an arm joint this far off its command while gripping = the jaw is shoving the arm
+STREAM_DT = 0.02        # 50 Hz command stream for follow()
+STREAM_SETTLE_S = 0.12  # pause at the end of a follow() so the servos catch up
 
 
 class ArmPushed(RuntimeError):
     pass
+
+
+class ArmStopped(RuntimeError):
+    """follow() stopped early because its check() reported a problem."""
 
 
 class Arm:
@@ -80,6 +87,67 @@ class Arm:
         self.goal = end
         present = self.read()
         return {j: present[j] - end[j] for j in JOINTS}
+
+    def follow(self, waypoints, speed_deg_s=None, accel_deg_s2=150.0, settle=True, fix_sag=False,
+               check=None, dt=STREAM_DT):
+        """Stream one smooth motion through `waypoints` (dicts of joint -> deg; gripper 0-100).
+
+        Distance along the path is the largest joint change per segment, so `speed_deg_s` caps
+        every joint. The speed ramps up at the start and down at the end only (trapezoid), with
+        no stop at intermediate waypoints. `check(cmd, present)` is called every few ticks; if it
+        returns a message the arm stops where it is and ArmStopped is raised.
+        """
+        assert self.torque_on, "call enable() first"
+        pts = [dict(self.sent)] + [{**self.goal, **w} for w in waypoints]
+        seg = np.array([max(abs(b[j] - a[j]) for j in JOINTS) for a, b in zip(pts, pts[1:])])
+        total = float(seg.sum())
+        if total < 1e-6:
+            return
+        v = speed_deg_s or self.speed
+        a = accel_deg_s2
+        t_acc = min(v / a, np.sqrt(total / a))  # short moves never reach full speed
+        v_peak = a * t_acc
+        t_cruise = max(0.0, (total - a * t_acc ** 2) / v_peak)
+        duration = 2 * t_acc + t_cruise
+        cum = np.concatenate([[0.0], np.cumsum(seg)])
+
+        def s_at(t):
+            if t < t_acc:
+                return 0.5 * a * t * t
+            if t < t_acc + t_cruise:
+                return 0.5 * a * t_acc ** 2 + v_peak * (t - t_acc)
+            td = duration - t
+            return total - 0.5 * a * td * td
+
+        t0 = time.perf_counter()
+        tick = 0
+        while True:
+            t = min(time.perf_counter() - t0, duration)
+            s = s_at(t)
+            k = min(int(np.searchsorted(cum, s, side="right")) - 1, len(seg) - 1)
+            f = 0.0 if seg[k] == 0 else (s - cum[k]) / seg[k]
+            cmd = {j: pts[k][j] + (pts[k + 1][j] - pts[k][j]) * f for j in JOINTS}
+            self._send(cmd)
+            tick += 1
+            if check is not None and tick % 3 == 0:
+                problem = check(cmd, self.read())
+                if problem:
+                    self.hold()
+                    raise ArmStopped(problem)
+            if t >= duration:
+                break
+            time.sleep(max(0.0, t0 + tick * dt - time.perf_counter()))
+        self.goal = dict(pts[-1])
+        if settle:
+            time.sleep(STREAM_SETTLE_S)
+        if fix_sag:
+            self._fix_sag(self.goal, rounds=1)
+
+    def hold(self):
+        """Stop where the arm is right now."""
+        here = self.read()
+        self._send(here)
+        self.goal = dict(here)
 
     def _fix_sag(self, end, rounds=2):
         """Gravity pulls joints short of their goals; push the goal past by the error."""

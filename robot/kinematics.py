@@ -70,6 +70,22 @@ class SO101Kinematics:
     def tip(self, q_deg):
         return self.fk(q_deg)[:3, 3]
 
+    def fk_frames(self, q_deg):
+        """Tip pose plus, for each ARM_JOINTS joint, its world axis and origin (for Jacobians)."""
+        if not isinstance(q_deg, dict):
+            q_deg = dict(zip(ARM_JOINTS, q_deg))
+        T = np.eye(4)
+        axes, origins = {}, {}
+        for c in self.chain:
+            T = T @ c["origin"]
+            if c["type"] == "revolute" and c["name"] in q_deg:
+                axes[c["name"]] = T[:3, :3] @ (np.asarray(c["axis"], float) / np.linalg.norm(c["axis"]))
+                origins[c["name"]] = T[:3, 3].copy()
+                R = np.eye(4)
+                R[:3, :3] = _axis_angle(c["axis"], np.radians(q_deg[c["name"]]))
+                T = T @ R
+        return T, axes, origins
+
     def ik_down(self, target_mm, q0_deg, wrist_roll_deg=0.0, tip_mm=0.0, down_weight=100.0, iters=200):
         """Joints putting the tip (extended `tip_mm` along the gripper axis) at `target_mm`
         with the gripper pointing straight down.
@@ -84,31 +100,39 @@ class SO101Kinematics:
         lo = np.array([self.limits[j][0] for j in ARM_JOINTS])
         hi = np.array([self.limits[j][1] for j in ARM_JOINTS])
 
-        def resid(qv):
-            T = self.fk(qv)
+        def resid_jac(qv):
+            # One forward pass gives everything: for a revolute joint with world axis a at o, a
+            # point p on the tip moves dp/dq = a x (p - o) and a tip direction z turns dz/dq = a x z.
+            T, axes, origins = self.fk_frames(qv)
             z = T[:3, 2]
             p = T[:3, 3] + z * tip_mm
             # Pointing down means the gripper axis is (0, 0, -1): penalize its x and y.
-            return np.concatenate([p - target, down_weight * z[:2]])
-
-        lam = 1.0
-        r = resid(q)
-        for _ in range(iters):
-            J = np.empty((len(r), len(free)))
+            r = np.concatenate([p - target, down_weight * z[:2]])
+            J = np.empty((5, len(free)))
             for k, i in enumerate(free):
-                dq = q.copy()
-                dq[i] += 1e-3
-                J[:, k] = (resid(dq) - r) / 1e-3
+                a, o = axes[ARM_JOINTS[i]], origins[ARM_JOINTS[i]]
+                J[:3, k] = np.cross(a, p - o)
+                J[3:, k] = down_weight * np.cross(a, z)[:2]
+            return r, J * (np.pi / 180.0)  # per degree
+
+        lam = 1e-2
+        r, J = resid_jac(q)
+        for _ in range(iters):
             step = np.linalg.solve(J.T @ J + lam * np.eye(len(free)), -J.T @ r)
             q_new = q.copy()
             q_new[free] = np.clip(q[free] + step, lo[free], hi[free])
-            r_new = resid(q_new)
+            r_new, J_new = resid_jac(q_new)
             if r_new @ r_new < r @ r:
-                q, r, lam = q_new, r_new, max(lam * 0.5, 1e-4)
-                if np.abs(step).max() < 1e-4:
+                gain = r @ r - r_new @ r_new
+                moved = np.abs(q_new - q).max()
+                q, r, J, lam = q_new, r_new, J_new, max(lam * 0.3, 1e-6)
+                # Done when steps are tiny, or when creeping along a joint limit gains nothing.
+                if moved < 1e-3 or gain < 1e-9 * max(r @ r, 1e-6):
                     break
             else:
                 lam *= 4
+                if lam > 1e8:
+                    break
         T = self.fk(q)
         tilt = float(np.degrees(np.arccos(np.clip(-T[2, 2], -1, 1))))
         return q.tolist(), float(np.linalg.norm(r[:3])), tilt

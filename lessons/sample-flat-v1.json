@@ -1,0 +1,18 @@
+{
+  "lesson_id": "sample-flat-v1",
+  "title": "Flat pattern",
+  "source_video": null,
+  "steps": [
+    {"color": "red", "cell": "A1", "level": 0, "t_video": null, "narration": "Start with red on A1."},
+    {"color": "blue", "cell": "C1", "level": 0, "t_video": null, "narration": "Blue goes on C1."},
+    {"color": "yellow", "cell": "B2", "level": 0, "t_video": null, "narration": "Yellow in the middle, on B2."},
+    {"color": "red", "cell": "A3", "level": 0, "t_video": null, "narration": "A second red on A3."},
+    {"color": "blue", "cell": "C3", "level": 0, "t_video": null, "narration": "Finish with blue on C3."}
+  ],
+  "final_board": {
+    "A1": ["red"], "A2": [], "A3": ["red"],
+    "B1": [], "B2": ["yellow"], "B3": [],
+    "C1": ["blue"], "C2": [], "C3": ["blue"]
+  },
+  "gate": null
+}

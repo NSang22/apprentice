@@ -16,8 +16,8 @@ from robot.perception.config import SHEET_SPEC
 from robot.arm import Arm
 from robot.workspace import Workspace
 
-CROSSINGS = ["r2c2", "r1c1"]
-HOVER_MM = 120.0
+CROSSINGS = ["r1c1", "r3c1", "r3c3", "r1c3"]  # row A/B edge and the bottom row: checks accuracy across rows
+HOVER_MM = 70.0   # 120 needed 34 deg of tilt over the far row
 LOW_MM = 10.0
 DESCENT_STEP_MM = 15.0  # IK waypoints on the way down keep the descent near-vertical
 
@@ -34,7 +34,7 @@ def vertical_path(ws, xy, z_from, z_to, roll):
     path, seed = [], None
     for i in range(n + 1):
         z = z_from + (z_to - z_from) * i / n
-        q = ws.solve(xy, z, wrist_roll_reading=roll, seed_reading=seed)
+        q = ws.solve(xy, z, wrist_roll_reading=roll, seed_reading=seed, max_tilt_deg=45)  # only tip position matters here
         path.append(q)
         seed = q
     return path
