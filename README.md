@@ -309,6 +309,9 @@ python ui/serve.py      # then open http://localhost:8000 and press F11; keys 2 
 # Robot module on its own (LeRobot venv, see robot/README.md and docs/SETUP_NOTES.md)
 python -m robot.scripts.tests.scene_snapshot robot/samples/overhead_02.png   # offline, no hardware
 python -m robot.scripts.tests.pick_place_test red_cube B2                     # moves the arm
+
+# Analytics (offline, standard library only)
+python -m analytics.fake_journal --seed 7   # sample journals in data/sessions/ and lessons/sample_staircase.json, all marked sample
 ```
 
 Planned, not built yet:
