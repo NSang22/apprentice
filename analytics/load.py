@@ -193,29 +193,34 @@ class Tables:
 
 
 def read_journal(path: Path) -> tuple[list[dict], int]:
+    """(events, count of skipped lines) for one journal file. See parse_journal_lines."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return parse_journal_lines(f)
+
+
+def parse_journal_lines(lines: Iterable[str]) -> tuple[list[dict], int]:
     """(events, count of skipped lines). A line is skipped unless it is a JSON object with a
     string kind, a numeric t, and an object for data. A cut-off last line is just skipped."""
     events, skipped = [], 0
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if not line.strip():
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                skipped += 1
-                continue
-            ok = (
-                isinstance(event, dict)
-                and isinstance(event.get("kind"), str)
-                and isinstance(event.get("t"), (int, float))
-                and isinstance(event.get("data", {}), dict)
-            )
-            if not ok:
-                skipped += 1
-                continue
-            event.setdefault("data", {})
-            events.append(event)
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            skipped += 1
+            continue
+        ok = (
+            isinstance(event, dict)
+            and isinstance(event.get("kind"), str)
+            and isinstance(event.get("t"), (int, float))
+            and isinstance(event.get("data", {}), dict)
+        )
+        if not ok:
+            skipped += 1
+            continue
+        event.setdefault("data", {})
+        events.append(event)
     return events, skipped
 
 
