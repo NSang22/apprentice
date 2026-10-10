@@ -247,7 +247,29 @@ apprentice/
 ## 8. How to run (fill in as modules land)
 
 ```bash
+# Camera setup and calibration (run once per camera placement, and again at the demo table)
+pip install -r requirements.txt
+python -m perception.setup_gui --camera-index 1
+
+# Regenerate the printable AprilTag grid sheet (only needed if you change cell/tag
+# size in perception/setup_gui.py, or need another copy to print)
+python -m perception.generate_grid_pdf
+
 # Brain only, no hardware
+=======
+# Setup (Python 3.11+), run from the repo root
+pip install websockets pytest
+pytest                                   # unit tests
+
+# Fake perception feed (GridState on ws :8765 at ~10 Hz)
+python -m brain.fake_feed --script tests/scripts/staircase_clean.json            # add --loop to repeat
+python -m brain.fake_feed --script tests/scripts/staircase_with_mistake.json
+python -m brain.fake_feed --script tests/scripts/jitter_and_hands.json --seed 1  # --seed makes jitter repeatable
+python -m brain.fake_feed --interactive  # type: place red B2 | remove B2 | hands | arm | jitter | clear | show | quit
+python -m tests.listen                   # second terminal: print each GridState on one line
+
+# Brain only, no hardware (not built yet)
+>>>>>>> Stashed changes
 python -m brain.fake_feed --script tests/scripts/staircase_with_mistake.json
 python -m robot.stub
 python -m brain.server --lesson lessons/staircase-v1.json --mode human
