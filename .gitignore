@@ -12,6 +12,9 @@ robot/outputs/
 lessons/*.json
 !lessons/sample*.json
 
+# per-machine camera calibration, recalibrated at the demo table
+perception/calib/*.json
+
 # Python
 __pycache__/
 *.py[cod]
