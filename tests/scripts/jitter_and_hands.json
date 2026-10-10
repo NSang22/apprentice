@@ -1,0 +1,10 @@
+[
+  {"board": {"A1": ["red", "blue"], "B2": ["green"], "C3": ["yellow"]}, "duration_s": 2.0, "hands_clear": true, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red", "blue"], "B2": ["green"], "C3": ["yellow"]}, "duration_s": 3.0, "hands_clear": true, "arm_clear": true, "jitter": true},
+  {"board": {"A1": ["red", "blue"], "B2": ["green"], "C3": ["yellow"]}, "duration_s": 1.5, "hands_clear": true, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red", "blue"], "B2": ["green"], "C3": ["yellow"]}, "duration_s": 1.5, "hands_clear": false, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red", "blue"], "B2": ["green"], "C3": ["yellow"]}, "duration_s": 1.5, "hands_clear": true, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red", "blue"], "B2": ["green"], "C3": ["yellow"]}, "duration_s": 1.0, "hands_clear": true, "arm_clear": false, "jitter": false},
+  {"board": {"A1": ["red", "blue"], "B2": ["green"], "C3": ["yellow"]}, "duration_s": 2.0, "hands_clear": false, "arm_clear": true, "jitter": true},
+  {"board": {"A1": ["red", "blue"], "B2": ["green"], "C3": ["yellow"]}, "duration_s": 2.0, "hands_clear": true, "arm_clear": true, "jitter": false}
+]
