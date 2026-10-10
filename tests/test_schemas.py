@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from shared.config import CELLS, LESSONS_DIR, MAX_LEVEL
+from shared.config import CELLS, MAX_LEVEL
 from shared.schemas import (
     Gate,
     GateCheck,
@@ -23,6 +23,7 @@ from shared.schemas import (
 )
 
 SCRIPTS_DIR = Path(__file__).parent / "scripts"
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def board_with(**cells):
@@ -104,7 +105,7 @@ def test_verdict_order_is_frozen():
 
 
 def test_hand_written_lesson_loads_and_replays():
-    lesson = Lesson.from_dict(json.loads((LESSONS_DIR / "staircase-v1.json").read_text()))
+    lesson = Lesson.from_dict(json.loads((FIXTURES_DIR / "staircase-v1.json").read_text()))
     board = empty_board()
     for step in lesson.steps:
         board = apply_step(board, step)
@@ -118,7 +119,7 @@ def test_script_boards_are_valid(script):
 
 
 def test_clean_script_ends_on_lesson_final_board():
-    lesson = Lesson.from_dict(json.loads((LESSONS_DIR / "staircase-v1.json").read_text()))
+    lesson = Lesson.from_dict(json.loads((FIXTURES_DIR / "staircase-v1.json").read_text()))
     for name in ("staircase_clean.json", "staircase_with_mistake.json"):
         last = json.loads((SCRIPTS_DIR / name).read_text())[-1]["board"]
         assert boards_equal({**empty_board(), **last}, lesson.final_board), name
