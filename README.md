@@ -320,6 +320,14 @@ python -m perception.publish --camera 1 --block-mm <edge mm> --debug
 python -m perception.publish --list-cameras        # Windows: which index/backend sees the grid
 python -m perception.publish --video videos/demo.mp4
 
+# Lesson from an expert video (offline, no camera, no network): perception runs on the file in-process.
+# Writes lessons/<id>.json only when every step has a known color, plus lessons/extract/<id>.json (gate
+# reasons, color reads, draft + colors-file template if a color is unknown) and step pictures. No --calib:
+# grid lock + empty board from the video's first second. Exit 0 gate passed, 1 gate failed, 3 colors unknown.
+python -m brain.extractor --video videos/expert_take1.mp4 --block-mm 48 --colors red,yellow,orange,purple,skyblue --boards-out data/boards.json
+python -m brain.extractor --video videos/expert_take1.mp4 --block-mm 48 --colors red,yellow,orange,purple,skyblue --colors-file colors.json
+python -m brain.extractor --script tests/scripts/staircase_with_mistake.json   # or --grid ws://<host>:8765 (live camera; Ctrl+C ends the take)
+
 # Real setup: camera on the Jetson, brain + UI on the laptop (same network)
 #   Jetson:  v4l2-ctl --list-devices                                   # camera index N (/dev/videoN)
 #            python -m perception.calibrate --camera N --block-mm <edge mm>   # DISPLAY=:0 over ssh; prints the exposure it picked
@@ -345,7 +353,6 @@ python -m analytics.record_fixtures       # re-record tests/fixtures/brain_journ
 Planned, not built yet:
 
 ```bash
-python -m brain.extractor --video videos/expert_staircase.mp4 --out lessons/staircase-v1.json  # planned: lesson from an expert video
 python -m robot.api            # planned: robot HTTP API on :8770
 # planned full system: perception.publish + robot.api, then the brain (this flag already works;
 # with --robot http, arm_clear also requires the robot's GET /status at_home)
