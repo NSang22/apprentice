@@ -9,9 +9,14 @@ from shared.config import LESSONS_DIR
 # robot never picks off a stack), at most 2 blocks per color (the kit has 2 of each).
 DEMO_LESSON = LESSONS_DIR / "sample-flat-v1.json"
 
-# Which side of the grid the human student stands on: "row3" (opposite the arm: column A is
-# on their left, row 3 is nearest them) or "row1" (the arm's side: column A is on their
-# right, row 1 is nearest). Hint directions ("left", "toward you") follow it.
+# Which edge of the sheet the human student stands at. Cells follow the printed sheet: the
+# letter is the row (A along the arm's edge, C along the far edge), the number is the column.
+#   "row3": opposite the arm, at the C-row edge (tags 2 and 3). Column 1 is on their left,
+#           row C is nearest them. The default.
+#   "row1": the arm's side, at the A-row edge (tags 0 and 1). Column 1 is on their right,
+#           row A is nearest them.
+# The values are kept from before the rename (journals and analytics record them); they name
+# the same physical edges as always. Hint directions ("left", "toward you") follow it.
 HUMAN_SIDE = "row3"
 HUMAN_SIDES = ("row1", "row3")
 
@@ -29,7 +34,10 @@ SHOW_ME_POST_S = 1.0  # and ends this long after
 HOVER_HOLD_S = 3.0    # robot holds over the target cell this long, then returns home
 
 # Robot HTTP client. Calls block until the motion finishes, so motion timeouts are generous.
-ROBOT_MOTION_TIMEOUT_S = 30.0
+ROBOT_MOTION_TIMEOUT_S = 120.0  # one robot.api place can include the executor's own retries
+# The real arm (--robot http) retries inside robot/executor.py already, so the session allows one
+# more attempt on top of that; the fake robot keeps shared MAX_ROBOT_RETRIES (2).
+HTTP_ROBOT_MAX_RETRIES = 1
 ROBOT_STATUS_TIMEOUT_S = 2.0
 # With --robot http the server polls GET /status and treats arm_clear as false unless the
 # latest reply says at_home and is no older than ROBOT_STATUS_MAX_AGE_S.

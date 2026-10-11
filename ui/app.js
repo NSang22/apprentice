@@ -11,9 +11,11 @@
   const WS_URL = params.get("ws") || `ws://${location.hostname || "localhost"}:${CFG.BRAIN_WS_PORT || 8766}`;
   const PASS_HOLD_MS = CFG.PASS_HOLD_MS || 1600;
 
-  const COLUMNS = ["A", "B", "C"];
-  const ROWS = ["1", "2", "3"];
-  const CELLS = COLUMNS.flatMap((c) => ROWS.map((r) => c + r));
+  // Cells follow the printed sheet: the letter is the row (A along the robot's edge, C along the
+  // student's), the number is the column (1 on the left for a student opposite the robot).
+  const ROW_LETTERS = ["A", "B", "C"];
+  const COLUMN_NUMBERS = ["1", "2", "3"];
+  const CELLS = ROW_LETTERS.flatMap((r) => COLUMN_NUMBERS.map((c) => r + c));
   const COLORS = ["red", "orange", "yellow", "teal", "skyblue", "purple"];   // shared/config.py COLORS
   const VERDICTS = ["PASS", "WRONG_CELL", "WRONG_COLOR", "WRONG_LEVEL", "EXTRA", "MISSING", "WAITING"];
   const LEVEL_WORDS = ["", "second", "third"];
@@ -46,7 +48,8 @@
     blockHex: {},         // color -> measured hex from perception/calib/colors.json
   };
 
-  // The student's side comes from the brain (SessionState.human_side); row3 until the first state.
+  // The student's side comes from the brain (SessionState.human_side); "row3" (opposite the robot,
+  // at the C-row edge) until the first state.
   function side() { return (app.state && app.state.humanSide) || "row3"; }
 
   // ------------------------------------------------------------ input: normalize every field
@@ -293,7 +296,7 @@
 
   // Screen position of a cell as the student sees it: x left to right, y far to near.
   function screenXY(c, sd = side()) {
-    const col = COLUMNS.indexOf(c[0]), row = ROWS.indexOf(c[1]);
+    const col = COLUMN_NUMBERS.indexOf(c[1]), row = ROW_LETTERS.indexOf(c[0]);
     return sd === "row1" ? [2 - col, 2 - row] : [col, row];
   }
 
@@ -347,12 +350,12 @@
     const gridW = G.pitch * 3 - 16;
     parts.push(`<text class="b-edge" x="${G.x0 + gridW / 2}" y="${G.y0 - 30}" text-anchor="middle">Robot side</text>`);
     parts.push(`<text class="b-edge" x="${G.x0 + gridW / 2}" y="${G.y0 + G.pitch * 3 + 72}" text-anchor="middle">Your side</text>`);
-    for (const col of COLUMNS) {
-      const [sx] = screenXY(col + "1");
+    for (const col of COLUMN_NUMBERS) {   // column numbers along the student's edge
+      const [sx] = screenXY("A" + col);
       parts.push(`<text class="b-axis" x="${G.x0 + sx * G.pitch + G.size / 2 + 8}" y="${G.y0 + G.pitch * 3 + 26}" text-anchor="middle">${col}</text>`);
     }
-    for (const row of ROWS) {
-      const [, sy] = screenXY("A" + row);
+    for (const row of ROW_LETTERS) {      // row letters down the side, A at the robot's edge
+      const [, sy] = screenXY(row + "1");
       parts.push(`<text class="b-axis" x="${G.x0 - 34}" y="${G.y0 + sy * G.pitch + G.size / 2 + 20}" text-anchor="middle">${row}</text>`);
     }
 

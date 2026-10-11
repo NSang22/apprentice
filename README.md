@@ -62,14 +62,14 @@ Nothing past the core loop starts until we have **10 clean end-to-end runs**.
 | Item | Spec |
 |---|---|
 | Grid | 3x3, 2.25 in cells, printed, **taped down** |
-| Tags | AprilTag 36h11, IDs 0 to 3 at the corners (0 front-left, 1 front-right, 2 back-right, 3 back-left, "front" = operator side) |
+| Tags | AprilTag 36h11, IDs 0 to 3 at the corners: 0 at A1, 1 at A3, 2 at C3, 3 at C1 (tags 0 and 1 on the arm's edge, 2 and 3 on the student's) |
 | Cubes | Playskool silicone cubes, 2 each of red / orange / yellow / teal / skyblue / purple. Calibrate their colors with `perception.calibrate` (section 8) whenever the lighting changes |
 | Camera | Webcam on a tripod, fixed above the grid. Never move it after calibration. Recalibrate color at the actual demo table |
 | Perception | NVIDIA Jetson |
 | Robot | SO-101 arm, **taught poses, no IK**. Work zone 7 to 14 in |
 | Display | Monitor at the station, readable from arm's length |
 
-**Cell naming.** Columns A to C left to right as seen from the operator side. Rows 1 to 3 from front (nearest the operator) to back. So `A1` is front-left, `C3` is back-right. Levels count up from 0 (on the board).
+**Cell naming** (as printed on the sheet, and as the robot uses it). The letter is the **row**: row A runs along the arm's edge, row C along the student's edge (the student stands opposite the arm). The number is the **column**: 1 to 3 left to right as the student sees it. So `A1` is far-left from the student (at tag 0), `A3` far-right (tag 1), `C3` near-right (tag 2), `C1` near-left (tag 3). Levels count up from 0 (on the board).
 
 **Cube supply.** The robot picks from a fixed tray with one taught slot per color. `place(color, cell, level)` means "pick a cube of that color from the tray and place it there."
 
@@ -129,7 +129,7 @@ These live in `shared/schemas.py` and `shared/config.py`. **Changing them requir
   "title": "Staircase",
   "source_video": "videos/expert_staircase.mp4",
   "steps": [
-    { "color": "red", "cell": "A1", "level": 0, "t_video": 4.2, "narration": "Start with red in the front-left corner." }
+    { "color": "red", "cell": "A1", "level": 0, "t_video": 4.2, "narration": "Start with red in the far-left corner." }
   ],
   "final_board": { "A1": ["red"], "...": [] },
   "gate": { "passed": true, "checks": [ { "name": "replay_matches_final_frame", "passed": true } ] }
@@ -275,6 +275,25 @@ apprentice/
 
 ## 8. How to run (fill in as modules land)
 
+### Demo startup
+
+```bash
+# 1. Jetson (ssh in; export DISPLAY=:0 first for the perception debug window). Kills stale publish /
+#    robot.api / camera holders, finds the camera, starts perception.publish then robot.api in the
+#    background (logs/publish.log, logs/robot.log), prints OK/FAIL per service.
+#    Env: BLOCK_MM (default 47), CAMERA (skip the search), EXPOSURE. Stop: see the last line it prints.
+scripts/jetson_up.sh                 # flags: --no-robot, --no-debug
+
+# 2. Laptop (PowerShell). Once: copy scripts\jetson.env.example to scripts\jetson.env, set JETSON_HOST, JETSON_USER.
+#    Frees ports 8765/8766/8770/8000, opens the SSH tunnel (8765, 8770), copies colors.json, waits for a
+#    GridState, starts brain.server and ui/serve.py in their own windows, opens http://localhost:8000.
+powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Mode human   # or -Mode robot
+
+# 3. Ready check (either machine): perception rate, hands/arm clear, board, brain phase and step, robot status.
+#    Prints READY TO DEMO (exit 0) or the list of problems (exit 1). Never sends a command.
+python scripts/check.py
+```
+
 Run everything from the repo root. The default demo lesson is `lessons/sample-flat-v1.json` (6 blocks, all on the board, red / purple / yellow / teal only, no two same-color blocks touching). Commands that take `--lesson` use it when you leave the flag out.
 
 ```bash
@@ -314,11 +333,16 @@ python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --
 # block edge (without it: the robot's CUBE_SIZE_MM, 48 mm foam, with a warning). --colors defaults to the
 # robot's ACTIVE_COLORS (red, purple, yellow, teal); other colors read unknown.
 python -m perception.calibrate --camera 1 --block-mm <edge mm>
-# --debug: status band (GRID LOCKED n/4 / GRID LOST: moved / GRID NOT LOCKED), each block "B2 teal 0.93"
-# ("?" = the brain will see unknown), hands in magenta. E re-takes the empty board. Blocks on the tags are fine.
+# --debug: status band (GRID LOCKED n/4 / GRID LOST: moved / GRID NOT LOCKED), each stack "B2 L2 [red, teal] 0.93"
+# (height, colors bottom to top), a red "B2 ? <reason>" when a stack can't be read (the brain sees unknown),
+# each cell's visible top face outlined, hands in magenta. R overlays the board the model believes; E
+# re-takes the empty board. The board is read cell by cell (perception/cellmodel.py: every cell and height is
+# rendered and compared with the camera view; a cell's reading is the majority of its last 5 frames).
 python -m perception.publish --camera 1 --block-mm <edge mm> --debug
 python -m perception.publish --list-cameras        # Windows: which index/backend sees the grid
 python -m perception.publish --video videos/demo.mp4
+# publish owns the webcam and shares it: GET http://127.0.0.1:8771/frame is the newest raw frame (headers
+# X-Shape, X-Timestamp), GET /health its age. robot/api.py reads the camera through it. --frame-port 0 turns it off.
 
 # Lesson from an expert video (offline, no camera, no network): perception runs on the file in-process.
 # Writes lessons/<id>.json only when every step has a known color, plus lessons/extract/<id>.json (gate
@@ -327,6 +351,13 @@ python -m perception.publish --video videos/demo.mp4
 python -m brain.extractor --video videos/expert_take1.mp4 --block-mm 48 --colors red,yellow,orange,purple,skyblue --boards-out data/boards.json
 python -m brain.extractor --video videos/expert_take1.mp4 --block-mm 48 --colors red,yellow,orange,purple,skyblue --colors-file colors.json
 python -m brain.extractor --script tests/scripts/staircase_with_mistake.json   # or --grid ws://<host>:8765 (live camera; Ctrl+C ends the take)
+
+# Robot API on the Jetson (README 5.3), in the lerobot venv, started after perception.publish (it reads the
+# camera through publish's frame server, and refuses frames older than 0.5 s). One command at a time; every
+# command and result goes to robot/outputs/api_log.jsonl. --lesson keeps blocks already in their lesson cell
+# out of the supply; supply blocks wait below the grid. Then the brain on the Jetson (or over a tunnel):
+#   python -m robot.api
+#   python -m brain.server --mode robot --robot http://127.0.0.1:8770
 
 # Real setup: camera on the Jetson, brain + UI on the laptop (same network)
 #   Jetson:  v4l2-ctl --list-devices                                   # camera index N (/dev/videoN)
@@ -348,15 +379,6 @@ python -m analytics.fake_journal --seed 7   # synthetic_*.jsonl journals in data
 python -m analytics.report --sessions data/sessions --out data/analytics/metrics.json   # every metric, per provenance; add --tasks robot/outputs/tasks, --include-synthetic
 python -m analytics.record_fixtures       # re-record tests/fixtures/brain_journal_{human,robot}.jsonl from the real brain (about a minute)
 # The fixtures are never edited by hand: when the brain's journal changes, re-record them and commit the result.
-```
-
-Planned, not built yet:
-
-```bash
-python -m robot.api            # planned: robot HTTP API on :8770
-# planned full system: perception.publish + robot.api, then the brain (this flag already works;
-# with --robot http, arm_clear also requires the robot's GET /status at_home)
-#   python -m brain.server --mode robot --robot http://localhost:8770 --grid ws://<perception-host>:8765
 ```
 
 ---

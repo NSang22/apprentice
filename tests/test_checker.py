@@ -60,12 +60,12 @@ def test_missing_stacked_step_says_stack():
 
 def test_wrong_cell():
     r = check(board(A1=["red"], B1=["teal"], C2=["skyblue"]), LESSON, 2, human_side="row1")
-    assert_result(r, Verdict.WRONG_CELL, "C2", "Close! Move the skyblue cube one cell toward you.")
+    assert_result(r, Verdict.WRONG_CELL, "C2", "Close! Move the skyblue cube one cell right.")
 
 
 def test_wrong_cell_from_row3_side():
     r = check(board(A1=["red"], B1=["teal"], C2=["skyblue"]), LESSON, 2, human_side="row3")
-    assert_result(r, Verdict.WRONG_CELL, "C2", "Close! Move the skyblue cube one cell away from you.")
+    assert_result(r, Verdict.WRONG_CELL, "C2", "Close! Move the skyblue cube one cell left.")
 
 
 def test_wrong_cell_picks_the_nearest_candidate():
@@ -105,9 +105,9 @@ def test_wrong_color_in_wrong_cell_is_extra():
 def test_knocked_cube_elsewhere_is_wrong_cell():
     # Step 3 placed correctly, but the teal cube from step 1 slid from B1 to B2.
     r = check(board(A1=["red", "skyblue"], B2=["teal"], C1=["skyblue"]), LESSON, 3, human_side="row1")
-    assert_result(r, Verdict.WRONG_CELL, "B2", "Put it back one cell toward you, on B1")
+    assert_result(r, Verdict.WRONG_CELL, "B2", "Put it back one cell right, on B1")
     r = check(board(A1=["red", "skyblue"], B2=["teal"], C1=["skyblue"]), LESSON, 3, human_side="row3")
-    assert_result(r, Verdict.WRONG_CELL, "B2", "Put it back one cell away from you, on B1")
+    assert_result(r, Verdict.WRONG_CELL, "B2", "Put it back one cell left, on B1")
 
 
 def test_knocked_off_the_grid_is_missing_with_fault_cell():
@@ -139,10 +139,10 @@ def test_check_only_reads_its_inputs():
 @pytest.mark.parametrize(
     "src,dst,row1_text,row3_text",
     [
-        ("A1", "B1", "one cell left", "one cell right"),
-        ("B1", "A1", "one cell right", "one cell left"),
-        ("B1", "B2", "one cell away from you", "one cell toward you"),
-        ("B2", "B1", "one cell toward you", "one cell away from you"),
+        ("A1", "A2", "one cell left", "one cell right"),          # numbers are columns
+        ("A2", "A1", "one cell right", "one cell left"),
+        ("A1", "B1", "one cell away from you", "one cell toward you"),  # letters are rows, A far
+        ("B1", "A1", "one cell toward you", "one cell away from you"),
         ("C3", "A1", "two cells right and two cells toward you", "two cells left and two cells away from you"),
     ],
 )
@@ -151,10 +151,10 @@ def test_direction_both_sides(src, dst, row1_text, row3_text):
     assert direction(src, dst, "row3") == row3_text
 
 
-# Where column A and the nearest row sit for a human on each side of the printed sheet.
+# Where column 1 and the nearest row sit for a human on each side of the printed sheet.
 SIDE_LAYOUT = {
-    "row3": {"column_a": "left", "nearest_row": "3"},   # opposite the arm
-    "row1": {"column_a": "right", "nearest_row": "1"},  # the arm's side
+    "row3": {"column_1": "left", "nearest_row": "C"},   # opposite the arm
+    "row1": {"column_1": "right", "nearest_row": "A"},  # the arm's side
 }
 
 
@@ -164,14 +164,14 @@ def test_side_layout_covers_every_human_side():
 
 @pytest.mark.parametrize("side", HUMAN_SIDES)
 def test_direction_matches_where_the_human_stands(side):
-    a_side = SIDE_LAYOUT[side]["column_a"]
-    other = "right" if a_side == "left" else "left"
+    one_side = SIDE_LAYOUT[side]["column_1"]
+    other = "right" if one_side == "left" else "left"
     near = SIDE_LAYOUT[side]["nearest_row"]
-    far = "1" if near == "3" else "3"
-    assert direction("B2", "A2", side) == f"one cell {a_side}"  # toward column A
-    assert direction("B2", "C2", side) == f"one cell {other}"
-    assert direction(f"B{far}", f"B{near}", side) == "two cells toward you"
-    assert direction(f"B{near}", f"B{far}", side) == "two cells away from you"
+    far = "A" if near == "C" else "C"
+    assert direction("B2", "B1", side) == f"one cell {one_side}"  # toward column 1
+    assert direction("B2", "B3", side) == f"one cell {other}"
+    assert direction(f"{far}2", f"{near}2", side) == "two cells toward you"
+    assert direction(f"{near}2", f"{far}2", side) == "two cells away from you"
 
 
 def test_direction_defaults_to_settings_side():
