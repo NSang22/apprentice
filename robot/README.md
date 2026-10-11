@@ -33,7 +33,9 @@ python -m robot.scripts.tests.pick_place_test red_cube --onto blue_cube  # stack
 
 Scripts that move the arm are hands-free (`session.py`): a 3 s countdown, then the arm turns on
 where it is, rises straight up and parks. At the end it sets itself down on the table just left of
-the sheet, below its parking spot (keep that spot clear), and releases torque. Motion streams at 50 Hz with smooth
+the sheet, below its parking spot (keep that spot clear), and releases torque. Between task
+steps it parks instead just off the nearest side edge of the sheet, 120 mm up (keep ~5 cm beside
+the sheet clear at that height), at a spot checked to leave the whole grid in the camera's view. Motion streams at 50 Hz with smooth
 speed ramps (`Arm.follow`). Ctrl+C stops the arm and holds it, then asks what to do; the 12V
 plug is the hard stop.
 
@@ -57,7 +59,7 @@ It is the only entry point that needs no hardware.
 
 | Script | When to run it |
 |---|---|
-| `touch_calibrate.py` | After the arm or sheet moves. `--full` once (16 crossings), then quick (4 corners). |
+| `touch_calibrate.py` | After the arm or sheet moves. `--full` once (16 crossings), then quick (4 corners). If the middle of the sheet is off after a quick run, `--middle` (B2's 4 corners) refits everything on those plus the quick run's corners. |
 | `auto_calibrate.py` | After every touch calibration. The arm moves a cube through all 9 cells and fits a placement correction. |
 | `recalibrate_gripper.py` | Only if the gripper's range drifts. |
 
