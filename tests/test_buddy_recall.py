@@ -73,3 +73,21 @@ def test_narration_lines_up_with_steps_without_square_names():
             for c in ("yellow", "red", "purple", "orange", "teal", "red")]
     r = check_narration(steps, said)
     assert r["matched"] == 4 and r["unseen"] == ["purple", "red"]
+
+
+def test_board_check_trusts_colors_and_lets_narration_decide_blocks():
+    """A real recording, and the vision model's actual (imperfect) answers for its final board."""
+    from buddy.teach import reconcile, stacks_ok
+    steps = [{"cell": "B2", "level": 0, "color": "red"}, {"cell": "A1", "level": 0, "color": "purple"},
+             {"cell": "B3", "level": 0, "color": "yellow"}, {"cell": "C1", "level": 0, "color": "yellow"},
+             {"cell": "B1", "level": 0, "color": "unknown"}]
+    said = [{"action": "place", "color": c} for c in ("red", "purple", "orange", "teal", "yellow", "skyblue")]
+    real = [("red", "B2", 0), ("purple", "A1", 0), ("orange", "B3", 0), ("teal", "B2", 1), ("yellow", "C1", 0), ("skyblue", "B1", 0)]
+    answers = [
+        {"B1": ["skyblue", "purple"], "B2": ["red", "teal"], "B3": ["orange"], "C1": ["yellow"]},   # left out A1, invented purple on B1
+        {"A1": ["purple"], "B1": ["skyblue"], "B2": ["red", "teal"], "B3": ["orange", "yellow"], "C1": ["yellow"]},  # invented yellow on B3
+        {"A1": ["purple"], "B1": ["skyblue"], "B2": ["red", "teal"], "B3": ["orange"], "C1": ["yellow"]},  # right
+    ]
+    for truth in answers:
+        fixed, _ = reconcile([dict(s) for s in steps], truth, said)
+        assert [(s["color"], s["cell"], int(s["level"])) for s in fixed] == real and stacks_ok(fixed)

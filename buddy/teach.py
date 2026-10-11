@@ -331,45 +331,55 @@ def speech_colors(steps: list, placements: list[dict]) -> dict[int, str]:
 
 def reconcile(steps: list[dict], truth: dict[str, list[str]], placements: list[dict]) -> tuple[list[dict], list[str]]:
     """The extractor's steps checked against the final board the vision model read (cell -> colors,
-    bottom to top). The extractor is good at order and timing, and unsure of colors and stacks;
-    the final board is the truth for what is there. Returns (steps, what changed):
-      a step on a block the board has, in another color   takes the board's color (no false duplicates)
-      a step the final board has no block for              is dropped (a ghost, or a stack it lost)
-      a block on the board no step placed                  is added, in the order it was said
-    Steps whose cell the vision model could not see (no blob there) are kept as they are."""
+    bottom to top), with the narration as the tie-breaker. Measured on a real recording, every model
+    named each square's colors and the real stack right, and sometimes invented a stack (a leaning
+    neighbour read as a second block) or left a square out. So the board is trusted for colors,
+    and the narration decides whether a block is added or dropped:
+      a step on a square the board has, in another color   takes the board's color, unless the
+                                                           narration never says that color
+      a step on a square the board has nothing at          is dropped only if the steps have that
+                                                           color more often than it was said
+      a block on the board no step placed                  is added only if that color was said, and
+                                                           placed fewer times than it was said
+    Without narration, colors are still fixed and nothing is added or dropped.
+    Returns (steps, what changed)."""
+    from collections import Counter
+    said = Counter(p.get("color") for p in placements
+                   if isinstance(p, dict) and p.get("action", "place") == "place" and p.get("color") in COLORS)
+    in_steps = Counter(st["color"] for st in steps)
     changes, out = [], []
     for st in steps:
         cell, level = st["cell"], int(st["level"])
-        if cell not in truth:
+        stack = truth.get(cell) or []
+        if level < len(stack):
+            board_color = stack[level]
+            if st["color"] != board_color and (not said or said[board_color]):
+                changes.append(f"{cell} level {level}: {st['color']} -> {board_color}")
+                st = {**st, "color": board_color, "color_source": "vision model"}
             out.append(dict(st))
-            continue
-        stack = truth[cell]
-        if level >= len(stack):
-            changes.append(f"dropped {st['color']} on {cell} level {level}: not on the final board")
-            continue
-        if st["color"] != stack[level]:
-            changes.append(f"{cell} level {level}: {st['color']} -> {stack[level]}")
-            st = {**st, "color": stack[level], "color_source": "vision model"}
-        out.append(dict(st))
+        elif said and in_steps[st["color"]] > said[st["color"]]:
+            in_steps[st["color"]] -= 1
+            changes.append(f"dropped {st['color']} on {cell} level {level}: not on the final board, and said fewer times")
+        else:
+            out.append(dict(st))
     have = {(st["cell"], int(st["level"])) for st in out}
-    spoken = [p.get("color") for p in placements if isinstance(p, dict) and p.get("action", "place") == "place"]
+    placed = Counter(st["color"] for st in out)
+    order = [p.get("color") for p in placements if isinstance(p, dict) and p.get("action", "place") == "place"]
     for cell, stack in truth.items():
         for level, color in enumerate(stack):
-            if (cell, level) in have:
+            if (cell, level) in have or not said or placed[color] >= said[color]:
                 continue
-            new = {"cell": cell, "level": level, "color": color, "color_source": "vision model"}
-            # place it after the step whose color was said just before it
-            at = len(out)
-            if color in spoken:
-                before = spoken[:spoken.index(color)]
-                idx = [i for i, st in enumerate(out) if st["color"] in before]
-                at = (max(idx) + 1) if idx else 0
+            new = {"cell": cell, "level": level, "color": color, "color_source": "vision model + narration"}
+            before = order[:order.index(color)] if color in order else []
+            idx = [i for i, st in enumerate(out) if st["color"] in before]
+            at = (max(idx) + 1) if idx else len(out)
             below = [i for i, st in enumerate(out) if st["cell"] == cell and int(st["level"]) < level]
             if below:
                 at = max(at, max(below) + 1)          # never before the block it stands on
             out.insert(at, new)
             have.add((cell, level))
-            changes.append(f"added {color} on {cell} level {level}: on the final board, no step placed it")
+            placed[color] += 1
+            changes.append(f"added {color} on {cell} level {level}: on the final board and said, no step placed it")
     return out, changes
 
 

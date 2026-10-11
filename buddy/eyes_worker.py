@@ -173,19 +173,23 @@ def narration(path: str) -> dict:
 
 
 BOARD_PROMPT = (
-    "This overhead photo shows toy blocks on a printed sheet. Each block or stack of blocks is outlined "
-    "in magenta and labelled with a white number in a black box. For every number, list the colors of the "
-    f"blocks in it from the bottom (on the sheet) to the top, using only: {', '.join(COLORS)} (skyblue is "
-    "light blue). A single block is a list of one; a block standing on another is a list of two. Judge each "
-    "block's own color, ignoring glare and shadows. Reply with JSON only, like "
-    '{"1": ["red"], "2": ["red", "teal"]}.'
+    "This overhead photo shows a printed 3 by 3 grid with toy blocks on it. The squares are outlined in "
+    "magenta and labelled A1 to C3 where they lie on the table. For every square, list the blocks standing "
+    "on it from the bottom (on the table) to the top, using only these colors: "
+    f"{', '.join(COLORS)} (skyblue is light blue). The camera is not straight above, so a stack of two "
+    "blocks leans in the picture and its top can cover a neighbouring square: judge a stack by the square "
+    "its bottom block stands on. Leave out empty squares and blocks off the grid. Reply with JSON only, like "
+    '{"B2": ["red", "teal"], "A1": ["purple"]}.'
 )
 
 
 def board(path: str) -> dict:
-    """The vision model reads the final board of a recording: every block or stack on the grid,
-    bottom to top. The square comes from the robot's own geometry (blob centre -> cell)."""
+    """The vision model reads the final board of a recording, square by square, bottom to top.
+    The grid's squares are drawn and labelled on the picture where they lie on the table (from the
+    sheet's tags), and the picture is cropped to the sheet, so the model names squares itself and
+    a leaning stack is judged by its base."""
     import cv2
+    from perception.cells import cell_center_mm, grid_geometry
     cap = cv2.VideoCapture(path)
     n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     if n > 2:
@@ -199,22 +203,34 @@ def board(path: str) -> dict:
     cap.release()
     if img is None:
         return {"ok": False, "error": "could not read the video's last frame"}
-    scene, _, detections = scene_mod.build_scene(img, SheetLocalizer(), naming="off")
-    if scene is None:
+    pose = SheetLocalizer().locate(img)
+    if pose is None:
         return {"ok": False, "error": "I can't see the sheet's tags in the last frame"}
-    on_grid = [(d, o) for d, o in zip(detections, scene["objects"]) if mm_to_cell(*o["center_mm"])]
-    if not on_grid:
-        return {"ok": True, "blocks": [], "seconds": 0.0, "model": None}
-    ok, jpg = cv2.imencode(".jpg", vision_namer.numbered_image(img, [d.contour for d, _ in on_grid]),
-                           [cv2.IMWRITE_JPEG_QUALITY, 85])
+    x0, y0, cell = grid_geometry()
+    out = img.copy()
+    for i in range(3):
+        for j in range(3):
+            sq = [(x0 + j * cell, y0 + i * cell), (x0 + (j + 1) * cell, y0 + i * cell),
+                  (x0 + (j + 1) * cell, y0 + (i + 1) * cell), (x0 + j * cell, y0 + (i + 1) * cell)]
+            cv2.polylines(out, [pose.to_image(sq).astype(np.int32)], True, (255, 0, 255), 2)
+    for c in CELLS:
+        u, v = pose.to_image([cell_center_mm(c)])[0]
+        (w, h), _ = cv2.getTextSize(c, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+        cv2.rectangle(out, (int(u) - w // 2 - 4, int(v) - h // 2 - 4), (int(u) + w // 2 + 4, int(v) + h // 2 + 4), (0, 0, 0), -1)
+        cv2.putText(out, c, (int(u) - w // 2, int(v) + h // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+    corners = pose.to_image([(x0 - 40, y0 - 60), (x0 + 3 * cell + 40, y0 - 60),
+                             (x0 + 3 * cell + 40, y0 + 3 * cell + 40), (x0 - 40, y0 + 3 * cell + 40)])
+    h, w = out.shape[:2]
+    bx0, by0 = max(0, int(corners[:, 0].min())), max(0, int(corners[:, 1].min()))
+    bx1, by1 = min(w, int(corners[:, 0].max())), min(h, int(corners[:, 1].max()))
+    ok, jpg = cv2.imencode(".jpg", out[by0:by1, bx0:bx1], [cv2.IMWRITE_JPEG_QUALITY, 85])
     r = openai_vision.ask_json(BOARD_PROMPT, [jpg.tobytes()])
     answer = r["answer"] if isinstance(r["answer"], dict) else {}
     blocks = []
-    for i, (_, o) in enumerate(on_grid, 1):
-        stack = answer.get(str(i)) or []
-        stack = [TO_SHARED.get(naming.normalize(c), naming.normalize(c)) for c in stack if isinstance(c, str)]
-        x, y = o["center_mm"]
-        blocks.append({"cell": mm_to_cell(x, y), "center_mm": [x, y], "stack": [c for c in stack if c in COLORS]})
+    for c, stack in answer.items():
+        if c in CELLS and isinstance(stack, list):
+            colors = [TO_SHARED.get(naming.normalize(x), naming.normalize(x)) for x in stack if isinstance(x, str)]
+            blocks.append({"cell": c, "stack": [x for x in colors if x in COLORS]})
     return {"ok": True, "blocks": blocks, "seconds": r["seconds"], "model": r["model"]}
 
 
