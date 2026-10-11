@@ -157,6 +157,7 @@ class VideoSource:
         self._result: Optional[FrameResult] = None
         self._crops: dict[int, dict[str, np.ndarray]] = {}
         self._robot_reads: dict[int, dict[str, str]] = {}
+        self._robot_dist: dict[int, dict[str, dict[str, float]]] = {}  # frame -> cell -> color -> distance
         self._robot_active = robot_naming.ACTIVE_COLORS
         if color_memory is None and robot_color.MEMORY_FILE.is_file():
             color_memory = robot_color.MEMORY_FILE  # the robot's own file, read only
@@ -245,9 +246,9 @@ class VideoSource:
             return
         self._crops[settled.frame_id] = {cell: self._crop(self._frame, cell) for cell in CELLS}
         if self.namer is not None:
-            self._robot_reads[settled.frame_id] = self._robot_names(settled.board)
+            self._robot_reads[settled.frame_id], self._robot_dist[settled.frame_id] = self._robot_names(settled.board)
 
-    def _robot_names(self, board: dict[str, list[str]]) -> dict[str, str]:
+    def _robot_names(self, board: dict[str, list[str]]) -> tuple[dict[str, str], dict[str, dict[str, float]]]:
         frame, pose = self._frame, self.perceiver.lock.pose()
         tags = {k: v["corners_mm"] for k, v in self.perceiver.localizer.spec["tags"].items()}
         blobs = segment.detect(frame, None, pose=pose, tags=tags)  # as robot/perception/scene.build_scene
@@ -255,7 +256,8 @@ class VideoSource:
         for b in blobs:  # the robot places a blob by its centre at half a block's height (scene.build_scene)
             x, y = pose.to_sheet([b.center_px], self.block_mm / 2.0)[0]
             by_cell.setdefault(mm_to_cell(float(x), float(y)), []).append(b)
-        reads = {}
+        reads, dist = {}, {}
+        memory = self.namer.memory
         for cell in (c for c in CELLS if board[c]):
             hits = by_cell.get(cell, [])
             if len(hits) != 1 or hits[0].score < 0:
@@ -263,11 +265,20 @@ class VideoSource:
                 continue
             name = self.namer.name(frame, [hits[0].contour], pose, tags)[0]
             reads[cell] = ROBOT_NAMES.get(name, name) if self.namer.last_source == "memory" else UNKNOWN
-        return reads
+            # How far the blob is from each remembered color, in the memory's own terms: the signature
+            # color_calibrate.py learns from, and the per-color minimum ColorMemory.classify takes.
+            sig = robot_color.signature(frame, hits[0].contour)
+            dist[cell] = {ROBOT_NAMES.get(n, n): min(robot_color.distance(sig, x) for x in samples)
+                          for n, samples in memory.colors.items() if samples and n in robot_naming.ACTIVE_COLORS}
+        return reads, dist
 
     def robot_read(self, frame_id: int, cell: str) -> Optional[str]:
         """The robot-memory name of the top block on cell in that settled frame, None if not read."""
         return self._robot_reads.get(frame_id, {}).get(cell)
+
+    def robot_distance(self, frame_id: int, cell: str) -> Optional[dict[str, float]]:
+        """Robot-memory distance from that cell's blob to each color in play, None if not measured."""
+        return self._robot_dist.get(frame_id, {}).get(cell)
 
     def _crop(self, frame: np.ndarray, cell: str) -> np.ndarray:
         _, _, size = grid_geometry()

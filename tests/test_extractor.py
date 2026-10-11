@@ -34,7 +34,7 @@ def lesson_from(frames, manual=None):
     ex = extract(frames)
     rows = step_rows(ex, manual_colors(manual or [], ex.steps))
     lesson = build_lesson(rows, "test-lesson", "Test", None)
-    return ex, rows, lesson, gate_lesson(lesson, ex)
+    return ex, rows, lesson, gate_lesson(lesson, ex, rows=rows)
 
 
 def placed(lesson):
@@ -112,10 +112,10 @@ UNREADABLE = [seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "B2": ["unknown
               seg({"A1": ["red"], "B2": ["unknown"]})]
 
 
-def test_unknown_color_still_makes_its_step_and_only_fails_colors_known(tmp_path):
+def test_unknown_color_still_makes_its_step(tmp_path):
     ex, rows, lesson, gate = lesson_from(frames_of(UNREADABLE))
     assert [(r.cell, r.level, r.color) for r in rows] == [("A1", 0, "red"), ("B2", 0, "unknown")]
-    assert failed(gate) == ["colors_known"]
+    assert failed(gate) == ["replay_matches_final_frame", "colors_known"]   # the last board can't read B2 either
     out = write_outputs(ex, rows, lesson, gate, tmp_path / "test-lesson.json", {})
     assert out.lesson_path is None and not (tmp_path / "test-lesson.json").exists()
     record = json.loads(out.extract_path.read_text())
@@ -126,7 +126,8 @@ def test_unknown_color_still_makes_its_step_and_only_fails_colors_known(tmp_path
 def test_colors_file_fills_unknown_and_gate_passes(tmp_path):
     ex, rows, lesson, gate = lesson_from(frames_of(UNREADABLE), [{"step": 2, "cell": "B2", "color": "orange"}])
     assert [(r.color, r.source) for r in rows] == [("red", "camera"), ("orange", "manual")]
-    assert gate.gate.passed, gate.reasons
+    assert gate.gate.passed, gate.reasons   # the manual color stands in for the unreadable final read
+    assert gate.notes["replay_matches_final_frame"] == ["B2: manual, unverified (orange)"]
     out = write_outputs(ex, rows, lesson, gate, tmp_path / "test-lesson.json", {})
     assert Lesson.from_dict(json.loads(out.lesson_path.read_text())).steps[1].color == "orange"
 
@@ -163,6 +164,41 @@ def test_two_cubes_of_one_color_fail_one_cube_per_color():
     _, _, lesson, gate = lesson_from(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "C3": ["red"]})]))
     assert placed(lesson) == [("red", "A1", 0), ("red", "C3", 0)]
     assert failed(gate) == ["one_cube_per_color"]
+
+
+def test_unread_cube_stacked_on_a_known_top_is_a_step():
+    # A1 red, then a cube on it no source can read: a draft step at level 1, which a colors file can name
+    stacked = [seg({}), seg({"A1": ["red"]}), seg({"A1": ["red", "unknown"]}), seg({"A1": ["red", "unknown"]})]
+    ex, rows, lesson, gate = lesson_from(frames_of(stacked))
+    assert placed(lesson) == [("red", "A1", 0), ("unknown", "A1", 1)]
+    assert "colors_known" in failed(gate)
+    _, rows, _, _ = lesson_from(frames_of(stacked), [{"step": 2, "cell": "A1", "color": "teal"}])
+    assert [(r.color, r.source) for r in rows] == [("red", "camera"), ("teal", "manual")]
+    # the top goes unknown and the old top comes back: that unknown cube was a transient
+    ex = extract(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["red", "unknown"]}), seg({"A1": ["red"]})]))
+    split_transients(ex)
+    assert [(c.cell, c.level) for c in ex.steps] == [("A1", 0)]
+    assert [(c.cell, c.level) for c in ex.transients] == [("A1", 1)] and ex.removed == []
+
+
+def test_unclear_read_close_to_the_top_keeps_its_color():
+    # A1 red; then nothing reads it clearly, but it is 20 from red in the robot memory: a weak read
+    frames = frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["unknown"]})])
+    robot_read = lambda frame_id, cell: "red" if frames[frame_id].board[cell] == ["red"] else "unknown"
+    ex = extract(frames, robot_read=robot_read, robot_distance=lambda frame_id, cell: {"red": 20.0, "orange": 30.0})
+    split_transients(ex)
+    rows = step_rows(ex)
+    lesson = build_lesson(rows, "test-lesson", "Test", None)
+    gate = gate_lesson(lesson, ex, rows=rows)
+    assert placed(lesson) == [("red", "A1", 0)] and [w["kept"] for w in ex.weak_reads] == ["red"]
+    assert gate.gate.passed, gate.reasons
+    assert gate.notes["replay_matches_final_frame"] == ["A1: weak read, 20.0 from red (limit 26)"]
+    # the same read 40 from red is not close: something else is on A1, an unknown step, and the gate fails
+    ex = extract(frames, robot_read=robot_read, robot_distance=lambda frame_id, cell: {"red": 40.0})
+    rows = step_rows(ex)
+    gate = gate_lesson(build_lesson(rows, "test-lesson", "Test", None), ex, rows=rows)
+    assert [(r.color, r.cell, r.level) for r in rows] == [("red", "A1", 0), ("unknown", "A1", 1)]
+    assert set(failed(gate)) == {"replay_matches_final_frame", "colors_known"}
 
 
 def test_object_with_no_known_color_that_leaves_is_a_transient():

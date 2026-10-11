@@ -17,8 +17,16 @@ boards, removals are applied before additions:
   the top reads the color right under   the top cube was removed
   an empty cell becomes occupied        a step at level 0
   the top reads a clear new color       a step at level = cubes already there (a fourth: refused)
-  the top reads unknown, or the same    nothing happened
-A top read is clear when a source knows it: the robot's color memory first, then the camera.
+  the top reads unclear, but close      a weak read of the same cube: it keeps its color (logged)
+  the top reads unclear, and not close  something else on the cell: a step at the next level, color
+                                        unknown (a draft until a colors file names it); if the old
+                                        top color comes back, it was a transient
+  the top reads the same                nothing happened
+A top read is clear when a source knows it: the robot's color memory first, then the camera. It is
+easier to keep a color than to get one: an unclear read is close when its robot-memory distance to
+the top's color is at most WEAK_READ_MAX_DISTANCE, looser than the memory's own limit for a clear
+name (robot/perception/color.py KNOWN_MAX 18 plus MIN_MARGIN 8). The camera gives no distance, so
+without a color memory an unclear read is never close.
 A known color showing up while that color is still on the board fails the gate (one cube per
 color). Position first, color second, per level: a cube is its slot (cell, level) from the moment
 it appears until it is removed, and every read taken while it is the top is kept. A cube that is
@@ -76,6 +84,12 @@ EXIT_PASSED, EXIT_GATE_FAILED, EXIT_BAD_INPUT, EXIT_DRAFT = 0, 1, 2, 3
 DEFAULT_BLOCK_MM = 48.0
 
 RobotRead = Callable[[int, str], Optional[str]]  # (frame id, cell) -> robot-memory name of the top block
+RobotDistance = Callable[[int, str], Optional[dict[str, float]]]  # (frame id, cell) -> color -> distance
+
+# An unclear read within this robot-memory distance of the top's color is a weak read of the same
+# cube. Measured on expert_take1 (videos/calib_oct11/color_memory.json): the one board where no source
+# read a placed cube clearly was B3 orange at 22.9; the hand over C3 read 29.3 from its nearest color.
+WEAK_READ_MAX_DISTANCE = 26.0
 
 
 # ---------------------------------------------------------------- settling and tracking (pure)
@@ -131,7 +145,10 @@ class Extraction:
     transients: list[Cube] = field(default_factory=list)  # not cubes: see split_transients()
     changes: list[tuple[float, list[Cube], list[Cube]]] = field(default_factory=list)  # (t, added, removed)
     problems: list[tuple[str, str]] = field(default_factory=list)  # (gate check, reason) the history refused
+    emptied: list[tuple[float, str, list[Cube]]] = field(default_factory=list)  # (t, cell, cubes) gone at once
     tops: list[dict[str, str]] = field(default_factory=list)  # per settled board: occupied cell -> top read
+    distances: list[dict[str, dict[str, float]]] = field(default_factory=list)  # per board: cell -> color -> distance
+    weak_reads: list[dict[str, Any]] = field(default_factory=list)  # unclear reads that kept the top's color
     robot_used: bool = False
     frames: int = 0
     unusable: dict[str, int] = field(default_factory=dict)  # reason -> frames the stabilizer could not use
@@ -180,14 +197,14 @@ def settle(frames: Iterable[GridState], extraction: Extraction,
 
 
 def extract(frames: Iterable[GridState], on_settle: Optional[Callable[[Settled], None]] = None,
-            robot_read: Optional[RobotRead] = None) -> Extraction:
+            robot_read: Optional[RobotRead] = None, robot_distance: Optional[RobotDistance] = None) -> Extraction:
     """Frames -> the existing stabilizer -> track()."""
     ex = Extraction(settled=[], steps=[], removed=[], baseline=[])
-    return track(settle(frames, ex, on_settle), ex, robot_read)
+    return track(settle(frames, ex, on_settle), ex, robot_read, robot_distance)
 
 
 def track(settled: Iterable[Settled], ex: Optional[Extraction] = None,
-          robot_read: Optional[RobotRead] = None) -> Extraction:
+          robot_read: Optional[RobotRead] = None, robot_distance: Optional[RobotDistance] = None) -> Extraction:
     """Steps from boards that have already settled (oldest first), by history: see the module
     docstring. Only occupancy and the top color of each cell are read from a board."""
     ex = ex if ex is not None else Extraction(settled=[], steps=[], removed=[], baseline=[])
@@ -211,7 +228,9 @@ def track(settled: Iterable[Settled], ex: Optional[Extraction] = None,
         camera = {cell: s.board[cell][-1] for cell in occupied}
         robot = {cell: robot_read(s.frame_id, cell) if robot_read is not None else None for cell in occupied}
         tops = {cell: robot[cell] if robot[cell] not in (None, UNKNOWN) else camera[cell] for cell in occupied}
+        dist = {cell: d for cell in occupied if robot_distance is not None and (d := robot_distance(s.frame_id, cell))}
         ex.tops.append(tops)
+        ex.distances.append(dist)
         added: list[Cube] = []
         gone: list[Cube] = []
         skip: set[str] = set()  # cells whose read on this board was refused (not kept on the top cube)
@@ -224,9 +243,8 @@ def track(settled: Iterable[Settled], ex: Optional[Extraction] = None,
             for cell in CELLS:  # removals first
                 st = stacks[cell]
                 if st and cell not in camera:
-                    if len(st) > 1:
-                        ex.problems.append(("one_cube_per_change", f"{cell} went from {len(st)} cubes to empty in one "
-                                                                   f"change at {s.t:.1f} s"))
+                    if len(st) > 1:  # judged in gate_history, once transients are known
+                        ex.emptied.append((s.t, cell, list(st)))
                     for cube in reversed(st):
                         remove(cube, s.t, gone)
                     st.clear()
@@ -239,7 +257,17 @@ def track(settled: Iterable[Settled], ex: Optional[Extraction] = None,
                         ex.problems.append(("one_cube_per_color", f"{read} appeared on {cell} at {s.t:.1f} s while "
                                                                   f"a {read} cube was still on the board"))
                     cube = Cube(cell, 0, s.t, s.frame_id)
-                elif read == UNKNOWN or read == st[-1].color():
+                elif read == UNKNOWN:
+                    color = st[-1].color()
+                    d = dist.get(cell, {}).get(color)
+                    if color != UNKNOWN and d is not None and d <= WEAK_READ_MAX_DISTANCE:
+                        ex.weak_reads.append({"t": round(s.t, 3), "cell": cell, "level": st[-1].level, "kept": color,
+                                              "distance": round(d, 1)})
+                        continue  # a weaker read of the same cube
+                    if color == UNKNOWN or len(st) > MAX_LEVEL:
+                        continue  # the same unread cube, or no room for another
+                    cube = Cube(cell, len(st), s.t, s.frame_id)  # unclear and not close: something else on it
+                elif read == st[-1].color():
                     continue
                 elif st[-1].color() == UNKNOWN:  # the top's first clear read: the same cube
                     if on_board(read, st[-1]):
@@ -366,13 +394,19 @@ def gate_history(ex: Extraction) -> History:
     def slots(cubes: list[Cube]) -> list[tuple[str, int]]:
         return [(c.cell, c.level) for c in cubes if id(c) not in transient]
 
+    problems = list(ex.problems)
+    for t, cell, cubes in ex.emptied:
+        n = sum(1 for c in cubes if id(c) not in transient)
+        if n > 1:
+            problems.append(("one_cube_per_change", f"{cell} went from {n} cubes to empty in one change at {t:.1f} s"))
     if not ex.settled:
-        return History(None, None, problems=list(ex.problems))
+        return History(None, None, problems=problems)
     first, last, tops = ex.settled[0], ex.settled[-1], ex.tops[-1]
     return History(first_occupied=[cell for cell in CELLS if first.board[cell]],
                    final_tops={cell: tops.get(cell) if last.board[cell] else None for cell in CELLS},
+                   final_distances=dict(ex.distances[-1]), weak_limit=WEAK_READ_MAX_DISTANCE,
                    changes=[Change(t, slots(added), slots(gone)) for t, added, gone in ex.changes],
-                   problems=list(ex.problems))
+                   problems=problems)
 
 
 def step_rows(ex: Extraction, manual: Optional[dict[int, str]] = None) -> list[StepRow]:
@@ -401,8 +435,11 @@ def build_lesson(rows: list[StepRow], lesson_id: str, title: str, source_video: 
     return Lesson(lesson_id, title, source_video, steps, final)
 
 
-def gate_lesson(lesson: Lesson, ex: Extraction, reference_empty: Optional[bool] = None) -> GateResult:
-    result = run_gate(lesson.steps, gate_history(ex), reference_empty)
+def gate_lesson(lesson: Lesson, ex: Extraction, reference_empty: Optional[bool] = None,
+                rows: Optional[list[StepRow]] = None) -> GateResult:
+    """rows: the step rows, so a manual color can stand in for an unreadable final read."""
+    manual = {r.number - 1 for r in rows or [] if r.source == "manual"}
+    result = run_gate(lesson.steps, gate_history(ex), reference_empty, manual)
     lesson.gate = result.gate
     return result
 
@@ -521,7 +558,8 @@ def write_outputs(ex: Extraction, rows: list[StepRow], lesson: Lesson, gate: Gat
         "corrections": [cube_dict(c, ex) for c in ex.removed],
         "baseline_cubes": [cube_dict(c, ex) for c in ex.baseline],
         "transients": [cube_dict(c, ex) for c in ex.transients],
-        "gate": {**gate.gate.to_dict(), "reasons": gate.reasons},
+        "weak_reads": ex.weak_reads,
+        "gate": {**gate.gate.to_dict(), "reasons": gate.reasons, "notes": gate.notes},
         "pictures": [repo_relative(Path(p)) for p in pictures(extract_dir / lesson.lesson_id)] if pictures else [],
     }
     if not complete:
@@ -595,6 +633,9 @@ def print_report(out: Outcome, ex: Extraction) -> None:
     for c in ex.removed:
         print(f"  correction: {c.color()} cube on {c.cell} level {c.level}, appeared {c.t_video:.2f} s, "
               f"removed {c.t_removed:.2f} s")
+    for w in ex.weak_reads:
+        print(f"  weak read: {w['cell']} level {w['level']} at {w['t']:.2f} s kept {w['kept']} "
+              f"(robot-memory distance {w['distance']}, limit {WEAK_READ_MAX_DISTANCE:g})")
     for c in ex.transients:
         print(f"  WARNING transient (not a cube, no known color from any source): {c.cell} level {c.level}, "
               f"{c.t_video:.2f} s to {c.t_removed:.2f} s")
@@ -610,6 +651,8 @@ def print_report(out: Outcome, ex: Extraction) -> None:
     print(f"\ngate: {'PASSED' if g.gate.passed else 'FAILED'}")
     for c in g.gate.checks:
         print(f"  {'pass' if c.passed else 'FAIL'}  {c.name}" + (f": {g.reasons[c.name]}" if c.name in g.reasons else ""))
+        for note in g.notes.get(c.name, []):
+            print(f"        note: {note}")
     print(f"\nextract file: {repo_relative(out.extract_path)}")
     if out.lesson_path is not None:
         print(f"lesson file:  {repo_relative(out.lesson_path)}")
@@ -701,7 +744,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 def finish(args: argparse.Namespace, entries: list[dict[str, Any]], name: str, frames: Iterable[GridState],
            info: dict[str, Any], source_video: Optional[str], video: Any) -> int:
     robot_read = video.robot_read if video is not None and video.namer is not None else None
-    ex = extract(frames, video.on_settle if video is not None else None, robot_read)
+    ex = extract(frames, video.on_settle if video is not None else None, robot_read,
+                 video.robot_distance if robot_read is not None else None)
     if video is not None:
         info.update(video.info)
     split_transients(ex)
@@ -718,7 +762,7 @@ def finish(args: argparse.Namespace, entries: list[dict[str, Any]], name: str, f
         return EXIT_BAD_INPUT
     rows = step_rows(ex, manual)
     lesson = build_lesson(rows, lesson_id, args.title or name.replace("_", " ").replace("-", " ").title(), source_video)
-    gate = gate_lesson(lesson, ex, video.reference_empty if video is not None else None)
+    gate = gate_lesson(lesson, ex, video.reference_empty if video is not None else None, rows)
     pictures = None
     if video is not None:
         pictures = lambda folder: video.save_pictures(folder, [(r.number, r.cell, r.frame_id) for r in rows])  # noqa: E731

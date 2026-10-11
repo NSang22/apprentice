@@ -8,8 +8,11 @@ also gets a one-line reason for a person to read (Gate has no field for it, so t
 saves it next to the lesson).
 
   replay_matches_final_frame  the steps, replayed on an empty board, leave the same cells occupied
-                              as the last settled board, with the same top color wherever that
-                              board's top read is known
+                              as the last settled board, with the same top color. A final read that
+                              is unclear but close to the expected top passes ("weak read"); a step
+                              colored by the manual colors file stands in for an unreadable final
+                              read ("manual, unverified"). A clear different color, or an unclear
+                              read that is not close and not manual, fails
   starts_empty                the first settled board has no cubes, and the reference the camera
                               compared against was itself checked empty (reference_empty is False
                               when that independent check failed or could not run)
@@ -61,12 +64,15 @@ class History:
     final_tops: Optional[dict[str, Optional[str]]]  # last settled board: cell -> top read, None if empty
     changes: list[Change] = field(default_factory=list)  # one per settled board after the first
     problems: list[tuple[str, str]] = field(default_factory=list)  # (check name, reason) the history refused
+    final_distances: dict[str, dict[str, float]] = field(default_factory=dict)  # last board: cell -> color -> distance
+    weak_limit: Optional[float] = None   # an unclear final read this close to the expected top is a weak read
 
 
 @dataclass
 class GateResult:
     gate: Gate
     reasons: dict[str, str] = field(default_factory=dict)  # check name -> why it failed
+    notes: dict[str, list[str]] = field(default_factory=dict)  # check name -> why it passed with a caveat
 
 
 def one_cube(change: Change) -> bool:
@@ -81,11 +87,14 @@ def _slots(xs: list[Slot]) -> str:
     return ", ".join(f"{c} L{lv}" for c, lv in xs) or "nothing"
 
 
-def run_gate(steps: list[Step], history: History, reference_empty: Optional[bool] = None) -> GateResult:
+def run_gate(steps: list[Step], history: History, reference_empty: Optional[bool] = None,
+             manual_steps: frozenset[int] | set[int] = frozenset()) -> GateResult:
     """reference_empty: None when the camera's empty-board reference did not come from the
-    recording, else whether it was checked empty."""
+    recording, else whether it was checked empty. manual_steps: indexes of steps whose color came
+    from the manual colors file."""
     results: dict[str, bool] = {}
     reasons: dict[str, str] = {}
+    notes: dict[str, list[str]] = {}
 
     def fail(name: str, reason: str) -> None:
         results[name] = False
@@ -97,7 +106,9 @@ def run_gate(steps: list[Step], history: History, reference_empty: Optional[bool
         fail(name, reason)
 
     replay: dict[str, list[str]] = {cell: [] for cell in CELLS}
+    top_step: dict[str, int] = {}
     for i, s in enumerate(steps):
+        top_step[s.cell] = i
         if s.level != len(replay[s.cell]) or s.level > MAX_LEVEL:
             fail("levels_match_stack_height", f"step {i + 1} sits at level {s.level} on {s.cell}, "
                                               f"which then held {len(replay[s.cell])} cube(s)")
@@ -112,7 +123,16 @@ def run_gate(steps: list[Step], history: History, reference_empty: Optional[bool
             if (top is None) != (seen is None):
                 fail("replay_matches_final_frame", f"{cell}: the replay leaves it {'empty' if top is None else 'occupied'}, "
                                                    f"the last board shows it {'empty' if seen is None else 'occupied'}")
-            elif top is not None and seen != UNKNOWN and top in COLORS and top != seen:
+            elif top is not None and seen == UNKNOWN:
+                d = history.final_distances.get(cell, {}).get(top)
+                if history.weak_limit is not None and d is not None and d <= history.weak_limit:
+                    notes.setdefault("replay_matches_final_frame", []).append(
+                        f"{cell}: weak read, {d:.1f} from {top} (limit {history.weak_limit:g})")
+                elif top_step.get(cell) in manual_steps:
+                    notes.setdefault("replay_matches_final_frame", []).append(f"{cell}: manual, unverified ({top})")
+                else:
+                    fail("replay_matches_final_frame", f"{cell}: the last board cannot read the top color")
+            elif top is not None and top != seen:
                 fail("replay_matches_final_frame", f"{cell}: the replay's top is {top}, the last board reads {seen}")
 
     if history.first_occupied is None:
@@ -139,4 +159,4 @@ def run_gate(steps: list[Step], history: History, reference_empty: Optional[bool
         fail("colors_known", "no known color for step " + ", ".join(map(str, unknown)))
 
     checks = [GateCheck(name, results[name]) for name in CHECK_NAMES]
-    return GateResult(Gate(passed=all(c.passed for c in checks), checks=checks), reasons)
+    return GateResult(Gate(passed=all(c.passed for c in checks), checks=checks), reasons, notes)
