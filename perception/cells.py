@@ -1,10 +1,10 @@
 """Convert workspace-sheet millimetres to the frozen 3x3 cell names.
 
-This is the one place perception names cells (decision D1): the letter is the column along
-tag 0 -> tag 1 (A to C), the number is the row along tag 0 -> tag 3 (1 to 3). So A1 sits at
-tag 0, C1 at tag 1, C3 at tag 2, A3 at tag 3. The sheet's own printed labels and
-workspace_sheet.json's "rows"/"cols" use the transposed convention (letters down the page),
-and so does robot/perception/sheet.cell_center; perception ignores both.
+This is the one place perception names cells, and it follows the printed sheet and the robot
+(workspace_sheet.json "rows" A-C / "cols" 1-3, robot/perception/sheet.cell_center): the letter
+is the ROW, along tag 0 -> tag 3 (A on the arm's edge, C on the student's edge), the number is
+the COLUMN, along tag 0 -> tag 1 (1 to 3, left to right for a student opposite the arm). So
+A1 sits at tag 0, A3 at tag 1, C3 at tag 2, C1 at tag 3.
 """
 
 from __future__ import annotations
@@ -33,14 +33,14 @@ def grid_geometry(spec_path: str | Path = DEFAULT_SHEET_SPEC) -> tuple[float, fl
 def cell_center_mm(cell: str, spec_path: str | Path = DEFAULT_SHEET_SPEC) -> tuple[float, float]:
     """Sheet mm at the centre of a cell, the inverse of mm_to_cell."""
     x0, y0, cell_mm = grid_geometry(spec_path)
-    column, row = "ABC".index(cell[0]), int(cell[1]) - 1
+    row, column = "ABC".index(cell[0]), int(cell[1]) - 1
     return x0 + (column + 0.5) * cell_mm, y0 + (row + 0.5) * cell_mm
 
 
 def tag_corner_cells(spec_path: str | Path = DEFAULT_SHEET_SPEC) -> dict[int, str]:
     """Tag id -> the corner cell nearest it, from the sheet spec: the start-up self-check."""
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
-    corners = ("A1", "C1", "A3", "C3")
+    corners = ("A1", "A3", "C1", "C3")
     out = {}
     for tag, t in spec["tags"].items():
         tx, ty = t["center_mm"]
@@ -56,8 +56,8 @@ def mm_to_cell(
 ) -> str | None:
     """Return the cell containing a sheet point, or ``None`` outside the grid.
 
-    Decision D1 defines x from tag 0 toward tag 1 (A to C), and y from tag 0
-    toward tag 3 (1 to 3). The outer ROI is half-open on its right and bottom
+    The row letter follows y from tag 0 toward tag 3 (A to C), the column number follows
+    x from tag 0 toward tag 1 (1 to 3). The outer ROI is half-open on its right and bottom
     edges, which assigns every internal boundary to the cell on that edge's
     right/bottom side without overlap.
     """
@@ -68,7 +68,7 @@ def mm_to_cell(
         return None
     column = int(x // cell_mm)
     row = int(y // cell_mm)
-    return f"{'ABC'[column]}{row + 1}"
+    return f"{'ABC'[row]}{column + 1}"
 
 
 def edge_margin_mm(

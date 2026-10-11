@@ -13,9 +13,9 @@ def geometry():
 
 def test_all_nine_cell_centers(geometry):
     x0, y0, size = geometry
-    for column, letter in enumerate("ABC"):
-        for row in range(3):
-            assert mm_to_cell(x0 + (column + 0.5) * size, y0 + (row + 0.5) * size) == f"{letter}{row + 1}"
+    for row, letter in enumerate("ABC"):  # letter = row (down the page), number = column (across)
+        for column in range(3):
+            assert mm_to_cell(x0 + (column + 0.5) * size, y0 + (row + 0.5) * size) == f"{letter}{column + 1}"
 
 
 def test_outer_boundaries_are_half_open(geometry):
@@ -31,12 +31,12 @@ def test_outer_boundaries_are_half_open(geometry):
 
 def test_internal_boundaries_belong_to_next_cell(geometry):
     x0, y0, size = geometry
-    assert mm_to_cell(x0 + size, y0 + size / 2) == "B1"
-    assert mm_to_cell(x0 + size / 2, y0 + size) == "A2"
+    assert mm_to_cell(x0 + size, y0 + size / 2) == "A2"
+    assert mm_to_cell(x0 + size / 2, y0 + size) == "B1"
     assert mm_to_cell(x0 + 2 * size, y0 + 2 * size) == "C3"
 
 
 def test_tags_sit_at_the_d1_corner_cells():
     from perception.cells import tag_corner_cells
 
-    assert tag_corner_cells() == {0: "A1", 1: "C1", 2: "C3", 3: "A3"}
+    assert tag_corner_cells() == {0: "A1", 1: "A3", 2: "C3", 3: "C1"}
