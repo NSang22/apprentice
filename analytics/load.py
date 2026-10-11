@@ -211,8 +211,10 @@ class Tables:
 
 
 def read_journal(path: Path) -> tuple[list[dict], int]:
-    """(events, count of skipped lines) for one journal file. See parse_journal_lines."""
-    with open(path, encoding="utf-8", errors="replace") as f:
+    """(events, count of skipped lines) for one journal file. See parse_journal_lines.
+    utf-8-sig: a journal saved by a Windows editor may start with a byte order mark, which would
+    otherwise turn the first line (session_start) into a skipped line."""
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
         return parse_journal_lines(f)
 
 

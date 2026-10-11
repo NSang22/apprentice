@@ -13,6 +13,12 @@ FIXTURES = Path(__file__).parent / "fixtures"  # re-recorded by python -m analyt
 HUMAN, ROBOT = (read_journal(FIXTURES / f"brain_journal_{m}.jsonl")[0][0]["session"] for m in ("human", "robot"))
 
 
+def test_a_byte_order_mark_does_not_hide_session_start(tmp_path):
+    (tmp_path / "s-bom.jsonl").write_bytes(b"\xef\xbb\xbf" + (FIXTURES / "brain_journal_human.jsonl").read_bytes())
+    t = load_all(tmp_path, DEFAULT_LESSON_DIRS)
+    assert (len(t.sessions), t.skipped_lines) == (1, 0)
+
+
 def test_step_back_counts_one_pass_per_step_and_restarts_the_step_clock(tmp_path):
     lesson = Lesson.from_dict(json.loads(DEMO_LESSON.read_text()))  # red A1, teal C1, purple B2, ...
     now = [0.0]
