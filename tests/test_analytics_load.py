@@ -37,11 +37,15 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
     # The invariant behind the "still placing" skip rule: for every step the brain advanced,
     # the loader's first attempt passed exactly when the brain says first_try.
     first = {(a.session, a.step): a.passed for a in t.attempts if a.attempt_no == 1}
-    checked = 0
+    # Only a step's first advance: after a step_back (a cube moved off an earlier step) the brain
+    # advances that step again, and first_try then also reflects the fix made on the revisit.
+    checked, seen = 0, set()
     for path in sessions.glob("*.jsonl"):
         for e in read_journal(path)[0]:
-            if e["kind"] == "step_advance":
-                assert first[(e["session"], e["data"]["from_step"])] == e["data"]["first_try"], (path.name, e)
+            key = (e["session"], e["data"].get("from_step"))
+            if e["kind"] == "step_advance" and key not in seen:
+                seen.add(key)
+                assert first[key] == e["data"]["first_try"], (path.name, e)
                 checked += 1
     assert checked > 50
 

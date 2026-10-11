@@ -14,7 +14,7 @@ from shared.schemas import Lesson, SessionState, Verdict, copy_board, empty_boar
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 # staircase-v1 steps:
-#   0 red A1 L0 | 1 green B1 L0 | 2 blue C1 L0 | 3 blue A1 L1 | 4 red B1 L1 | 5 yellow A1 L2
+#   0 red A1 L0 | 1 teal B1 L0 | 2 skyblue C1 L0 | 3 skyblue A1 L1 | 4 red B1 L1 | 5 yellow A1 L2
 LESSON = Lesson.from_dict(json.loads((FIXTURES_DIR / "staircase-v1.json").read_text()))
 N = len(LESSON.steps)
 
@@ -95,14 +95,14 @@ def test_human_pass_rechecks_same_board_for_next_step(tmp_path):
     h.feed(after(0))
     assert h.verdicts() == [(0, "PASS"), (1, "MISSING")]
     st = h.session.state()
-    assert st.step_index == 1 and st.verdict is Verdict.MISSING and "green" in st.hint_text
+    assert st.step_index == 1 and st.verdict is Verdict.MISSING and "teal" in st.hint_text
     assert st.progress.human[:3] == ["pass", "active", "pending"]
 
 
 def test_human_hints_escalate_on_each_wrong_settle_and_reset_on_pass(tmp_path):
     robot = FakeRobot()
     h = Harness(tmp_path, robot=robot, lesson=with_video())
-    wrong = board(A1=["red"], B1=["green"], C2=["blue"])
+    wrong = board(A1=["red"], B1=["teal"], C2=["skyblue"])
     h.feed(after(0), after(1))
     levels = []
     for _ in range(3):
@@ -124,7 +124,7 @@ def test_human_hints_escalate_on_each_wrong_settle_and_reset_on_pass(tmp_path):
 def test_human_level_4_hovers_robot_over_expected_cell(tmp_path):
     robot = FakeRobot()
     h = Harness(tmp_path, robot=robot)
-    wrong = board(A1=["red"], B1=["green"], C2=["blue"])
+    wrong = board(A1=["red"], B1=["teal"], C2=["skyblue"])
     h.feed(after(0), after(1), wrong, wrong, wrong, wrong)
     assert h.session.hint_level == 4
     assert robot.calls == [("hover", "C1"), ("home",)]
@@ -135,7 +135,7 @@ def test_human_level_4_hovers_robot_over_expected_cell(tmp_path):
 def test_human_resettle_after_hover_is_not_another_mistake(tmp_path):
     robot = FakeRobot()
     h = Harness(tmp_path, robot=robot)
-    wrong = board(A1=["red"], B1=["green"], C2=["blue"])
+    wrong = board(A1=["red"], B1=["teal"], C2=["skyblue"])
     h.feed(after(0), after(1), wrong, wrong, wrong, wrong)
     hints_before = len(h.events("hint"))
     h.feed(wrong)  # re-emitted because the arm crossed the grid
@@ -148,7 +148,7 @@ def test_human_resettle_after_hover_is_not_another_mistake(tmp_path):
 
 def test_human_without_robot_caps_hints_at_3(tmp_path):
     h = Harness(tmp_path)
-    wrong = board(A1=["red"], B1=["green"], C2=["blue"])
+    wrong = board(A1=["red"], B1=["teal"], C2=["skyblue"])
     h.feed(after(0), after(1), *[wrong] * 6)
     assert h.session.hint_level == 3
     assert not h.events("robot_cmd")
@@ -156,7 +156,7 @@ def test_human_without_robot_caps_hints_at_3(tmp_path):
 
 def test_human_show_me_is_none_without_t_video(tmp_path):
     h = Harness(tmp_path)
-    wrong = board(A1=["red"], B1=["green"], C2=["blue"])
+    wrong = board(A1=["red"], B1=["teal"], C2=["skyblue"])
     h.feed(after(0), after(1), wrong, wrong, wrong)
     assert h.session.hint_level == 3 and h.session.state().show_me is None
 
@@ -170,18 +170,17 @@ def test_human_still_placing_does_not_escalate(tmp_path):
 
 def test_human_removing_a_wrong_cube_keeps_hint_level(tmp_path):
     h = Harness(tmp_path)
-    h.feed(after(0), after(1), board(A1=["red"], B1=["green"], C2=["blue"]), after(1))
+    h.feed(after(0), after(1), board(A1=["red"], B1=["teal"], C2=["skyblue"]), after(1))
     st = h.session.state()
-    assert st.hint_level == 1 and st.verdict is Verdict.MISSING and "Place a blue cube on C1" in st.hint_text
+    assert st.hint_level == 1 and st.verdict is Verdict.MISSING and "Place a skyblue cube on C1" in st.hint_text
 
 
 @pytest.mark.parametrize(
     "wrong,verdict",
     [
-        (board(A1=["red"], B1=["green"], C1=["yellow"]), Verdict.WRONG_COLOR),
-        (board(A1=["red"], B1=["green"], C1=["blue"], B3=["yellow"]), Verdict.EXTRA),
-        (board(A1=["red"], C1=["blue"]), Verdict.MISSING),  # green knocked off the grid
-        (board(A1=["red"], B2=["green"], C1=["blue"]), Verdict.WRONG_CELL),  # green knocked to B2
+        (board(A1=["red"], B1=["teal"], C1=["yellow"]), Verdict.WRONG_COLOR),
+        (board(A1=["red"], B1=["teal"], C1=["skyblue"], B3=["yellow"]), Verdict.EXTRA),
+        (board(A1=["red"], B2=["teal"], C1=["skyblue"]), Verdict.WRONG_CELL),  # teal knocked to B2
     ],
 )
 def test_human_each_kind_of_mistake_escalates(tmp_path, wrong, verdict):
@@ -193,7 +192,7 @@ def test_human_each_kind_of_mistake_escalates(tmp_path, wrong, verdict):
 
 def test_human_expert_correction_cube_placed_then_moved(tmp_path):
     h = Harness(tmp_path)
-    h.feed(after(0), after(1), board(A1=["red"], B1=["green"], C2=["blue"]), after(2))
+    h.feed(after(0), after(1), board(A1=["red"], B1=["teal"], C2=["skyblue"]), after(2))
     assert h.session.step_index == 3
 
 
@@ -208,7 +207,7 @@ def test_human_boards_after_complete_are_journaled_only(tmp_path):
 
 def test_a_state_is_published_after_every_event(tmp_path):
     h = Harness(tmp_path, robot=FakeRobot())
-    wrong = board(A1=["red"], B1=["green"], C2=["blue"])
+    wrong = board(A1=["red"], B1=["teal"], C2=["skyblue"])
     h.feed(after(0), after(1), wrong, wrong, wrong, wrong, after(2))
     assert len(h.states) >= len(h.events())  # plus one when robot_status settles after a robot move
     for st in h.states:
@@ -264,7 +263,7 @@ def test_robot_journals_every_command_and_result(tmp_path):
 
 
 def test_robot_wrong_cell_is_picked_and_re_placed(tmp_path):
-    h, robot = robot_harness(tmp_path, wrong_cell_on={2})  # green lands next to B1
+    h, robot = robot_harness(tmp_path, wrong_cell_on={2})  # teal lands next to B1
     run_robot(h, robot)
     assert h.session.phase == COMPLETE and robot.board == LESSON.final_board
     assert h.session.marks[1] == "retry" and h.session.marks.count("retry") == 1
@@ -272,7 +271,7 @@ def test_robot_wrong_cell_is_picked_and_re_placed(tmp_path):
     assert wrong_verdict["step"] == 1 and wrong_verdict["retry"] == 0
     picks = [c for c in robot.calls if c[0] == "pick"]
     assert picks == [("pick", wrong_verdict["fault_cell"], 0)]
-    assert [c for c in robot.calls if c[0] == "place"].count(("place", "green", "B1", 0)) == 2
+    assert [c for c in robot.calls if c[0] == "place"].count(("place", "teal", "B1", 0)) == 2
 
 
 def test_robot_retry_cap_stops_homes_and_flags(tmp_path):
@@ -315,13 +314,13 @@ def test_robot_fixes_a_cube_a_judge_moved(tmp_path):
     h, robot = robot_harness(tmp_path)
     while h.session.step_index < 3:
         h.feed(robot.board)
-    # The robot just placed step 3 (blue on A1). A judge slides the green cube from B1 to B2.
+    # The robot just placed step 3 (skyblue on A1). A judge slides the teal cube from B1 to B2.
     robot.board["B1"].pop()
-    robot.board["B2"].append("green")
+    robot.board["B2"].append("teal")
     run_robot(h, robot)
     assert h.session.phase == COMPLETE and robot.board == LESSON.final_board
-    assert ("pick", "B2", 0) in robot.calls and robot.calls.count(("place", "green", "B1", 0)) == 2
-    assert h.session.marks[3] == "retry"
+    assert ("pick", "B2", 0) in robot.calls and robot.calls.count(("place", "teal", "B1", 0)) == 2
+    assert h.session.marks[1] == "retry"  # the lesson went back to the teal step; the fix counts there
 
 
 def test_robot_removes_an_extra_cube_then_places(tmp_path):
@@ -329,7 +328,8 @@ def test_robot_removes_an_extra_cube_then_places(tmp_path):
     robot.board["C3"].append("yellow")  # stray cube on the board before the robot starts
     run_robot(h, robot)
     assert h.session.phase == COMPLETE and robot.board == LESSON.final_board
-    assert robot.calls[:4] == [("home",), ("pick", "C3", 0), ("place", "red", "A1", 0), ("home",)]
+    # EXTRA has no target slot: the robot only takes it off, then places step 1 on the next check.
+    assert robot.calls[:4] == [("home",), ("pick", "C3", 0), ("home",), ("place", "red", "A1", 0)]
 
 
 def test_robot_stops_when_wrong_cube_is_buried(tmp_path):
@@ -337,7 +337,7 @@ def test_robot_stops_when_wrong_cube_is_buried(tmp_path):
     while h.session.step_index < 3:
         h.feed(robot.board)
     h.feed(robot.board)  # step 3 placed and verified, step 4 placed
-    robot.board["A1"][0] = "yellow"  # the bottom cube under blue is now the wrong color
+    robot.board["A1"][0] = "yellow"  # the bottom cube under skyblue is now the wrong color
     h.feed(robot.board)
     assert h.session.phase == STOPPED
     assert "under another cube" in h.session.error
@@ -348,8 +348,8 @@ def test_robot_stops_instead_of_picking_a_stacked_cube(tmp_path):
     h, robot = robot_harness(tmp_path)
     while h.session.step_index < 3:
         h.feed(robot.board)
-    # Step 3 (blue on A1, level 1) is placed but lands as the wrong color, on top of the stack.
-    assert robot.board["A1"] == ["red", "blue"]
+    # Step 3 (skyblue on A1, level 1) is placed but lands as the wrong color, on top of the stack.
+    assert robot.board["A1"] == ["red", "skyblue"]
     robot.board["A1"][1] = "yellow"
     n_calls = len(robot.calls)
     h.feed(robot.board)
@@ -368,7 +368,7 @@ def test_robot_stops_instead_of_picking_a_stacked_cube(tmp_path):
 def test_robot_still_picks_a_wrong_cube_at_level_0(tmp_path):
     h, robot = robot_harness(tmp_path)
     h.feed(robot.board)  # places step 0, red on A1
-    robot.board["A1"][0] = "blue"
+    robot.board["A1"][0] = "skyblue"
     h.feed(robot.board)
     assert ("pick", "A1", 0) in robot.calls and h.session.phase == RUNNING
 
@@ -479,7 +479,49 @@ def test_start_checks_the_last_stable_board_at_once(tmp_path):
 
 def test_hover_reports_pointing(tmp_path):
     h = Harness(tmp_path, robot=FakeRobot())
-    wrong = board(A1=["red"], B1=["green"], C2=["blue"])
+    wrong = board(A1=["red"], B1=["teal"], C2=["skyblue"])
     h.feed(after(0), after(1), wrong, wrong, wrong, wrong)
     statuses = [st.robot_status for st in h.states]
     assert "pointing" in statuses and "fixing" not in statuses
+
+
+# ---------------------------------------------------------------- board-driven progress
+
+
+def test_removing_an_earlier_block_moves_the_step_back(tmp_path):
+    h = Harness(tmp_path)
+    h.feed(after(0), after(1), board(A1=["red"], B1=["teal"], C2=["skyblue"]))  # one mistake on step 3
+    h.feed(board(A1=["red"], C2=["skyblue"]))                                  # teal (step 2) taken off
+    st = h.session.state()
+    assert st.step_index == 1 and st.expected_step.cell == "B1" and st.progress.human[:3] == ["pass", "active", "pending"]
+    assert h.events("step_back")[-1]["data"] == {"from_step": 2, "to_step": 1,
+                                                "info": "the block for step 2 is no longer in place"}
+    h.feed(after(2))                                                           # back on track
+    assert h.session.step_index == 3 and h.session.marks[2] == "retry"         # step 3's mistake is kept
+
+
+def test_unknown_block_waits_with_a_nudge_and_never_passes(tmp_path):
+    h = Harness(tmp_path)
+    h.feed(after(0), board(A1=["red"], B1=["unknown"]))  # step 2's block, unreadable
+    st = h.session.state()
+    assert st.step_index == 1 and st.verdict is Verdict.WAITING and st.fault_cell == "B1"
+    assert st.hint_text == "I can't tell the color of the block on B1. Try nudging it to the center of the square."
+    assert st.hint_level == 0
+    h.feed(after(1))                                       # nudged, readable now: the lesson moves on
+    assert h.session.step_index == 2
+
+
+def test_extra_block_is_extra_with_no_target(tmp_path):
+    h = Harness(tmp_path)
+    h.feed(after(0), board(A1=["red"], B3=["purple"]))  # purple is in no step of this lesson
+    st = h.session.state()
+    assert st.verdict is Verdict.EXTRA and st.fault_cell == "B3" and st.expected_cell is None
+    assert st.hint_text == "Please take the purple block off B3."
+
+
+def test_misplaced_needed_block_is_wrong_cell_toward_its_slot(tmp_path):
+    h = Harness(tmp_path)
+    h.feed(after(0), board(A1=["red"], C2=["skyblue"]))  # on step 2 (teal); skyblue is needed later, on C1
+    st = h.session.state()
+    assert st.step_index == 1
+    assert st.verdict is Verdict.WRONG_CELL and st.fault_cell == "C2" and st.expected_cell == "C1"

@@ -25,6 +25,7 @@ KINDS = (
     "board",
     "verdict",
     "step_advance",
+    "step_back",
     "hint",
     "robot_cmd",
     "robot_result",
