@@ -185,6 +185,14 @@ class BuddySession:
                 return
             self.board[cell] = [color] if color else []
 
+    def done(self) -> None:
+        """The child finished early: end the build timer now (the next tick grades or scans)."""
+        with self.lock:
+            self.tick()
+            if self.phase == "build":
+                self.until = self.clock()
+                self.tick()
+
     def rescan(self) -> None:
         with self.lock:
             if self.phase == "scan":

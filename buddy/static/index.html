@@ -524,8 +524,14 @@ function renderGame() {
   $("timer").style.setProperty("--tc", ph === "show" ? "var(--blue)" : "var(--orange)");
   $("t-ring").setAttribute("stroke", ph === "show" ? "#1cb0f6" : "#ff9600");
   renderGrid(); renderPalette();
-  $("g-footer").innerHTML = ph === "scan" && S.scan_stuck ? `<button class="btn blue" id="rescan">Scan again</button>` : "";
-  if ($("rescan")) $("rescan").onclick = () => act("/api/buddy/rescan");
+  const foot = ph === "scan" && S.scan_stuck ? "rescan" : ph === "build" ? "done" : "";
+  if ($("g-footer").dataset.k !== foot) {
+    $("g-footer").dataset.k = foot;
+    $("g-footer").innerHTML = foot === "rescan" ? `<button class="btn blue" id="rescan">Scan again</button>`
+      : foot === "done" ? `<button class="btn" id="done"><svg><use href="#i-check"/></svg>I'm done!</button>` : "";
+    if ($("rescan")) $("rescan").onclick = () => act("/api/buddy/rescan");
+    if ($("done")) $("done").onclick = () => { sfx.up(); act("/api/buddy/done"); };
+  }
 
   // sheets
   $("choice").classList.toggle("on", ph === "choice");

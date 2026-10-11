@@ -7,6 +7,7 @@
     POST /api/buddy/start        {game}
     POST /api/buddy/cell         {cell, color|null}   practice mode: the phone is the board
     POST /api/buddy/choose       {kind: "hint"|"fix"}
+    POST /api/buddy/done         finished building early: stop the timer
     POST /api/buddy/rescan       scan the table again
     POST /api/buddy/next         next round (or the summary)
     POST /api/buddy/quit         back to the game picker
@@ -100,6 +101,12 @@ def cell(body: CellBody):
 @router.post("/api/buddy/choose")
 def choose(body: ChooseBody):
     game.choose(body.kind)
+    return game.state()
+
+
+@router.post("/api/buddy/done")
+def done():
+    game.done()
     return game.state()
 
 
