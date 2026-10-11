@@ -87,6 +87,18 @@ class FakeClock:
         self.t = round(self.t + seconds, 3)
 
 
+# What brain/server.py passes as the session's provenance hook for a simulated run. The git fields
+# keep the Session's "unknown" defaults: synthetic data does not come from a checked-out run.
+SIM_PROVENANCE = {"grid_source": "sim", "robot": "fake"}
+
+
+def _start(session: Session, journal: Journal) -> None:
+    """Start like brain/server.py does: it notes the grid source when the first frame arrives
+    (server.py, "grid_source" note), and with --autostart only then starts the session."""
+    journal.write("note", {"grid_source": SIM_PROVENANCE["grid_source"]})
+    session.start()
+
+
 class SyntheticJournal(Journal):
     """The brain's Journal, plus data.synthetic = true on session_start."""
 
@@ -195,8 +207,8 @@ def human_session(
 ) -> None:
     """forced maps a step index to mistakes the human makes on its first attempts."""
     robot = FakeRobot(motion_s=ROBOT_MOTION_S, sleep=clock.advance)  # only hovers in human mode
-    session = Session(lesson, "human", journal, robot=robot, sleep=clock.advance)
-    session.start()
+    session = Session(lesson, "human", journal, robot=robot, sleep=clock.advance, provenance=SIM_PROVENANCE.copy)
+    _start(session, journal)
     skill = rng.uniform(-0.1, 0.1)
 
     for k, step in enumerate(lesson.steps):
@@ -235,8 +247,8 @@ def robot_session(
 ) -> None:
     """wrong_cell_on / fail_on: 1-based place() counts the fake robot gets wrong."""
     robot = FakeRobot(wrong_cell_on=wrong_cell_on, fail_on=fail_on, motion_s=ROBOT_MOTION_S, sleep=clock.advance)
-    session = Session(lesson, "robot", journal, robot=robot, sleep=clock.advance)
-    session.start()
+    session = Session(lesson, "robot", journal, robot=robot, sleep=clock.advance, provenance=SIM_PROVENANCE.copy)
+    _start(session, journal)
     knocked = False
     for _ in range(MAX_ROBOT_BOARDS):
         if session.phase != RUNNING:
