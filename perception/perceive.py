@@ -52,6 +52,7 @@ class FrameResult:
     analysis: Optional[CellAnalysis] = None
     reason: str = ""                # why hands_clear is false, if it is
     stacks: dict = field(default_factory=dict)  # cell -> (published stack or None if unknown, why)
+    tags: list[int] = field(default_factory=list)  # tag ids detected this frame, sorted
 
     @property
     def ok(self) -> bool:
@@ -116,6 +117,11 @@ class Perceiver:
     def step(self, frame_bgr: np.ndarray, frame_id: int, timestamp: Optional[float] = None) -> FrameResult:
         t = time.time() if timestamp is None else timestamp
         visible = tag_centers(self.localizer.detect_tags(frame_bgr))
+        result = self._step(frame_bgr, frame_id, t, visible)
+        result.tags = sorted(visible)
+        return result
+
+    def _step(self, frame_bgr: np.ndarray, frame_id: int, t: float, visible: dict) -> FrameResult:
         if self.lock is None:
             return self._unusable(t, frame_id, NOT_LOCKED, "GRID NOT LOCKED: clear the board and press E", "grid not locked")
         h, w = frame_bgr.shape[:2]
