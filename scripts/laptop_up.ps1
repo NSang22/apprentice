@@ -3,6 +3,15 @@ Demo startup on the Windows laptop: SSH tunnel to the Jetson, colors.json, brain
 
     powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Mode human
     powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Mode robot
+    powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -StartJetson -Lesson lessons\stack-test-v1.json
+    powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Sim -Lesson lessons\stack-test-v1.json
+
+-StartJetson: ssh in first, git pull on the Jetson, run scripts/jetson_up.sh there (--no-robot in
+human mode). Set JETSON_DISPLAY=:0 in jetson.env to get the perception debug window on the Jetson's
+own monitor. Use an SSH key (README section 8) or you type the password three times.
+-Sim: no Jetson at all. The brain runs a simulated board and the fake arm (--grid sim --robot fake,
+robot mode), plus the UI.
+-Lesson: lesson JSON for the brain (default: the brain's demo lesson).
 
 Run scripts/jetson_up.sh on the Jetson first. Reads JETSON_HOST, JETSON_USER (and optional
 JETSON_REPO, default "apprentice") from scripts\jetson.env (copy scripts\jetson.env.example).
@@ -15,7 +24,10 @@ own windows; open http://localhost:8000. Stops at the first step that fails.
 #>
 param(
     [ValidateSet("human", "robot")]
-    [string]$Mode = "human"
+    [string]$Mode = "human",
+    [string]$Lesson = "",
+    [switch]$StartJetson,
+    [switch]$Sim
 )
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -48,13 +60,16 @@ function Start-Window([string]$Title, [string]$Command) {
 
 # ---------------------------------------------------------------- config
 $envFile = Join-Path $PSScriptRoot "jetson.env"
-if (-not (Test-Path $envFile)) { Fail "config: $envFile not found (copy scripts\jetson.env.example and fill it in)" }
-$cfg = @{ JETSON_REPO = "apprentice" }
-foreach ($line in Get-Content $envFile) {
-    if ($line -match '^\s*([A-Z_]+)\s*=\s*(.*?)\s*$') { $cfg[$Matches[1]] = $Matches[2].Trim('"') }
-}
-foreach ($k in "JETSON_HOST", "JETSON_USER") {
-    if (-not $cfg[$k]) { Fail "config: $k missing in $envFile" }
+if ($Sim) { $envFile = $null }
+if ($envFile -and -not (Test-Path $envFile)) { Fail "config: $envFile not found (copy scripts\jetson.env.example and fill it in)" }
+$cfg = @{ JETSON_REPO = "apprentice"; JETSON_DISPLAY = "" }
+if ($envFile) {
+    foreach ($line in Get-Content $envFile) {
+        if ($line -match '^\s*([A-Z_]+)\s*=\s*(.*?)\s*$') { $cfg[$Matches[1]] = $Matches[2].Trim('"') }
+    }
+    foreach ($k in "JETSON_HOST", "JETSON_USER") {
+        if (-not $cfg[$k]) { Fail "config: $k missing in $envFile" }
+    }
 }
 $Target = "$($cfg.JETSON_USER)@$($cfg.JETSON_HOST)"
 
@@ -66,7 +81,13 @@ if ($env:PYTHON) { $Python = $env:PYTHON } else {
 foreach ($tool in "ssh", "scp") {
     if ($null -eq (Get-Command $tool -ErrorAction SilentlyContinue)) { Fail "$tool not found (Settings > Optional features > OpenSSH Client)" }
 }
-Ok "config: $Target, mode $Mode, python $Python"
+$lessonArg = ""
+if ($Lesson) {
+    if (-not (Test-Path $Lesson)) { Fail "lesson: $Lesson not found" }
+    $lessonArg = "--lesson $Lesson"
+}
+if ($Sim) { $Mode = "robot"; Ok "config: simulation, fake arm, python $Python $lessonArg" }
+else { Ok "config: $Target, mode $Mode, python $Python $lessonArg" }
 
 # ---------------------------------------------------------------- stop old listeners
 foreach ($port in 8765, 8766, 8770, 8000) {
@@ -88,6 +109,34 @@ foreach ($port in 8765, 8766, 8770, 8000) {
     if (Test-Port $port) { Fail "port ${port}: still in use after stopping its owner" }
 }
 Ok "ports 8765 8766 8770 8000 free"
+
+function Start-BrainAndUi([string]$BrainArgs) {
+    Start-Window "apprentice brain" "& '$Python' -m brain.server $BrainArgs"
+    if (-not (Wait-Port 8766 20)) { Fail "brain.server: ws :8766 not listening after 20 s (see the 'apprentice brain' window)" }
+    Ok "brain.server: ws://localhost:8766 ($BrainArgs)"
+    Start-Window "apprentice ui" "& '$Python' ui/serve.py"
+    if (-not (Wait-Port 8000 15)) { Fail "ui/serve.py: :8000 not listening after 15 s (see the 'apprentice ui' window)" }
+    Ok "ui/serve.py: http://localhost:8000"
+    Start-Process "http://localhost:8000"
+    Ok "browser opened. Space starts, R resets."
+}
+
+# ---------------------------------------------------------------- simulation (no Jetson)
+if ($Sim) {
+    Start-BrainAndUi "--mode robot --robot fake --grid sim $lessonArg"
+    exit 0
+}
+
+# ---------------------------------------------------------------- Jetson services
+if ($StartJetson) {
+    $noRobot = if ($Mode -eq "human") { " --no-robot" } else { "" }
+    $display = if ($cfg.JETSON_DISPLAY) { "DISPLAY=$($cfg.JETSON_DISPLAY) " } else { "" }
+    $remote = "cd ~/$($cfg.JETSON_REPO) && (git pull --ff-only || echo git pull skipped) && ${display}scripts/jetson_up.sh$noRobot"
+    Write-Host "ssh $Target : $remote"
+    & ssh -o ServerAliveInterval=5 $Target "bash -lc '$remote'"
+    if ($LASTEXITCODE -ne 0) { Fail "jetson_up.sh failed (exit $LASTEXITCODE), see its output above" }
+    Ok "Jetson services up"
+}
 
 # ---------------------------------------------------------------- tunnel
 $sshCmd = "ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=5 -o ServerAliveCountMax=3 " +
@@ -153,13 +202,5 @@ if ($Mode -eq "robot") {
 }
 
 # ---------------------------------------------------------------- brain + UI
-Start-Window "apprentice brain" "& '$Python' -m brain.server --mode $Mode $robotArg"
-if (-not (Wait-Port 8766 20)) { Fail "brain.server: ws :8766 not listening after 20 s (see the 'apprentice brain' window)" }
-Ok "brain.server: ws://localhost:8766 (--mode $Mode $robotArg)"
-
-Start-Window "apprentice ui" "& '$Python' ui/serve.py"
-if (-not (Wait-Port 8000 15)) { Fail "ui/serve.py: :8000 not listening after 15 s (see the 'apprentice ui' window)" }
-Ok "ui/serve.py: http://localhost:8000"
-
-Start-Process "http://localhost:8000"
-Ok "browser opened. Final check: python scripts/check.py"
+Start-BrainAndUi "--mode $Mode $robotArg $lessonArg"
+Ok "final check: python scripts/check.py"

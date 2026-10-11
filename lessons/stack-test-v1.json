@@ -1,0 +1,18 @@
+{
+  "lesson_id": "stack-test-v1",
+  "title": "Stack test",
+  "source_video": null,
+  "steps": [
+    {"color": "red", "cell": "B2", "level": 0, "t_video": null, "narration": "Start with red in the middle, on B2."},
+    {"color": "teal", "cell": "B2", "level": 1, "t_video": null, "narration": "Stack teal on top of red."},
+    {"color": "yellow", "cell": "B2", "level": 2, "t_video": null, "narration": "Yellow goes on top to make a tower of three."},
+    {"color": "purple", "cell": "A2", "level": 0, "t_video": null, "narration": "Purple on A2, next to the tower."},
+    {"color": "red", "cell": "A2", "level": 1, "t_video": null, "narration": "Finish with red on top of purple."}
+  ],
+  "final_board": {
+    "A1": [], "A2": ["purple", "red"], "A3": [],
+    "B1": [], "B2": ["red", "teal", "yellow"], "B3": [],
+    "C1": [], "C2": [], "C3": []
+  },
+  "gate": null
+}
