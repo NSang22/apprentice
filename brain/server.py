@@ -20,8 +20,8 @@ The session starts in phase "ready" and checks nothing until a UI client sends
 {"cmd": "start"} on ws :8766 (refused while the board has cubes on it). {"cmd": "reset"} ends
 the current session in the journal (session_end, outcome "reset") and opens a new session,
 with its own journal, back in "ready" at step 0. Commands run in order with the board
-pipeline, so a reset never lands in the middle of a robot move. --autostart starts at once,
-like before. With --grid sim a reset also clears the fake board, standing in for a person.
+pipeline, so a reset never lands in the middle of a robot move. --autostart starts as soon as
+the first grid frame arrives (not before), so session_start records the feed's real source. With --grid sim a reset also clears the fake board, standing in for a person.
 
 After any robot command the server resets the stabilizer and drops frames that arrived
 while the robot was moving, so the session always checks a board seen after the move.
@@ -96,6 +96,7 @@ class BrainServer:
         self.grid = grid
         self.robot_spec = robot_spec
         self.seen_source: Optional[str] = None  # "source" key of the latest ws frame
+        self.autostart_pending = False           # --autostart: start once the first frame arrives
         self._attach(session)
 
     def _attach(self, session: Session) -> None:
@@ -215,7 +216,12 @@ class BrainServer:
     def accept(self, item: Frame) -> Optional[Board]:
         """One raw frame through parse, the arm gate, and the stabilizer. A stable board or None."""
         gs = self.parse(item)
-        return None if gs is None else self.stabilizer.feed(self.gate_arm(gs))
+        if gs is None:
+            return None
+        if self.autostart_pending:   # the feed is up and its source is known: start now
+            self.autostart_pending = False
+            self.frames.put_nowait((time.monotonic(), Command(cmd="start")))
+        return self.stabilizer.feed(self.gate_arm(gs))
 
     def parse(self, item: Frame) -> Optional[GridState]:
         if isinstance(item, GridState):
@@ -272,8 +278,7 @@ class BrainServer:
         async with serve(self.ui_handler, ui_host, ui_port):
             print(f"[brain] SessionState on ws://{ui_host}:{ui_port}", flush=True)
             self.publish(self.session.state())  # "ready" for UIs that connect before any board
-            if autostart:
-                self.frames.put_nowait((time.monotonic(), Command(cmd="start")))
+            self.autostart_pending = autostart
             if grid == "sim":
                 assert isinstance(robot, FakeRobot)
                 self.sim_robot = robot
@@ -315,7 +320,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--ui-host", default="localhost")
     p.add_argument("--ui-port", type=int, default=BRAIN_WS_PORT)
     p.add_argument("--autostart", action="store_true",
-                   help="start the lesson at once instead of waiting in 'ready' for a UI start command")
+                   help="start the lesson when the first grid frame arrives, instead of waiting in 'ready' "
+                        "for a UI start command")
     return p
 
 

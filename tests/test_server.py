@@ -226,3 +226,17 @@ def test_session_start_records_provenance(tmp_path):
     assert {"grid_source", "robot", "mode", "lesson_id", "human_side", "git_commit", "git_dirty"} <= start.keys()
     assert start["grid_source"] == "fake_feed" and start["robot"] == "http:http://localhost:8770"
     assert start["mode"] == "human" and start["git_dirty"] in (True, False, "unknown")
+
+
+def test_autostart_waits_for_the_first_frame_and_records_its_source(tmp_path):
+    journal = Journal("s-auto", "human", directory=tmp_path)
+    server = BrainServer(Session(LESSON, "human", journal), journal, grid="ws://localhost:8765")
+    server.autostart_pending = True
+    assert server.frames.empty()
+    server.accept(json.dumps({**frame().to_dict(), "source": "perception"}))
+    _, cmd = server.frames.get_nowait()
+    assert cmd == {"cmd": "start"} and not server.autostart_pending
+    server.command(cmd)
+    journal.close()
+    start = [l for l in read_journal(journal.path) if l["kind"] == "session_start"][0]["data"]
+    assert start["grid_source"] == "perception:ws://localhost:8765"

@@ -292,7 +292,7 @@ python -m brain.check_live --lesson tests/fixtures/staircase-v1.json
 python -m brain.check_live
 
 # Brain server, no hardware: stabilizer + session + journal, SessionState on ws :8766
-# It waits in phase "ready" until a UI sends {"cmd": "start"} (README 5.4); --autostart starts at once.
+# It waits in phase "ready" until a UI sends {"cmd": "start"} (README 5.4); --autostart starts when the first grid frame arrives.
 # Journal: data/sessions/<session_id>.jsonl. Hint directions follow HUMAN_SIDE in brain/settings.py.
 # Human mode: start a feed, then the server (second terminal)
 python -m brain.fake_feed --script tests/scripts/staircase_with_mistake.json
