@@ -4,6 +4,9 @@
 // low-poly arm on the robot side that reaches when the brain says the robot is busy.
 // Purely visual: everything is driven by SessionState through update(). Loaded on demand by
 // app.js; any failure (no WebGL) keeps the 2D board. All assets are drawn here at runtime.
+// Buddy (buddy/static/board3d.js) loads this same file and uses a few optional extras that the
+// monitor never sends: createView3D options (onDemand, maxPixelRatio, lookX, background) and the
+// update() fields holograms, faults, armAt and pointAt.
 import * as THREE from "./vendor/three.module.min.js";
 
 // Cells follow the printed sheet: letter = row (A along the robot's edge), number = column.
@@ -253,15 +256,17 @@ function makeArm() {
     goal.open = open;
   }
 
-  function step(dt) {
+  function step(dt) {   // returns how far the arm still has to go (0 = at rest)
     const k = 1 - Math.exp(-dt * 3.2);   // smooth, never snappy
-    for (const key of ["yaw", "a1", "a2", "a3", "open"]) cur[key] += (goal[key] - cur[key]) * k;
+    let left = 0;
+    for (const key of ["yaw", "a1", "a2", "a3", "open"]) { cur[key] += (goal[key] - cur[key]) * k; left = Math.max(left, Math.abs(goal[key] - cur[key])); }
     yaw.rotation.y = cur.yaw;
     shoulder.rotation.x = cur.a1;
     elbow.rotation.x = cur.a2;
     wrist.rotation.x = cur.a3;
     fingers[0].position.x = -0.07 - 0.07 * cur.open;
     fingers[1].position.x = 0.07 + 0.07 * cur.open;
+    return left;
   }
 
   return { root, aim, step };
@@ -269,13 +274,16 @@ function makeArm() {
 
 // ---------------------------------------------------------------- view
 
-export function createView3D(container) {
+// options (all optional; the monitor passes none): onDemand: draw only while something moves, with
+// a still camera; maxPixelRatio (default 1.75); lookX: where the camera aims across the table
+// (default -1.5, the board right of the monitor's text); background: scene color.
+export function createView3D(container, options = {}) {
   const canvas = document.createElement("canvas");
   const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
   if (!gl) throw new Error("WebGL is not available");
 
   const renderer = new THREE.WebGLRenderer({ canvas, context: gl, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, options.maxPixelRatio || 1.75));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -284,12 +292,13 @@ export function createView3D(container) {
   container.appendChild(canvas);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0d1015);
-  scene.fog = new THREE.Fog(0x0d1015, 14, 30);
+  const bg = options.background ?? 0x0d1015;
+  scene.background = new THREE.Color(bg);
+  scene.fog = new THREE.Fog(bg, 14, 30);
 
   const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 80);
   // Aim left of the board so it sits right of the instruction overlay.
-  const look = new THREE.Vector3(-1.5, 0.1, -0.35);
+  const look = new THREE.Vector3(options.lookX ?? -1.5, 0.1, -0.35);
 
   // Lights: soft key with shadows, a cool fill, low ambient.
   scene.add(new THREE.HemisphereLight(0xfff6ea, 0x1b2230, 0.55));
@@ -343,7 +352,9 @@ export function createView3D(container) {
   const intro = { active: false, holos: [], fading: 0 };   // the intro preview's holograms
   let side = null, ghost = null, column = null, arrow = null, lift = null, glows = [];
   let phase = "nodata", spin = 0, spinGoal = 0, pulses = [], burst = null;
-  let active = false, raf = 0, last = 0;
+  let active = false, raf = 0, last = 0, scheduled = false;
+  const holos = new Map();     // update({ holograms }): "A1:0:red" -> { mesh, rest, born }
+  let point = null;            // update({ pointAt }): an arrow pointing down at a cell
 
   function cellPos(cell, level) {
     const [x, z] = cellXZ(cell, side);
@@ -410,9 +421,39 @@ export function createView3D(container) {
   }
 
   function clearHints() {
-    for (const o of [ghost, column, arrow, lift, ...glows]) if (o) disposeObj(o);
-    ghost = column = arrow = lift = null;
+    for (const o of [ghost, column, arrow, lift, point, ...glows]) if (o) disposeObj(o);
+    ghost = column = arrow = lift = point = null;
     glows = [];
+  }
+
+  // update({ pointAt }): an amber arrow above the cell, pointing down at it, bobbing.
+  function makePoint(pos) {
+    const group = new THREE.Group();
+    const mat = new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0.95, depthTest: false });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.7, 16), mat);
+    shaft.position.y = 0.77;
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.42, 20), mat.clone());
+    head.rotation.x = Math.PI;
+    head.position.y = 0.21;
+    for (const m of [shaft, head]) { m.renderOrder = 10; group.add(m); }
+    group.position.set(pos.x, pos.y + CUBE * 0.6, pos.z);
+    group.userData.base = group.position.y;
+    board.add(group);
+    return group;
+  }
+
+  // update({ holograms: [{ cell, level, color }] }): holographic cubes; new ones drop in, gone ones go.
+  function setHolograms(list) {
+    const want = new Map((list || []).map((h) => [`${h.cell}:${h.level || 0}:${h.color}`, h]));
+    for (const [k, h] of [...holos]) if (!want.has(k)) { disposeObj(h.mesh); holos.delete(k); }
+    for (const [k, h] of want) {
+      if (holos.has(k) || !CELLS.includes(h.cell)) continue;
+      const mesh = makeHologram(h.color), rest = cellPos(h.cell, h.level || 0);
+      mesh.position.copy(rest);
+      mesh.renderOrder = 2;
+      board.add(mesh);
+      holos.set(k, { mesh, rest: rest.y, born: performance.now() });
+    }
   }
 
   // EXTRA: an arrow rising straight up off the block ("take it off"), never toward another cell.
@@ -508,10 +549,13 @@ export function createView3D(container) {
       paperMat.map = paperTexture(side);
       paperMat.needsUpdate = true;
       for (const [k, c] of cubes) { disposeObj(c.mesh); cubes.delete(k); }   // re-lay at the new positions
+      for (const [k, h] of holos) { disposeObj(h.mesh); holos.delete(k); }
     }
     if (view.phase === "complete" && phase !== "complete") celebrate();
     phase = view.phase;
     clearHints();
+    setHolograms(view.holograms);
+    kick();
     if (!s) { setCubes({}); arm.aim(null, 1); return; }
 
     // Always the live board (SessionState.board), in every phase; the ready screen's thumbnail
@@ -546,6 +590,15 @@ export function createView3D(container) {
         }
       }
     }
+    // Optional extras (Buddy): glow on several cells, an arrow at a cell, the arm aimed at a cell.
+    for (const c of view.faults || []) if (CELLS.includes(c)) glows.push(makeGlow(c));
+    if (view.pointAt && CELLS.includes(view.pointAt)) point = makePoint(cellPos(view.pointAt, Math.max(0, (s.board[view.pointAt] || []).length - 1)));
+    if (view.armAt && CELLS.includes(view.armAt.cell)) {
+      const p = cellPos(view.armAt.cell, (s.board[view.armAt.cell] || []).length);
+      p.y += view.armAt.open ? 0.55 : 1.1;
+      armTarget = p;
+      armOpen = view.armAt.open ? 0.8 : 0.2;
+    }
     arm.aim(armTarget, armOpen);
   }
 
@@ -578,6 +631,7 @@ export function createView3D(container) {
 
   function pass(cell) {
     if (!cell || !side) return;
+    kick();
     const [x, z] = cellXZ(cell, side);
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.52, 48),
       new THREE.MeshBasicMaterial({ color: OK_GREEN, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
@@ -615,20 +669,28 @@ export function createView3D(container) {
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   }
-  new ResizeObserver(resize).observe(container);
+  new ResizeObserver(() => { resize(); kick(); }).observe(container);
+
+  // One more frame, unless one is already coming. With onDemand the loop stops when nothing moves.
+  function kick() {
+    if (!active || scheduled) return;
+    scheduled = true;
+    raf = requestAnimationFrame(frame);
+  }
 
   const easeOutBack = (t) => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
 
   function frame(tms) {
+    scheduled = false;
     if (!active) return;
-    raf = requestAnimationFrame(frame);
+    if (!options.onDemand) kick();
     const dt = Math.min(0.05, (tms - (last || tms)) / 1000);
     last = tms;
     const t = tms / 1000, now = performance.now();
 
-    // Camera: student eye height, about 50 degrees down, with a very slow drift.
-    const dist = 12.5, pitch = (50 * Math.PI) / 180;
-    camera.position.set(Math.sin(t * 0.11) * 0.22, look.y + dist * Math.sin(pitch) + Math.sin(t * 0.07) * 0.1, look.z + dist * Math.cos(pitch));
+    // Camera: student eye height, about 50 degrees down, with a very slow drift (still with onDemand).
+    const dist = 12.5, pitch = (50 * Math.PI) / 180, drift = options.onDemand ? 0 : 1;
+    camera.position.set(drift * Math.sin(t * 0.11) * 0.22, look.y + dist * Math.sin(pitch) + drift * Math.sin(t * 0.07) * 0.1, look.z + dist * Math.cos(pitch));
     camera.lookAt(look);
 
     // Turntable on ready/complete, eased back to square when running.
@@ -674,6 +736,18 @@ export function createView3D(container) {
     }
     for (const g of glows) g.material.opacity = 0.5 + 0.25 * (0.5 + 0.5 * Math.sin(t * 2.4));
     if (arrow) arrow.userData.tex.offset.x -= dt * 1.4;
+    const still = reducedMotion();
+    let settling = false;   // a hologram still dropping in
+    for (const h of holos.values()) {
+      const f = (now - h.born) / (still ? HOLO_FADE_MS : HOLO_DROP_MS);
+      if (f < 1) settling = true;
+      h.mesh.position.y = h.rest + (still ? 0 : dropOffset(f) * HOLO_DROP_H);
+      const k = still ? 0.6 : 0.5 + 0.5 * Math.sin(t * 3);
+      const appear = Math.min(1, still ? f : f * 4);
+      h.mesh.material.opacity = appear * (0.3 + 0.2 * k);
+      h.mesh.children[0].material.opacity = appear * (0.6 + 0.4 * k);
+    }
+    if (point) point.position.y = point.userData.base + (still ? 0.15 : 0.15 + 0.2 * Math.abs(Math.sin(t * 3)));
     if (lift) {   // rise and fade, again and again: "lift it off"
       const f = (t * 0.8) % 1;
       lift.position.y = lift.userData.base + 0.6 * f;
@@ -702,15 +776,21 @@ export function createView3D(container) {
       }
     }
 
-    arm.step(dt);
+    const armLeft = arm.step(dt);
     renderer.render(scene, camera);
+    if (options.onDemand) {   // keep drawing only while something moves
+      const moving = armLeft > 0.002 || settling || spinGoal || Math.abs(spin % (Math.PI * 2)) > 0.002 || pulses.length || burst ||
+        [...cubes.values()].some((c) => c.born || c.dying) || ghost || glows.length || arrow || lift ||
+        (point && !still) || (holos.size && !still);
+      if (moving) kick();
+    }
   }
 
   function setActive(on) {
     if (on === active) return;
     active = on;
     last = 0;
-    if (on) { resize(); raf = requestAnimationFrame(frame); } else cancelAnimationFrame(raf);
+    if (on) { resize(); kick(); } else { cancelAnimationFrame(raf); scheduled = false; }
   }
 
   // Measured block colors ({ red: "#d8342f", ... }). Cubes already on the board recolor at once.
@@ -722,6 +802,7 @@ export function createView3D(container) {
     for (const cube of cubes.values()) {
       if (cube.color in CUBE_HEX) cube.mesh.material.color.setHex(CUBE_HEX[cube.color]);
     }
+    kick();
   }
 
   return { update, setActive, pass, setColors, introStart, introDrop, introFade, introClear };

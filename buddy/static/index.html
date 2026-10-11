@@ -209,9 +209,31 @@
   #dbg pre { margin: 0; padding: 12px 14px 60px; overflow: auto; flex: 1; font: 12px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
   #dbg .bar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #39404f; font-weight: 800; font-size: 13px; }
   #dbg .bar button { margin-left: auto; background: #39404f; color: #fff; border: 0; border-radius: 8px; padding: 6px 10px; font: inherit; }
+
+  /* 3D board (board3d.js, the monitor's view3d.js): fills the game screen; the 2D grid becomes a
+     card at the top right (still the board you tap in practice mode). Without WebGL, body never
+     gets .has3d and everything above stays as it was. */
+  .gridcard { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  #board3d { display: none; }
+  body.has3d.ingame { overflow: hidden; }
+  body.has3d.ingame #board3d { display: block; position: fixed; inset: 0; z-index: 0; }
+  body.has3d.ingame .app { max-width: none; }
+  body.has3d.ingame #s-game { position: fixed; inset: 0; z-index: 1; padding: 16px 24px calc(16px + env(safe-area-inset-bottom)); pointer-events: none; }
+  body.has3d.ingame #s-game .game-top, body.has3d.ingame #s-game .prompt, body.has3d.ingame #s-game .sub { width: 32vw; pointer-events: auto; }
+  body.has3d.ingame #s-game .prompt { background: rgba(255,255,255,.94); border-radius: 18px 18px 0 0; padding: 10px 16px 0; margin-top: 10px; }
+  body.has3d.ingame #s-game .sub { background: rgba(255,255,255,.94); border-radius: 0 0 18px 18px; padding: 2px 16px 12px; min-height: 12px; }
+  body.has3d.ingame #s-game .stage { flex: none; width: 32vw; align-items: flex-start; justify-content: flex-start; pointer-events: none; }
+  body.has3d.ingame #s-game .stage > * { pointer-events: auto; }
+  body.has3d.ingame #s-game .icon-btn { min-width: 48px; min-height: 48px; }
+  body.has3d.ingame .gridcard { position: fixed; top: 16px; right: 16px; width: 30vw; max-width: 440px; padding: 12px 12px 14px;
+    background: rgba(255,255,255,.94); border: 2px solid var(--line); border-radius: 22px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+  body.has3d.ingame .gridcard .grid { width: 100%; }
+  body.has3d.ingame .gridcard .chip { width: 52px; height: 52px; }
+  body.has3d.ingame #s-game .footer { position: fixed; left: 24px; bottom: calc(16px + env(safe-area-inset-bottom)); width: 32vw; pointer-events: auto; }
 </style>
 </head>
 <body>
+<div id="board3d"></div>
 <button id="dbgBtn" type="button">Debug</button>
 <div id="dbg"><div class="bar"><span>Debug log</span><button id="dbgCopy" type="button">Copy</button><button id="dbgClose" type="button" style="margin-left:0">Close</button></div><pre id="dbgOut">loading...</pre></div>
 <div class="app">
@@ -274,9 +296,11 @@
         <div class="bubble" id="g-say"></div>
       </div>
       <div class="hands" id="hands">🙌</div>
-      <div class="side">Pip's side</div>
-      <div class="grid" id="grid"></div>
-      <div class="side">Your side</div>
+      <div class="gridcard" id="gridcard">
+        <div class="side">Pip's side</div>
+        <div class="grid" id="grid"></div>
+        <div class="side">Your side</div>
+      </div>
       <div class="timer" id="timer"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17" fill="none" stroke="#e5e5e5" stroke-width="5"/>
         <circle id="t-ring" cx="20" cy="20" r="17" fill="none" stroke="#1cb0f6" stroke-width="5" stroke-linecap="round" stroke-dasharray="106.8" stroke-dashoffset="0"/></svg><b id="t-num"></b></div>
       <div class="palette" id="palette"></div>
@@ -635,12 +659,36 @@ function render() {
   else { if (setupOpen) openSetup(false); renderGame(); show("game"); }
   if (ph !== "result") $("result").className = "sheet";
   if (ph !== "choice") $("choice").classList.remove("on");
+  render3d(ph);
   const timed = ph === "show" || ph === "build";
   if (timed && (lastPhase !== ph || !deadline || renderGame.att !== S.attempt)) deadline = performance.now() + S.time_left * 1000;
   if (!timed) deadline = 0;
   renderGame.att = S.attempt;
   lastPhase = ph;
 }
+
+// ---------- 3D board (board3d.js): only on the game screen, only once WebGL is up
+let board3d = null;
+function render3d(ph) {
+  const ingame = !!board3d && !["home", "over"].includes(ph) && !!S.profile.name;
+  document.body.classList.toggle("ingame", ingame);
+  // in 3D the palette sits in the grid card, under the grid you tap
+  const card = $("gridcard"), pal = $("palette");
+  if (ingame && pal.parentNode !== card) card.appendChild(pal);
+  else if (!ingame && pal.parentNode === card) $("timer").after(pal);
+  if (!board3d) return;
+  board3d.setActive(ingame);
+  if (ingame) board3d.update(S);
+}
+function cssColors() {
+  const css = getComputedStyle(document.documentElement), out = {};
+  for (const c of ["red", "orange", "yellow", "teal", "skyblue", "purple"]) out[c] = css.getPropertyValue(`--c-${c}`).trim();
+  return out;
+}
+import("/buddy/static/board3d.js")
+  .then((m) => m.mountBoard3D($("board3d"), cssColors()))
+  .then((b) => { if (!b) return; board3d = b; document.body.classList.add("has3d"); render(); })
+  .catch((e) => console.warn("[buddy] 3D board unavailable, keeping the 2D grid:", e));
 
 function renderHello() {
   $("avatars").innerHTML = Object.keys(PIP).map((c) => `<button class="av ${c === avatarPick ? "on" : ""}" data-av="${c}" style="--pip:${PIP[c][0]};--pip-d:${PIP[c][1]}"><svg><use href="#pip-head"/></svg></button>`).join("");
