@@ -2,170 +2,271 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
 <title>Apprentice</title>
+<!-- Nunito as buddy/static/index.html loads it, but non-blocking: offline the page renders at once in system-ui. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
-/* Colors and font from ui/style.css, so the hub matches the monitor. */
-:root {
-  --bg: #0d1015;
-  --panel: #161b23;
-  --panel-2: #1e2530;
-  --line: #2d3644;
-  --text: #f3f5f8;
-  --muted: #95a1b2;
-  --warn: #f5b041;
-  --red: #e2383f;
-  --yellow: #f6c933;
-  --teal: #16a59b;
-  --purple: #8a5cc7;
-  --font: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
-  --radius: 18px;
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; }
-body { background: var(--bg); color: var(--text); font-family: var(--font); line-height: 1.4; }
-main { max-width: 1280px; margin: 0 auto; padding: 32px 24px 48px; }
-a { color: inherit; }
+  /* Variables copied from buddy/static/index.html so the two pages match. */
+  :root {
+    --green: #58cc02; --green-d: #58a700; --green-l: #d7ffb8;
+    --blue: #1cb0f6; --blue-d: #1899d6; --blue-l: #ddf4ff;
+    --yellow: #ffc800; --yellow-d: #e5a400; --yellow-l: #fff5cc;
+    --red: #ff4b4b; --red-d: #ea2b2b;
+    --orange: #ff9600; --orange-d: #d97c00; --orange-l: #fff0d9;
+    --ink: #3c3c3c; --dim: #777; --line: #e5e5e5; --soft: #f7f7f7; --bg: #ffffff;
+    --c-red: #ff4b4b; --c-red-d: #d63434;
+    --c-yellow: #ffc800; --c-yellow-d: #d9a400;
+    --c-teal: #14c4a8; --c-teal-d: #0e9a84;
+    --c-purple: #a560e8; --c-purple-d: #7d3fc0;
+    --c-orange: #ff9600; --c-orange-d: #d97c00;
+    --c-skyblue: #1cb0f6; --c-skyblue-d: #1590ca;
+    --c-unknown: #bbb; --c-unknown-d: #999;
+    --pip: #14c4a8; --pip-d: #0e9a84;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+         font-weight: 700; font-size: 17px; line-height: 1.35; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 20px calc(32px + env(safe-area-inset-bottom)); }
+  a { color: inherit; text-decoration: none; }
 
-.hero { padding: 24px 0 32px; }
-.blocks { display: flex; gap: 8px; margin-bottom: 20px; }
-.blocks span { width: 28px; height: 28px; border-radius: 6px; }
-h1 { font-size: clamp(40px, 6vw, 64px); margin: 0; letter-spacing: 0.01em; }
-.tagline { font-size: clamp(22px, 3vw, 30px); font-weight: 600; margin: 8px 0 0; }
-.sub { font-size: 18px; color: var(--muted); margin: 10px 0 0; max-width: 46em; }
+  /* Type scale: title 30, prompt 25, heading 22, body 17, sub 15, label 12. */
+  .title { font-size: 30px; font-weight: 900; margin: 0; }
+  .prompt { font-size: 25px; font-weight: 900; margin: 0; line-height: 1.2; }
+  h2 { font-size: 22px; font-weight: 900; margin: 2px 0 14px; }
+  h3 { font-size: 17px; font-weight: 900; margin: 0; }
+  .sub { color: var(--dim); font-size: 15px; font-weight: 700; margin: 4px 0 0; }
+  .label { font-size: 12px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
 
-.sections { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 20px; align-items: start; }
-.card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 24px; border-top: 6px solid var(--accent);
-}
-.kicker { font-size: 14px; font-weight: 700; letter-spacing: 0.14em; color: var(--accent); }
-h2 { font-size: 28px; margin: 4px 0 16px; }
-h3 { font-size: 18px; margin: 0; }
-.muted { color: var(--muted); }
+  /* Header: brand plus the four block colors. */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 12px; border-bottom: 2px solid var(--line); }
+  .blocks { display: flex; gap: 6px; }
+  .blocks i { width: 22px; height: 22px; border-radius: 7px; display: block; }
 
-.btn {
-  display: flex; align-items: center; justify-content: center; text-align: center;
-  min-height: 52px; padding: 10px 18px; margin-top: 10px; width: 100%;
-  font: 600 17px var(--font); color: var(--text); text-decoration: none; cursor: pointer;
-  background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
-}
-.btn:hover, .btn:focus-visible { border-color: var(--accent); outline: none; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #0d1015; }
-.btn[disabled] { opacity: 0.5; cursor: default; }
+  /* Pip and the speech bubble, from buddy. */
+  .pip-wrap { display: flex; align-items: flex-end; gap: 12px; margin: 22px 0 6px; }
+  .pip { width: 110px; height: 120px; flex: none; animation: bob 2.6s ease-in-out infinite; }
+  .pip .body { fill: var(--pip); } .pip .body-d { fill: var(--pip-d); }
+  .pip .eye { transform-box: fill-box; transform-origin: center; animation: blink 4.2s infinite; }
+  .pip .mouth { display: none; } .pip .arm-up { display: none; }
+  .pip[data-mood="cheer"] .m-big { display: inline; }
+  .pip[data-mood="cheer"] .arm-down { display: none; } .pip[data-mood="cheer"] .arm-up { display: inline; }
+  .pip .antenna-bulb { animation: glow 1.6s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-5px) } }
+  @keyframes blink { 0%, 92%, 100% { transform: scaleY(1) } 95% { transform: scaleY(.1) } }
+  @keyframes glow { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+  @media (prefers-reduced-motion: reduce) { .pip, .pip .eye, .pip .antenna-bulb { animation: none; } }
+  .bubble { position: relative; background: #fff; border: 2px solid var(--line); border-radius: 18px; padding: 14px 18px;
+            flex: 1; margin-bottom: 22px; min-height: 48px; }
+  .bubble::before { content: ""; position: absolute; left: -11px; bottom: 16px; width: 18px; height: 18px; background: #fff;
+                    border-left: 2px solid var(--line); border-bottom: 2px solid var(--line); transform: rotate(45deg); }
+  .bubble .sub { margin-top: 6px; }
 
-.panel { display: none; margin-top: 10px; padding: 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; }
-.panel.open { display: block; }
-.panel p { margin: 0 0 8px; font-size: 15px; }
-code { display: block; font: 14px/1.5 Consolas, "Courier New", monospace; color: var(--text); white-space: pre-wrap; word-break: break-all; }
+  /* Sections are big cards. */
+  .section { border: 2px solid var(--line); border-radius: 22px; padding: 20px; margin-top: 20px; background: #fff; }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
 
-.learners { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.learner { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; }
-.learner p { margin: 6px 0 0; font-size: 15px; flex: 1; }
+  /* Everything you can press sits on a ledge; pressing drops it 4 px and removes the ledge. */
+  .btn { font: inherit; font-weight: 800; font-size: 17px; letter-spacing: .06em; text-transform: uppercase; border: 0;
+         border-radius: 16px; padding: 13px 18px; min-height: 52px; width: 100%; color: #fff; background: var(--green);
+         box-shadow: 0 4px 0 var(--green-d); cursor: pointer; transition: transform .05s, box-shadow .05s;
+         display: flex; align-items: center; justify-content: center; text-align: center; gap: 8px; }
+  .btn:active:not(:disabled) { transform: translateY(4px); box-shadow: none; }
+  .btn:disabled { background: var(--line); color: #afafaf; box-shadow: 0 4px 0 #d0d0d0; cursor: default; }
+  .btn.blue { background: var(--blue); box-shadow: 0 4px 0 var(--blue-d); }
+  .btn.ghost { background: #fff; color: var(--blue); border: 2px solid var(--line); box-shadow: 0 4px 0 var(--line); }
+  .btn.ghost:active { box-shadow: none; }
+  .btn + .btn { margin-top: 12px; }
+  .btn:focus-visible, .tile:focus-visible { outline: 3px solid var(--blue-l); outline-offset: 2px; }
 
-.library { margin-top: 24px; }
-.library-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.lessons { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
-.lesson { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
-.lesson .meta { font-size: 15px; color: var(--muted); margin: 4px 0 0; }
-.new { display: inline-block; margin-left: 8px; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 700; background: var(--yellow); color: #0d1015; vertical-align: middle; }
-.lesson .err { color: var(--warn); font-size: 15px; margin: 10px 0 0; }
-.lesson .err:empty { display: none; }
-.empty { padding: 16px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); margin-top: 12px; }
+  /* TEACH: blue cards. */
+  .teach { background: var(--blue-l); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .teach .sub { margin: 0; color: #4a7b94; }
+  .cmd { display: none; flex-direction: column; gap: 10px; }
+  .cmd.open { display: flex; }
+  code { display: block; background: #fff; border: 2px solid var(--line); border-radius: 16px; padding: 10px 12px;
+         font: 600 14px/1.5 Consolas, "Courier New", monospace; color: var(--ink); white-space: pre-wrap; word-break: break-all;
+         user-select: all; }
 
-footer { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; align-items: center; }
-footer .line { font-size: 20px; font-weight: 600; }
-.facts { display: flex; flex-wrap: wrap; gap: 8px; }
-.facts span { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 15px; }
+  /* LEARN: learner tiles. Teal is block-like (6 px ledge, radius 13). */
+  .tile { border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 6px; min-height: 140px; color: var(--ink);
+          box-shadow: 0 4px 0 var(--d); background: var(--l); border: 2px solid var(--d); cursor: pointer;
+          transition: transform .05s, box-shadow .05s; }
+  .tile:active { transform: translateY(4px); box-shadow: none; }
+  .tile p { margin: 0; font-size: 15px; flex: 1; }
+  .tile .go { font-size: 15px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--d); }
+  .tile.you { --l: var(--green-l); --d: var(--green-d); }
+  .tile.robot { --l: var(--c-teal); --d: var(--c-teal-d); color: #fff; border-radius: 13px; box-shadow: 0 6px 0 var(--d); }
+  .tile.robot .go { color: #fff; }
+  .tile.together { --l: var(--yellow-l); --d: var(--yellow-d); }
 
-/* Landscape tablet and small laptop: Learn spans the full width under Teach and Track. */
-@media (max-width: 1100px) {
-  .sections { grid-template-columns: 1fr 1fr; }
-  .learn { grid-column: 1 / -1; order: 3; }
-}
-@media (max-width: 700px) {
-  .sections, .learners { grid-template-columns: 1fr; }
-}
+  .lib-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 26px 0 12px; }
+  .lessons { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+  .lesson { background: #fff; border: 2px solid var(--line); border-radius: 22px; box-shadow: 0 4px 0 var(--line); padding: 16px;
+            display: flex; flex-direction: column; }
+  .lesson-top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .lesson-top .sub { margin: 2px 0 0; }
+  .new { display: inline-block; margin-left: 6px; padding: 2px 10px; border-radius: 99px; font-size: 12px; font-weight: 800;
+         letter-spacing: .08em; text-transform: uppercase; background: var(--yellow-l); color: var(--yellow-d); vertical-align: 2px; }
+  .mini { display: grid; grid-template-columns: repeat(3, 18px); gap: 4px; padding: 6px; background: var(--soft);
+          border: 2px solid var(--line); border-radius: 13px; flex: none; }
+  .mini i { width: 18px; height: 18px; border-radius: 5px; background: #fff; box-shadow: 0 2px 0 var(--line); display: block; }
+  .steps { width: 66px; height: 66px; flex: none; border-radius: 13px; background: var(--soft); border: 2px solid var(--line);
+           display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
+  .steps b { font-size: 25px; font-weight: 900; }
+  .steps span { font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin-top: 3px; }
+  .err { margin: 12px 0 0; padding: 10px 12px; border-radius: 16px; background: var(--orange-l); color: var(--orange-d); font-size: 15px; }
+  .err:empty { display: none; }
+  .pill { display: inline-flex; align-items: center; min-height: 48px; padding: 10px 20px; border-radius: 99px; background: var(--soft);
+          border: 2px solid var(--line); color: #9a9a9a; font-size: 15px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+
+  /* TRACK */
+  .track { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .track .btn { width: auto; flex: none; }
+
+  footer { margin-top: 28px; padding-top: 18px; border-top: 2px solid var(--line); display: flex; flex-wrap: wrap;
+           justify-content: space-between; align-items: center; gap: 12px; }
+  .facts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .facts span { padding: 6px 14px; border-radius: 99px; background: var(--soft); color: var(--dim); font-size: 15px; }
+
+  @media (max-width: 820px) {
+    .row { grid-template-columns: 1fr; }
+    .tile { min-height: 0; }
+    .track { flex-direction: column; align-items: stretch; }
+    .track .btn { width: 100%; }
+  }
+  @media (max-width: 480px) {
+    main { padding: 14px 14px calc(24px + env(safe-area-inset-bottom)); }
+    .pip { width: 80px; height: 88px; }
+    .prompt { font-size: 22px; }
+    .section { padding: 16px; border-radius: 22px; }
+  }
 </style>
 </head>
 <body>
 <main>
-  <header class="hero">
+  <div class="top">
+    <h1 class="title">Apprentice</h1>
     <div class="blocks" aria-hidden="true">
-      <span style="background: var(--red)"></span><span style="background: var(--purple)"></span>
-      <span style="background: var(--yellow)"></span><span style="background: var(--teal)"></span>
+      <i style="background: var(--c-red)"></i><i style="background: var(--c-purple)"></i>
+      <i style="background: var(--c-yellow)"></i><i style="background: var(--c-teal)"></i>
     </div>
-    <h1>Apprentice</h1>
-    <p class="tagline">Show it once. Anyone can learn it.</p>
-    <p class="sub">One demonstration becomes a lesson that a person and a robot both learn, graded by the same camera.</p>
-  </header>
-
-  <div class="sections">
-    <section class="card" style="--accent: var(--red)">
-      <div class="kicker">TEACH</div>
-      <h2>Make a lesson</h2>
-      <a class="btn primary" href="/buddy">Kid teaches Pip</a>
-      <p class="muted" style="margin: 6px 0 0; font-size: 15px">Opens Buddy. Pick Teach the Robot.</p>
-
-      <button class="btn" data-panel="p-table">Build it on the table</button>
-      <div class="panel" id="p-table">
-        <p>Start Perception, then run this and build the lesson one cube at a time:</p>
-        <code>python -m brain.extractor --grid ws://localhost:8765 --title "My lesson"</code>
-        <button class="btn copy">Copy command</button>
-      </div>
-
-      <button class="btn" data-panel="p-video">From a video</button>
-      <div class="panel" id="p-video">
-        <p>Point it at an overhead video of someone building:</p>
-        <code>python -m brain.extractor --video &lt;file&gt; --calib perception/calib --colors red,purple,yellow,teal --block-mm 47</code>
-        <button class="btn copy">Copy command</button>
-      </div>
-    </section>
-
-    <section class="card learn" style="--accent: var(--teal)">
-      <div class="kicker">LEARN</div>
-      <h2>Pick a learner</h2>
-      <div class="learners">
-        <div class="learner">
-          <h3>You</h3>
-          <p class="muted">Guided practice with holograms and live hints.</p>
-          <a class="btn" href="#lessons">Choose a lesson</a>
-        </div>
-        <div class="learner">
-          <h3>The robot</h3>
-          <p class="muted">The arm builds it and checks its own work.</p>
-          <a class="btn" href="#lessons">Choose a lesson</a>
-        </div>
-        <div class="learner">
-          <h3>Together</h3>
-          <p class="muted">Games with Pip: Picture Recall, Take Turns.</p>
-          <a class="btn primary" href="/buddy">Play with Pip</a>
-        </div>
-      </div>
-
-      <div class="library" id="lessons">
-        <div class="library-head">
-          <h3>Lessons</h3>
-          <span class="muted" id="lib-status">Looking for the brain...</span>
-        </div>
-        <div id="lesson-list"></div>
-      </div>
-    </section>
-
-    <section class="card" style="--accent: var(--purple)">
-      <div class="kicker">TRACK</div>
-      <h2>See progress</h2>
-      <p class="muted" style="margin: 0">Every session, step, and hint, for people and the robot, side by side.</p>
-      <a class="btn primary" target="_blank" rel="noopener"
-         href="https://dbc-bcd88b06-db88.cloud.databricks.com/sql/dashboardsv3/01f1c51dfb2119eb9f71f3f2d15f9dd2">Open the dashboard</a>
-    </section>
   </div>
 
+  <div class="pip-wrap">
+    <!-- Pip, copied from buddy/static/index.html and drawn inline: page CSS does not reach into a <use> copy,
+         so through <use> Pip renders black in Chromium. -->
+    <svg class="pip" data-mood="cheer" viewBox="0 0 120 132" aria-hidden="true">
+      <line x1="60" y1="22" x2="60" y2="9" stroke="var(--pip-d)" stroke-width="4" stroke-linecap="round"/>
+      <circle class="antenna-bulb" cx="60" cy="8" r="6" fill="#ffc800"/>
+      <g class="arm-down">
+        <rect class="body-d" x="16" y="94" width="14" height="28" rx="7" transform="rotate(14 23 96)"/>
+        <rect class="body-d" x="90" y="94" width="14" height="28" rx="7" transform="rotate(-14 97 96)"/>
+      </g>
+      <g class="arm-up">
+        <rect class="body-d" x="14" y="70" width="14" height="30" rx="7" transform="rotate(-28 21 98)"/>
+        <rect class="body-d" x="92" y="70" width="14" height="30" rx="7" transform="rotate(28 99 98)"/>
+      </g>
+      <rect class="body-d" x="32" y="88" width="56" height="38" rx="16"/>
+      <rect class="body" x="32" y="86" width="56" height="36" rx="16"/>
+      <circle cx="60" cy="104" r="7" fill="#fff" opacity=".85"/>
+      <rect class="body-d" x="16" y="26" width="88" height="68" rx="28"/>
+      <rect class="body" x="16" y="22" width="88" height="68" rx="28"/>
+      <rect x="27" y="34" width="66" height="44" rx="19" fill="#fff"/>
+      <g class="pupils" style="transition:transform .3s">
+        <ellipse class="eye" cx="47" cy="54" rx="7" ry="9" fill="#2b2b2b"/>
+        <ellipse class="eye" cx="73" cy="54" rx="7" ry="9" fill="#2b2b2b"/>
+        <circle cx="49.5" cy="50.5" r="2.4" fill="#fff"/><circle cx="75.5" cy="50.5" r="2.4" fill="#fff"/>
+      </g>
+      <ellipse cx="36" cy="66" rx="5" ry="3.2" fill="#ff8fa3" opacity=".7"/>
+      <ellipse cx="84" cy="66" rx="5" ry="3.2" fill="#ff8fa3" opacity=".7"/>
+      <path class="mouth m-happy" d="M51 66 Q60 74 69 66" fill="none" stroke="#2b2b2b" stroke-width="3.2" stroke-linecap="round"/>
+      <path class="mouth m-big" d="M49 64 Q60 80 71 64 Z" fill="#2b2b2b"/>
+      <path class="mouth m-flat" d="M54 69 L67 67" fill="none" stroke="#2b2b2b" stroke-width="3.2" stroke-linecap="round"/>
+      <ellipse class="mouth m-oh" cx="60" cy="68" rx="4" ry="4.6" fill="#2b2b2b"/>
+    </svg>
+    <div class="bubble">
+      <p class="prompt">Show it once. Anyone can learn it.</p>
+      <p class="sub">One demonstration becomes a lesson that a person and a robot both learn, graded by the same camera.</p>
+    </div>
+  </div>
+
+  <section class="section">
+    <div class="label">Teach</div>
+    <h2>Make a lesson</h2>
+    <div class="row">
+      <div class="teach">
+        <a class="btn blue" href="/buddy">Kid teaches Pip</a>
+        <p class="sub">Opens Buddy. Pick Teach the Robot.</p>
+      </div>
+      <div class="teach">
+        <button class="btn blue" data-panel="p-table">Build it on the table</button>
+        <div class="cmd" id="p-table">
+          <p class="sub">Start Perception, then build the lesson one cube at a time:</p>
+          <code>python -m brain.extractor --grid ws://localhost:8765 --title "My lesson"</code>
+          <button class="btn ghost copy">Copy</button>
+        </div>
+      </div>
+      <div class="teach">
+        <button class="btn blue" data-panel="p-video">From a video</button>
+        <div class="cmd" id="p-video">
+          <p class="sub">Point it at an overhead video of someone building:</p>
+          <code>python -m brain.extractor --video &lt;file&gt; --calib perception/calib --colors red,purple,yellow,teal --block-mm 47</code>
+          <button class="btn ghost copy">Copy</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="label">Learn</div>
+    <h2>Pick a learner</h2>
+    <div class="row">
+      <a class="tile you" href="#lessons">
+        <h3>You</h3>
+        <p>Guided practice with holograms and live hints.</p>
+        <span class="go">Choose a lesson</span>
+      </a>
+      <a class="tile robot" href="#lessons">
+        <h3>The robot</h3>
+        <p>The arm builds it and checks its own work.</p>
+        <span class="go">Choose a lesson</span>
+      </a>
+      <a class="tile together" href="/buddy">
+        <h3>Together</h3>
+        <p>Games with Pip: Picture Recall, Take Turns.</p>
+        <span class="go">Play with Pip</span>
+      </a>
+    </div>
+
+    <div class="lib-head" id="lessons">
+      <h2 style="margin: 0">Lessons</h2>
+      <span class="label" id="lib-status">Looking for the brain</span>
+    </div>
+    <div id="lesson-list"></div>
+  </section>
+
+  <section class="section">
+    <div class="label">Track</div>
+    <div class="track">
+      <div>
+        <h2 style="margin-bottom: 0">See progress</h2>
+        <p class="sub">Every session, step, and hint, for people and the robot, side by side.</p>
+      </div>
+      <a class="btn blue" target="_blank" rel="noopener"
+         href="https://dbc-bcd88b06-db88.cloud.databricks.com/sql/dashboardsv3/01f1c51dfb2119eb9f71f3f2d15f9dd2">Open the dashboard</a>
+    </div>
+  </section>
+
   <footer>
-    <div class="line">Same camera. Same rules. Two students.</div>
+    <h3>Same camera. Same rules. Two students.</h3>
     <div class="facts"><span>Jetson</span><span>Overhead camera</span><span>SO-101 arm</span><span>Databricks</span></div>
   </footer>
 </main>
+
 
 <script>
 // Brain address: ?ws=ws://host:8766 overrides; otherwise the brain on this page's host.
@@ -174,6 +275,8 @@ const WS_URL = params.get("ws") || `ws://${location.hostname || "localhost"}:876
 const UI_URL = params.get("ws") ? `/ui/?ws=${encodeURIComponent(WS_URL)}` : "/ui/";
 const NEW_SECONDS = 10 * 60;
 const SWITCH_WAIT_MS = 2500;   // load and mode send no reply on success, only {"error"} on failure
+const CELLS = ["A1", "A2", "A3", "B1", "B2", "B3", "C1", "C2", "C3"];
+const BLOCK_COLORS = ["red", "orange", "yellow", "teal", "skyblue", "purple"];
 
 for (const b of document.querySelectorAll("[data-panel]")) {
   b.addEventListener("click", () => document.getElementById(b.dataset.panel).classList.toggle("open"));
@@ -183,7 +286,7 @@ for (const b of document.querySelectorAll("[data-panel]")) {
 for (const b of document.querySelectorAll(".copy")) {
   b.addEventListener("click", () => {
     const text = b.parentElement.querySelector("code").textContent;
-    const done = () => { b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy command"), 1500); };
+    const done = () => { b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1500); };
     if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text) && done());
     } else if (fallbackCopy(text)) {
@@ -212,7 +315,7 @@ let busy = false;
 
 function showOffline() {
   statusEl.textContent = "";
-  listEl.innerHTML = '<div class="empty">Start the brain to see lessons.</div>';
+  listEl.innerHTML = '<span class="pill">Start the brain to see lessons</span>';
 }
 
 function loadLessons() {
@@ -232,11 +335,35 @@ function loadLessons() {
   ws.onclose = () => { if (!answered) showOffline(); };
 }
 
+// A 3x3 board of the top cube in each cell, when the list reply carries the final board; else the step count.
+function preview(l) {
+  if (l.final_board && typeof l.final_board === "object") {
+    const mini = document.createElement("div");
+    mini.className = "mini";
+    mini.setAttribute("aria-hidden", "true");
+    for (const cell of CELLS) {
+      const tile = document.createElement("i");
+      const stack = l.final_board[cell] || [];
+      const top = stack[stack.length - 1];
+      if (BLOCK_COLORS.includes(top)) {
+        tile.style.background = `var(--c-${top})`;
+        tile.style.boxShadow = `0 2px 0 var(--c-${top}-d)`;
+      }
+      mini.appendChild(tile);
+    }
+    return mini;
+  }
+  const box = document.createElement("div");
+  box.className = "steps";
+  box.innerHTML = `<b>${Number(l.steps) || 0}</b><span>step${l.steps === 1 ? "" : "s"}</span>`;
+  return box;
+}
+
 function renderLessons(lessons) {
   listEl.innerHTML = "";
   if (!lessons.length) {
     statusEl.textContent = "";
-    listEl.innerHTML = '<div class="empty">No lessons yet. Make one under Teach.</div>';
+    listEl.innerHTML = '<span class="pill">No lessons yet. Make one under Teach.</span>';
     return;
   }
   statusEl.textContent = `${lessons.length} lesson${lessons.length === 1 ? "" : "s"}`;
@@ -246,6 +373,9 @@ function renderLessons(lessons) {
   for (const l of lessons) {
     const card = document.createElement("div");
     card.className = "lesson";
+    const top = document.createElement("div");
+    top.className = "lesson-top";
+    const text = document.createElement("div");
     const h = document.createElement("h3");
     h.textContent = l.title || l.lesson_id;
     if (now - l.mtime < NEW_SECONDS) {
@@ -255,8 +385,11 @@ function renderLessons(lessons) {
       h.appendChild(tag);
     }
     const meta = document.createElement("p");
-    meta.className = "meta";
+    meta.className = "sub";
     meta.textContent = `${l.steps} step${l.steps === 1 ? "" : "s"}`;
+    text.append(h);
+    if (l.final_board) text.append(meta);   // otherwise the preview already shows the step count
+    top.append(preview(l), text);
     const err = document.createElement("p");
     err.className = "err";
     const practice = document.createElement("button");
@@ -267,7 +400,7 @@ function renderLessons(lessons) {
     robot.textContent = "Robot builds it";
     practice.onclick = () => openLesson(l.lesson_id, "human", card, err);
     robot.onclick = () => openLesson(l.lesson_id, "robot", card, err);
-    card.append(h, meta, practice, robot, err);
+    card.append(top, practice, robot, err);
     grid.appendChild(card);
   }
   listEl.appendChild(grid);
