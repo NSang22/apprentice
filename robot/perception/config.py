@@ -21,3 +21,9 @@ OBJECTS = ["red_cube", "blue_cube", "yellow_cube"]
 # can't all avoid neighbours, so the only neighbours (row C, and B2 above C2) are dissimilar
 # colours: similar colours that touch merge and can't be split (teal + light blue at 17:24).
 BLOCK_COLORS = ["orange", "yellow", "purple", "teal", "red", "light blue"]
+
+# The colours blocks may be named, out of BLOCK_COLORS. In this room's glare orange and yellow
+# share a hue (105 deg; the yellow block was called "orange" 53 times out of 59), and teal and
+# light blue sit 6 deg apart, so only one of each pair is in play. The colour memory keeps all of
+# them; this only narrows the choice. Use only blocks of these colours in tasks.
+ACTIVE_COLORS = ["red", "purple", "yellow", "teal"]

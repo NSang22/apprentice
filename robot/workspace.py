@@ -68,6 +68,15 @@ class Workspace:
         sheet = ((p[:2] - [self.tx, self.ty]) @ R) * [1, -1]
         return sheet, p[2] - self.table_z
 
+    def arm_points_sheet(self, reading):
+        """The arm's joint centres plus the jaw tips, base to tip, as (sheet xy, height above
+        the table): a stick figure of the arm, for checking what it hides from the camera."""
+        T, _, origins = self.kin.fk_frames(self.to_urdf(reading))
+        pts = [origins[j] for j in origins] + [T[:3, 3] + T[:3, 2] * self.tip_mm]
+        t = np.radians(self.theta)
+        R = np.array([[np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)]])
+        return [(((p[:2] - [self.tx, self.ty]) @ R) * [1, -1], p[2] - self.table_z) for p in pts]
+
     def solve(self, sheet_xy, height_mm, wrist_roll_reading=0.0, seed_reading=None, max_tilt_deg=MAX_TILT_DEG,
               max_err_mm=MAX_POS_ERR_MM):
         """Joint command (follower readings, deg) to put the jaw tips at (sheet_xy, height),
