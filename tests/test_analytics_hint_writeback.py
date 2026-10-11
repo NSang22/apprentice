@@ -6,7 +6,7 @@ from analytics.hint_writeback import build_hints, write_hints
 from analytics.load import Attempt, SessionRow
 
 P, W, C = "PASS", "WRONG_CELL", "WRONG_COLOR"
-TARGET = {0: "A1", 1: "A2", 2: "C1"}  # lesson L
+TARGET = {0: "A1", 1: "B1", 2: "C1"}  # lesson L
 
 
 def att(session, step, no, verdict, hint, fault=None):
@@ -26,21 +26,21 @@ def sess(session, side="row3"):
 
 SESSIONS = [sess(f"S{i}") for i in range(1, 7)]
 ATTEMPTS = [att(f"S{i}", 0, 1, P, 0) for i in range(1, 7)]  # step 0: everyone right first time
-ATTEMPTS += [  # step 1 (target A2): most people put it on B2
+ATTEMPTS += [  # step 1 (target B1): most people put it on B2
     att("S1", 1, 1, W, 0, "B2"), att("S1", 1, 2, W, 1, "B2"), att("S1", 1, 3, P, 2),
     att("S2", 1, 1, W, 0, "B2"), att("S2", 1, 2, W, 1, "B2"), att("S2", 1, 3, P, 2),
     att("S3", 1, 1, W, 0, "B2"), att("S3", 1, 2, P, 1),
     att("S4", 1, 1, W, 0, "B2"), att("S4", 1, 2, W, 1, "B2"), att("S4", 1, 3, P, 2),
     att("S5", 1, 1, P, 0),
-    att("S6", 1, 1, C, 0, "A2"), att("S6", 1, 2, P, 1),
+    att("S6", 1, 1, C, 0, "B1"), att("S6", 1, 2, P, 1),
 ]
 ATTEMPTS += [att("S1", 2, 1, W, 0, "C2"), att("S1", 2, 2, P, 1)] + [att(f"S{i}", 2, 1, P, 0) for i in range(2, 7)]
 
 
 def test_hints_file_from_real_data_only(tmp_path):
     # Step 1, min_n 3. Failed attempts: S1 2, S2 2, S3 1, S4 2 (all WRONG_CELL on B2) + S6 1 color = 8.
-    #   Top mistake (WRONG_CELL, B2) = 7 >= 3 and 7 >= 8/2 -> watch_out. From the row3 side, A2 -> B2 is
-    #   one column toward C = "one cell right" (brain/checker.py direction()).
+    #   Top mistake (WRONG_CELL, B2) = 7 >= 3 and 7 >= 8/2 -> watch_out. From the row3 side, B1 -> B2 is
+    #   one column toward 3 = "one cell right" (brain/checker.py direction()).
     #   First try 1/6 = 0.17 < 0.5. Level 1 next tries: S1 W, S2 W, S3 P, S4 W, S6 P -> 2/5 = 0.4, n 5 >= 3.
     #   Level 2 next tries: S1 P, S2 P, S4 P -> 3/3 = 1.0, n 3 >= 3. Gain 0.6 >= 0.25 -> start at level 2.
     # Step 0: no mistakes, first try 6/6 -> no entry. Step 2: 1 failed attempt < 3 -> no entry.
@@ -53,11 +53,11 @@ def test_hints_file_from_real_data_only(tmp_path):
 
     # Sessions that stood on different sides: no safe direction, so name the cells.
     mixed = [replace(s, human_side="row1") if s.session == "S6" else s for s in SESSIONS]
-    assert build_hints("L", mixed, ATTEMPTS, min_n=3)["steps"][0]["watch_out"] == "Most people put this cube on B2. It goes on A2."
+    assert build_hints("L", mixed, ATTEMPTS, min_n=3)["steps"][0]["watch_out"] == "Most people put this cube on B2. It goes on B1."
 
-    # A two-part move (A2 -> B3 is right and toward you) also names the cells.
-    diagonal = [replace(a, fault_cell="B3") if a.fault_cell == "B2" else a for a in ATTEMPTS]
-    assert build_hints("L", SESSIONS, diagonal, min_n=3)["steps"][0]["watch_out"] == "Most people put this cube on B3. It goes on A2."
+    # A two-part move (B1 -> C2 is right and toward you) also names the cells.
+    diagonal = [replace(a, fault_cell="C2") if a.fault_cell == "B2" else a for a in ATTEMPTS]
+    assert build_hints("L", SESSIONS, diagonal, min_n=3)["steps"][0]["watch_out"] == "Most people put this cube on C2. It goes on B1."
 
     # Below min_n: 8 failed attempts < 9 and level 1 has 5 < 9 next tries -> no step qualifies, no file.
     assert build_hints("L", SESSIONS, ATTEMPTS, min_n=9) is None

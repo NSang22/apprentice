@@ -126,8 +126,10 @@ def slot_diff(expected: Board, actual: Board) -> tuple[list[Cube], list[Cube]]:
 
 
 def cell_xy(cell: str) -> tuple[int, int]:
-    """(column index left to right, row index front to back)."""
-    return COLUMNS.index(cell[0]), ROWS.index(cell[1])
+    """(x, y) on the printed sheet: x = the column number's index (tag 0 -> tag 1, 1 to 3),
+    y = the row letter's index (tag 0 -> tag 3, A on the arm's edge to C on the student's).
+    shared COLUMNS/ROWS keep their old names: COLUMNS holds the row letters, ROWS the numbers."""
+    return ROWS.index(cell[1]), COLUMNS.index(cell[0])
 
 
 def distance(a: str, b: str) -> int:
@@ -145,10 +147,11 @@ def direction(src: str, dst: str, human_side: str = HUMAN_SIDE) -> str:
     """How to move a cube from src to dst, as seen by the human: "one cell left",
     "one cell right and two cells away from you".
 
-    On the printed sheet, columns A to C run from tag 0 toward tag 1 and rows 1 to 3 from
-    tag 0 toward tag 3. From the row3 side (opposite the arm) that puts A on the human's
-    left and row 3 nearest. From the row1 side (the arm's side) the human faces the other
-    way, so both flip: A is on their right and row 1 is nearest."""
+    On the printed sheet the letter is the row (A on the arm's edge, C on the student's) and
+    the number is the column (1 to 3 from tag 0 toward tag 1). From the "row3" side
+    (opposite the arm, the C-row edge) column 1 is on the human's left, 1 -> 3 is "right",
+    and A -> C is "toward you". From the "row1" side (the arm's edge) the human faces the
+    other way, so both flip."""
     if human_side not in HUMAN_SIDES:
         raise ValueError(f"human_side must be one of {HUMAN_SIDES}, got {human_side!r}")
     (sx, sy), (dx, dy) = cell_xy(src), cell_xy(dst)
