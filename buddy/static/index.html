@@ -195,6 +195,11 @@
   .toast { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px;
            border-radius: 14px; font-size: 15px; z-index: 9; display: none; max-width: 90vw; text-align: center; }
   canvas#confetti { position: fixed; inset: 0; pointer-events: none; z-index: 8; }
+  .power-rows { border: 2px solid var(--line); border-radius: 16px; margin: 10px 0; }
+  .power-row { display: flex; justify-content: space-between; padding: 12px 14px; font-size: 16px; }
+  .power-row + .power-row { border-top: 2px solid var(--line); }
+  .power-row b.on { color: var(--green-d); } .power-row b.off { color: #afafaf; } .power-row b.outside { color: var(--orange-d); }
+  #power .note { min-height: 18px; }
 </style>
 </head>
 <body>
@@ -221,6 +226,7 @@
       <div class="stat flame"><svg><use href="#i-flame"/></svg><span id="h-streak">0</span></div>
       <div class="stat gem"><svg><use href="#i-gem"/></svg><span id="h-xp">0</span></div>
       <div class="stat star"><svg><use href="#i-star-fill"/></svg><span id="h-stars">0</span></div>
+      <button class="icon-btn" id="gear" aria-label="Grown-ups"><svg width="26" height="26"><use href="#i-gear"/></svg></button>
     </div>
     <div class="pip-wrap">
       <svg class="pip small" data-mood="happy"><use href="#pip"/></svg>
@@ -313,6 +319,23 @@
   <button class="btn" id="su-go">Start</button>
 </div></div>
 
+<!-- grown-ups: table power -->
+<div class="sheet plain" id="power"><div class="inner">
+  <h3>Grown-ups</h3>
+  <div class="power-rows">
+    <div class="power-row"><span>Camera</span><b id="pw-camera">...</b></div>
+    <div class="power-row"><span>Pip's arm</span><b id="pw-arm">...</b></div>
+  </div>
+  <p class="note" id="pw-step"></p>
+  <div class="two" style="margin-bottom:12px">
+    <button class="btn" id="pw-on">Turn on table</button>
+    <button class="btn orange" id="pw-off">Turn off table</button>
+  </div>
+  <button class="btn ghost" id="pw-stop" style="color:var(--red-d)">Shut down app</button>
+  <p class="note" style="margin-top:10px">Turning on wakes the arm, and it moves: clear the area first. Turning off sets the arm
+    down at its rest spot, then releases it. The 12 V plug is always the hard stop.</p>
+</div></div>
+
 <div class="toast" id="toast"></div>
 <canvas id="confetti"></canvas>
 
@@ -367,6 +390,7 @@
     <symbol id="i-brain" viewBox="0 0 24 24"><path fill="#fff" d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 1 5 3 3 0 0 0 4 4 2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm6 0a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2 3 3 0 0 0 4-4 3 3 0 0 0 1-5 3 3 0 0 0-2-5 3 3 0 0 0-3-3z"/></symbol>
     <symbol id="i-turns" viewBox="0 0 24 24"><path d="M4 9a6 6 0 0 1 10.5-4l1.5-1.5V8h-4.5l1.6-1.6A4 4 0 0 0 6 9z" fill="#fff"/><path d="M20 15a6 6 0 0 1-10.5 4L8 20.5V16h4.5l-1.6 1.6A4 4 0 0 0 18 15z" fill="#fff"/></symbol>
     <symbol id="i-teach" viewBox="0 0 24 24"><path d="M12 3L1 8l11 5 9-4.1V15h2V8z" fill="#fff"/><path d="M5 12v4c0 1.7 3.1 3 7 3s7-1.3 7-3v-4l-7 3.2z" fill="#fff"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path fill="currentColor" d="M19.4 13a7.7 7.7 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3.3h-4l-.4 2.6a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.5 11a7.7 7.7 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.6 7.6 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.6 7.6 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></symbol>
     <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" fill="currentColor"/><rect x="8.5" y="18.5" width="7" height="2.5" rx="1.2" fill="currentColor"/></symbol>
     <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M21 6.5l-3.5 3.5-3-.5-.5-3L17.5 3A5.5 5.5 0 0 0 11 9.8L3.3 17.5a2.1 2.1 0 0 0 3 3L14 12.8A5.5 5.5 0 0 0 21 6.5z" fill="currentColor"/></symbol>
   </defs>
@@ -646,7 +670,37 @@ document.addEventListener("click", (e) => {
   else if (t.dataset.av) { avatarPick = t.dataset.av; sfx.tap(); renderHello(); }
   else if (t.dataset.tab) { tab = t.dataset.tab; document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("on", b === t)); render(); }
 });
-$("scrim").onclick = () => openSetup(false);
+// ---------- grown-ups: table power
+let powerOpen = false;
+const PW_LABEL = { on: "On", off: "Off", outside: "On (started outside the app)" };
+function renderPower(p) {
+  for (const k of ["camera", "arm"]) { const el = $(`pw-${k}`); el.textContent = PW_LABEL[p[k]] || p[k]; el.className = p[k]; }
+  $("pw-step").textContent = p.error ? `⚠ ${p.error}` : p.step;
+  $("pw-on").disabled = p.busy || (p.camera !== "off" && p.arm !== "off");
+  $("pw-off").disabled = p.busy || (p.camera !== "on" && p.arm !== "on");
+}
+async function pollPower() {
+  if (!powerOpen) return;
+  try { renderPower(await api("/api/table")); } catch (e) { $("pw-step").textContent = "The app is offline."; }
+  setTimeout(pollPower, 1000);
+}
+function openPower(open) {
+  powerOpen = open; setupOpen = false; $("setup").classList.remove("on");
+  $("power").classList.toggle("on", open); $("scrim").classList.toggle("on", open);
+  if (open) pollPower();
+}
+async function powerAct(path, confirmText) {
+  if (confirmText && !confirm(confirmText)) return;
+  try { renderPower(await api(path, {})); } catch (e) { toast(e.message); }
+}
+$("gear").onclick = () => { sfx.tap(); openPower(true); };
+$("pw-on").onclick = () => powerAct("/api/table/on", "Pip's arm will wake up and move. Is the area around the arm clear?");
+$("pw-off").onclick = () => powerAct("/api/table/off", "Pip will set the arm down and the camera will turn off. Continue?");
+$("pw-stop").onclick = async () => {
+  if (!confirm("Shut down the whole app? Pip's arm rests first. To start again, run jetson-kushi/dashboard.sh on the Jetson.")) return;
+  try { await api("/api/server/stop", {}); $("pw-step").textContent = "Shutting down. Pip is setting the arm down..."; } catch (e) { toast(e.message); }
+};
+$("scrim").onclick = () => { openSetup(false); openPower(false); };
 $("su-go").onclick = async () => { sfx.tap(); if (await act("/api/buddy/start", { game: "recall" })) openSetup(false); };
 $("next").onclick = () => { sfx.tap(); act("/api/buddy/next"); };
 $("quit").onclick = () => { if (confirm("Stop this game?")) act("/api/buddy/quit"); };

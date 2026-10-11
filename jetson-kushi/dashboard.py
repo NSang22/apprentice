@@ -40,6 +40,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -54,7 +55,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 from websockets.asyncio.client import connect  # noqa: E402
 
-from buddy.routes import router as buddy_router, table_task as buddy_table_task  # noqa: E402
+from buddy.routes import game as buddy_game, router as buddy_router, table_task as buddy_table_task  # noqa: E402
 from robot import web_control  # noqa: E402
 from robot.control_shared import ARM_SHEET_CALIB, PLACEMENT_CORR, file_age_str  # noqa: E402
 from robot.perception import config as cam_config  # noqa: E402
@@ -242,12 +243,32 @@ def int_list(text: str) -> list[int]:
     return [int(x) for x in re.findall(r"\d+", text or "")][:6]
 
 
+def main_checkout() -> Path:
+    """The repo's main checkout (first entry of git worktree list). The camera and the arm run from
+    there: the gitignored calibration (perception/calib, robot/outputs, placement_correction.json)
+    lives in that folder only, not in other worktrees such as apprentice-buddy."""
+    try:
+        out = subprocess.run(["git", "worktree", "list", "--porcelain"], capture_output=True, text=True,
+                             timeout=5, cwd=str(REPO_ROOT)).stdout
+        first = next(l[len("worktree "):] for l in out.splitlines() if l.startswith("worktree "))
+        return Path(first)
+    except Exception:
+        return REPO_ROOT
+
+
+TABLE_REPO = main_checkout()
+FRAME_PORT = 8771          # perception.publish's local frame server, which robot.api reads
+REST_WAIT_S = 90.0         # how long the arm may take to set itself down before stop gives up
+
+
 class Service:
     def __init__(self, name: str, title: str, desc: str, build_args, group: str | None = None,
-                 needs_camera: bool = False, ports: tuple[int, ...] = (), options: list[dict] | None = None):
+                 needs_camera: bool = False, ports: tuple[int, ...] = (), options: list[dict] | None = None,
+                 cwd: Path = REPO_ROOT, rest_on_stop: bool = False):
         self.name, self.title, self.desc = name, title, desc
         self.build_args, self.group, self.needs_camera = build_args, group, needs_camera
         self.ports, self.options = ports, options or []
+        self.cwd, self.rest_on_stop = cwd, rest_on_stop
         self.proc: subprocess.Popen | None = None
         self.started_at = 0.0
         self.exit_code: int | None = None
@@ -282,7 +303,8 @@ class Service:
         self.cmd_str = "python -m " + " ".join(args)
         self.add_log(f"[dashboard] starting: {self.cmd_str}")
         self.proc = subprocess.Popen(
-            cmd, cwd=str(REPO_ROOT), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            cmd, cwd=str(self.cwd), stdin=subprocess.PIPE if self.rest_on_stop else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True,
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
@@ -302,6 +324,9 @@ class Service:
         proc = self.proc
         if proc is None or proc.poll() is not None:
             return
+        if self.rest_on_stop:
+            self._stop_with_rest(proc)
+            return
         self.add_log("[dashboard] stopping (SIGINT)")
         # SIGINT first, like web_control: every entry point cleans up on KeyboardInterrupt.
         for sig, wait in ((signal.SIGINT, STOP_GRACE_S), (signal.SIGTERM, 3.0), (signal.SIGKILL, 2.0)):
@@ -315,9 +340,39 @@ class Service:
             except subprocess.TimeoutExpired:
                 self.add_log(f"[dashboard] still running after {sig.name}")
 
+    def _stop_with_rest(self, proc: subprocess.Popen) -> None:
+        """Stop robot.api the way robot/session.py expects a person to: Ctrl+C, then ENTER at its
+        "ENTER = set it down at the rest spot and release" prompt. The ENTER goes into stdin first,
+        so it is waiting when the prompt reads it. A hard kill would skip the rest and leave torque on."""
+        self.add_log("[dashboard] stopping: arm sets itself down at its rest spot, then releases torque")
+        try:
+            proc.stdin.write("\n")
+            proc.stdin.flush()
+        except (BrokenPipeError, OSError, AttributeError):
+            pass
+        try:
+            proc.send_signal(signal.SIGINT)
+            proc.wait(timeout=REST_WAIT_S)
+            return
+        except ProcessLookupError:
+            return
+        except subprocess.TimeoutExpired:
+            self.add_log(f"[dashboard] the arm did not finish resting in {REST_WAIT_S:.0f} s; stopping it anyway, "
+                         "torque may still be on")
+        try:
+            proc.send_signal(signal.SIGTERM)
+            proc.wait(timeout=5)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            pass
+
+    def external(self) -> bool:
+        """Running, but not started by this dashboard (scripts/jetson_up.sh, a terminal)."""
+        return not self.running() and any(port_open(p) for p in self.ports)
+
     def info(self) -> dict:
         return {
             "name": self.name, "title": self.title, "desc": self.desc, "group": self.group,
+            "external": self.external(),
             "needs_camera": self.needs_camera, "ports": list(self.ports), "options": self.options,
             "running": self.running(), "pid": self.proc.pid if self.running() else None,
             "uptime_s": round(time.time() - self.started_at) if self.running() else None,
@@ -339,11 +394,27 @@ def sim_args(opts: dict) -> list[str]:
     return args
 
 
+def camera_index() -> int:
+    """CAMERA from the env (as scripts/jetson_up.sh reads it), else /dev/video0 when it exists."""
+    if os.environ.get("CAMERA", "").isdigit():
+        return int(os.environ["CAMERA"])
+    return 0 if os.path.exists("/dev/video0") else cam_config.CAMERA_INDEX
+
+
 def perception_args(opts: dict) -> list[str]:
-    exposure = str(opts.get("exposure") or "auto").strip()
+    """The same start-up as scripts/jetson_up.sh: camera, block size, optional exposure."""
+    exposure = str(opts.get("exposure") or os.environ.get("EXPOSURE") or "auto").strip()
     if not re.fullmatch(r"auto|\d{1,5}", exposure):
         raise ValueError("exposure must be 'auto' or a number")
-    return ["perception.publish", "--camera", str(cam_config.CAMERA_INDEX), "--host", "0.0.0.0", "--exposure", exposure]
+    block_mm = os.environ.get("BLOCK_MM", "47")
+    return ["perception.publish", "--camera", str(camera_index()), "--block-mm", block_mm,
+            "--host", "0.0.0.0", "--exposure", exposure]
+
+
+def robot_args(opts: dict) -> list[str]:
+    if not port_open(FRAME_PORT):
+        raise ValueError("Start Perception first: the arm reads the camera through it")
+    return ["robot.api"]
 
 
 def brain_live_args(opts: dict) -> list[str]:
@@ -370,8 +441,12 @@ SERVICES: dict[str, Service] = {s.name: s for s in [
             ]),
     Service("perception", "Perception",
             "Overhead camera to GridState on ws :8765. Takes the camera, so the stream pauses.",
-            perception_args, needs_camera=True, ports=(GRID_WS_PORT,),
+            perception_args, needs_camera=True, ports=(GRID_WS_PORT,), cwd=TABLE_REPO,
             options=[{"key": "exposure", "label": "Exposure (auto or the value calibrate picked)", "type": "text", "default": "auto"}]),
+    Service("robot", "Robot arm",
+            "robot.api on :8770. Starting it moves the arm (it looks at the sheet, then parks). "
+            "Stop sets the arm down at its rest spot, then releases torque.",
+            robot_args, ports=(ROBOT_HTTP_PORT,), cwd=TABLE_REPO, rest_on_stop=True),
     Service("brain_live", "Brain (live, human mode)",
             "Real perception feed into the brain, SessionState on ws :8766. Start Perception first.",
             brain_live_args, group="brain", ports=(BRAIN_WS_PORT,),
@@ -410,6 +485,129 @@ async def stop_service(name: str):
         return JSONResponse({"ok": False, "error": "unknown service"}, status_code=404)
     await asyncio.to_thread(svc.stop)
     return {"ok": True, "service": svc.info()}
+
+
+# ---------------------------------------------------------------- table power (camera + arm), for the phone
+
+class TablePower:
+    """Turn the whole table on (camera, then arm) or off (arm rests, then camera), on a worker
+    thread, with a one-line step for the phone. The same order as scripts/jetson_up.sh."""
+
+    def __init__(self) -> None:
+        self.busy = False
+        self.step = ""
+        self.error: str | None = None
+
+    @staticmethod
+    def robot_up() -> bool:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{ROBOT_HTTP_PORT}/status", timeout=2) as r:
+                return "busy" in json.loads(r.read())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _wait(ready, svc: Service, timeout_s: float) -> bool:
+        end = time.time() + timeout_s
+        while time.time() < end:
+            if ready():
+                return True
+            if not svc.running():
+                return False
+            time.sleep(1)
+        return False
+
+    def _run(self, job) -> None:
+        if self.busy:
+            raise ValueError("Already busy, one moment")
+        self.busy, self.error = True, None
+
+        def wrapped():
+            try:
+                job()
+            except Exception as e:
+                self.error = str(e)
+                self.step = ""
+            finally:
+                self.busy = False
+
+        threading.Thread(target=wrapped, daemon=True).start()
+
+    def on(self) -> None:
+        cam, arm = SERVICES["perception"], SERVICES["robot"]
+
+        def job():
+            if not (cam.running() or cam.external()):
+                self.step = "Starting the camera..."
+                cam.start({})
+                if not self._wait(lambda: port_open(GRID_WS_PORT) and port_open(FRAME_PORT), cam, 90):
+                    raise RuntimeError("The camera did not start. See the Perception log on the dashboard.")
+            if not (arm.running() or arm.external()):
+                self.step = "Waking the arm. It moves now!"
+                arm.start({})
+                if not self._wait(self.robot_up, arm, 120):
+                    raise RuntimeError("The arm did not start. Is the 12 V power on? See the Robot arm log.")
+            self.step = "The table is on"
+        self._run(job)
+
+    def off(self) -> None:
+        cam, arm = SERVICES["perception"], SERVICES["robot"]
+        if arm.external():
+            raise ValueError("The arm was started outside the app, so the app can't set it down safely. "
+                             "Hold the arm and stop it from a terminal.")
+
+        def job():
+            buddy_game.quit()
+            if arm.running():
+                self.step = "Pip is setting the arm down..."
+                arm.stop()
+            if cam.running():
+                self.step = "Turning off the camera..."
+                cam.stop()
+            self.step = "The table is off" if not cam.external() else "The arm is off (the camera runs outside the app)"
+        self._run(job)
+
+    def status(self) -> dict:
+        def one(svc: Service) -> str:
+            return "on" if svc.running() else "outside" if svc.external() else "off"
+        return {"camera": one(SERVICES["perception"]), "arm": one(SERVICES["robot"]),
+                "busy": self.busy, "step": self.step, "error": self.error, "folder": str(TABLE_REPO)}
+
+
+power = TablePower()
+
+
+@app.get("/api/table")
+def table_status():
+    return power.status()
+
+
+@app.post("/api/table/on")
+def table_on():
+    try:
+        power.on()
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=409)
+    return power.status()
+
+
+@app.post("/api/table/off")
+def table_off():
+    try:
+        power.off()
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=409)
+    return power.status()
+
+
+@app.post("/api/server/stop")
+def server_stop():
+    """Shut the whole app down. The lifespan exit stops every service, so the arm rests first."""
+    if SERVICES["robot"].external():
+        return JSONResponse({"ok": False, "error": "The arm was started outside the app; stop it from a terminal first."},
+                            status_code=409)
+    threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGINT)).start()
+    return {"ok": True}
 
 
 @app.get("/api/services/{name}/log")
@@ -657,7 +855,7 @@ async def lifespan(_app):
     finally:
         for task in tasks:
             task.cancel()
-        for svc in SERVICES.values():
+        for svc in reversed(list(SERVICES.values())):  # the arm rests before its camera goes away
             await asyncio.to_thread(svc.stop)
         hub.release()
 
