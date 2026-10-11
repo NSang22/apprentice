@@ -195,7 +195,8 @@ body {
 .b-name { fill: var(--muted); font-size: 18px; font-weight: 600; }
 .b-cube { stroke: rgba(0, 0, 0, 0.55); stroke-width: 4; }
 .b-unknown { fill: var(--text); font-size: 40px; font-weight: 800; }
-.b-ghost { stroke: #fff; stroke-width: 4; stroke-dasharray: 12 8; animation: ghost 1.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.b-ghost { stroke: #fff; stroke-width: 4; stroke-dasharray: 12 8; animation: ghost-drop 2s ease-in infinite; transform-box: fill-box; transform-origin: center; }
+.b-intro { stroke: #fff; stroke-width: 3; stroke-dasharray: 10 6; opacity: 0.6; animation: intro-drop 0.6s ease-in both; transform-box: fill-box; }
 .b-ghost.strong { animation: ghost-strong 0.9s ease-in-out infinite; stroke-width: 6; }
 .b-fault { fill: none; stroke: var(--warn); stroke-width: 8; animation: breathe 1.4s ease-in-out infinite; }
 .b-arrow { stroke: var(--warn); stroke-width: 10; stroke-linecap: round; fill: none; stroke-dasharray: 22 14; animation: march 0.8s linear infinite; }
@@ -253,6 +254,36 @@ body {
 .stage[data-phase="ready"] .progress { display: none; }
 .stage.view-3d .screen[data-kind="complete"] .screen-thumb { display: none; }
 
+/* ---------------------------------------------------------------- lesson picker (L) and the robot's turn (B) */
+.picker {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5;
+  width: min(760px, 88vw); max-height: 80vh; overflow: auto; padding: var(--s3) var(--s4);
+  background: rgba(22, 27, 35, 0.97); border: 2px solid var(--info); border-radius: 28px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+}
+.picker[hidden] { display: none; }
+.picker-title { font-size: var(--s4); font-weight: 750; margin-bottom: var(--s2); }
+.picker-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.picker-list li {
+  display: flex; align-items: center; gap: var(--s2); padding: 14px var(--s3); border-radius: 18px;
+  background: var(--panel-2); border: 2px solid transparent; cursor: pointer; font-size: var(--s3);
+}
+.picker-list li.sel { border-color: var(--text); }
+.picker-list li.empty { color: var(--muted); cursor: default; }
+.p-title { font-weight: 650; }
+.p-meta { color: var(--muted); font-size: var(--s2); margin-left: auto; }
+.tag { font-size: 18px; font-weight: 750; padding: 4px 12px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.06em; }
+.tag.new { background: var(--ok); color: #0b2a17; }
+.tag.now { background: var(--line); color: var(--text); }
+.picker-help { margin-top: var(--s2); font-size: var(--s1); color: var(--muted); }
+.screen-action {
+  font: inherit; font-size: var(--s3); font-weight: 750; padding: 14px var(--s4); border-radius: 999px;
+  background: var(--info); color: #0a1a2e; border: 0; cursor: pointer;
+}
+.screen-action[hidden] { display: none; }
+.screen-action kbd { font: inherit; opacity: 0.7; margin-left: 8px; }
+.stage.intro .hud-top { display: block; }
+
 .toast {
   position: absolute; right: var(--s4); top: var(--s3);   /* top right: clear of the instruction and the strips */
   font-size: var(--s3); font-weight: 600; padding: 14px var(--s4); border-radius: 999px;
@@ -274,6 +305,16 @@ body {
 /* ---------------------------------------------------------------- motion */
 @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @keyframes ghost { 0%, 100% { opacity: 0.35; } 50% { opacity: 0.75; } }
+/* The per-step ghost drops into its slot with a small bounce, again every 2 s. */
+@keyframes ghost-drop {
+  0% { transform: translateY(-90px); opacity: 0; }
+  18% { transform: translateY(0); opacity: 0.75; }
+  24% { transform: translateY(-10px); }
+  30% { transform: translateY(0); }
+  65% { opacity: 0.45; }
+  100% { transform: translateY(0); opacity: 0.75; }
+}
+@keyframes intro-drop { from { transform: translateY(-90px); opacity: 0; } to { transform: translateY(0); opacity: 0.6; } }
 @keyframes ghost-strong { 0%, 100% { opacity: 0.3; transform: scale(0.94); } 50% { opacity: 0.95; transform: scale(1.04); } }
 @keyframes march { to { stroke-dashoffset: -36; } }
 @keyframes pop { 0% { transform: scale(0.6); } 70% { transform: scale(1.1); } 100% { transform: scale(1); } }

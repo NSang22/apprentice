@@ -27,8 +27,9 @@ const PAPER = { w: 4.5, d: 5.3 };         // sheet size around the 3x3 grid
 const ROBOT_BASE = new THREE.Vector3(0, 0, -3.35);  // robot side = far edge for the student
 
 const DROP_MS = 380, FADE_MS = 320;
-// Holograms drop in from 1.5 cube heights with a small bounce. With prefers-reduced-motion they only fade in.
-const HOLO_DROP_MS = 600, HOLO_FADE_MS = 500, HOLO_DROP_H = 1.5 * CUBE;
+// Holograms (the per-step ghost and the intro preview) drop in from 1.5 cube heights with a small
+// bounce. With prefers-reduced-motion they only fade in.
+const HOLO_DROP_MS = 600, HOLO_FADE_MS = 500, GHOST_CYCLE_MS = 2000, HOLO_DROP_H = 1.5 * CUBE;
 const reducedMotion = () => !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
 // Height above the slot, as a share of the drop: falls under gravity, then one small bounce.
@@ -348,6 +349,7 @@ export function createView3D(container, options = {}) {
   // ------------------------------------------------------------ dynamic content
 
   const cubes = new Map();     // "A1:0" -> { mesh, color, born, dying }
+  const intro = { active: false, holos: [], fading: 0 };   // the intro preview's holograms
   let side = null, ghost = null, column = null, arrow = null, lift = null, glows = [];
   let phase = "nodata", spin = 0, spinGoal = 0, pulses = [], burst = null;
   let active = false, raf = 0, last = 0, scheduled = false;
@@ -469,7 +471,7 @@ export function createView3D(container, options = {}) {
     return group;
   }
 
-  // A translucent holographic cube with glowing edges: the ghost, and update({ holograms }).
+  // A translucent holographic cube with glowing edges: the ghost and the intro preview.
   function makeHologram(color) {
     const g = new THREE.Mesh(cubeGeo, new THREE.MeshStandardMaterial({
       color: CUBE_HEX[color] ?? UNKNOWN_HEX, transparent: true, opacity: 0.35, depthWrite: false,
@@ -482,7 +484,7 @@ export function createView3D(container, options = {}) {
   function makeGhost(color, pos, strong) {
     const g = makeHologram(color);
     g.position.copy(pos);
-    g.userData = { base: pos.y, strong };
+    g.userData = { base: pos.y, strong, born: performance.now() };
     board.add(g);
     const col = new THREE.Mesh(new THREE.CylinderGeometry(CUBE * 0.5, CUBE * 0.62, 3.2, 24, 1, true),
       new THREE.MeshBasicMaterial({ map: colTex, color: CUBE_HEX[color] ?? 0xffffff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
@@ -557,9 +559,9 @@ export function createView3D(container, options = {}) {
     if (!s) { setCubes({}); arm.aim(null, 1); return; }
 
     // Always the live board (SessionState.board), in every phase; the ready screen's thumbnail
-    // shows the goal. Ready and complete turn the table slowly.
+    // shows the goal. Ready and complete turn the table slowly (not while the intro plays).
     setCubes(s.board);
-    spinGoal = phase === "ready" || phase === "complete" ? 1 : 0;
+    spinGoal = !intro.active && (phase === "ready" || phase === "complete") ? 1 : 0;
 
     let armTarget = null, armOpen = 1;
     if (phase === "running") {
@@ -599,6 +601,31 @@ export function createView3D(container, options = {}) {
     }
     arm.aim(armTarget, armOpen);
   }
+
+  // ------------------------------------------------------------ intro preview
+
+  function introClear() {
+    for (const h of intro.holos) disposeObj(h.mesh);
+    intro.holos = [];
+    intro.fading = 0;
+    intro.active = false;
+  }
+  function introStart(viewSide) {
+    introClear();
+    if (viewSide && viewSide !== side) update({ s: null, phase, side: viewSide });
+    intro.active = true;
+    spinGoal = 0;   // square to the student while the build plays
+  }
+  function introDrop(color, cell, level) {
+    if (!intro.active || !side) return;
+    const mesh = makeHologram(color);
+    const rest = cellPos(cell, level);
+    mesh.position.copy(rest);
+    mesh.renderOrder = 2;
+    board.add(mesh);
+    intro.holos.push({ mesh, rest: rest.y, born: performance.now() });
+  }
+  function introFade() { intro.fading = performance.now(); }
 
   // ------------------------------------------------------------ effects
 
@@ -686,13 +713,26 @@ export function createView3D(container, options = {}) {
       }
     }
 
-    if (ghost) {
+    const still = reducedMotion();
+    if (ghost) {   // drops into its slot, then shimmers; again every GHOST_CYCLE_MS
       const strong = ghost.userData.strong;
-      const k = 0.5 + 0.5 * Math.sin(t * (strong ? 5.5 : 3));
-      ghost.position.y = ghost.userData.base + 0.06 + 0.07 * Math.sin(t * 2.2);
-      ghost.material.opacity = strong ? 0.3 + 0.35 * k : 0.25 + 0.2 * k;
-      ghost.children[0].material.opacity = 0.55 + 0.45 * k;
+      const k = still ? 0.6 : 0.5 + 0.5 * Math.sin(t * (strong ? 5.5 : 3));
+      const age = now - ghost.userData.born, cyc = age % GHOST_CYCLE_MS;
+      const appear = still ? Math.min(1, age / HOLO_FADE_MS) : Math.min(1, cyc / 150);
+      ghost.position.y = ghost.userData.base + (still ? 0 : dropOffset(cyc / HOLO_DROP_MS) * HOLO_DROP_H);
+      ghost.material.opacity = appear * (strong ? 0.3 + 0.35 * k : 0.25 + 0.2 * k);
+      ghost.children[0].material.opacity = appear * (0.55 + 0.45 * k);
       if (column) column.material.opacity = (strong ? 0.45 : 0.3) + 0.15 * k;
+    }
+    if (intro.holos.length) {
+      const gone = intro.fading ? Math.min(1, (now - intro.fading) / HOLO_FADE_MS) : 0;
+      for (const h of intro.holos) {
+        const f = (now - h.born) / (still ? HOLO_FADE_MS : HOLO_DROP_MS);
+        h.mesh.position.y = h.rest + (still ? 0 : dropOffset(f) * HOLO_DROP_H);
+        const appear = Math.min(1, still ? f : f * 4);
+        h.mesh.material.opacity = 0.45 * appear * (1 - gone);
+        h.mesh.children[0].material.opacity = 0.9 * appear * (1 - gone);
+      }
     }
     for (const g of glows) g.material.opacity = 0.5 + 0.25 * (0.5 + 0.5 * Math.sin(t * 2.4));
     if (arrow) arrow.userData.tex.offset.x -= dt * 1.4;
@@ -765,5 +805,5 @@ export function createView3D(container, options = {}) {
     kick();
   }
 
-  return { update, setActive, pass, setColors };
+  return { update, setActive, pass, setColors, introStart, introDrop, introFade, introClear };
 }

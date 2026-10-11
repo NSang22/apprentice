@@ -23,6 +23,13 @@ with its own journal, back in "ready" at step 0. Commands run in order with the 
 pipeline, so a reset never lands in the middle of a robot move. --autostart starts as soon as
 the first grid frame arrives (not before), so session_start records the feed's real source. With --grid sim a reset also clears the fake board, standing in for a person.
 
+{"cmd": "list"} replies to that UI alone with {"lessons": [{"lesson_id", "title", "steps", "mtime"}]}
+for every lessons/*.json that loads, newest first. {"cmd": "load", "lesson_id": ...} and
+{"cmd": "mode", "mode": "human" | "robot"} end the current session (session_end, outcome
+"switched") and open a new one in "ready" on that lesson or in that mode, with its own journal and
+its own session_start once it starts. A load or mode the server cannot do (unknown lesson, robot
+mode without a robot) replies {"error": ...} to that UI and changes nothing.
+
 After any robot command the server resets the stabilizer and drops frames that arrived
 while the robot was moving, so the session always checks a board seen after the move.
 The demo never crashes on bad input: bad frames and session errors go to the journal
@@ -52,14 +59,14 @@ from brain.session import COMPLETE, STOPPED, Session
 from brain.settings import (DEMO_LESSON, FAKE_MOTION_S, HTTP_ROBOT_MAX_RETRIES, ROBOT_STATUS_MAX_AGE_S,
                             ROBOT_STATUS_POLL_HZ, SIM_FEED_HZ)
 from brain.stabilizer import Stabilizer
-from shared.config import BRAIN_WS_PORT, CELLS, GRID_WS_PORT
-from shared.schemas import Board, GridState, Lesson, SchemaError, SessionState
+from shared.config import BRAIN_WS_PORT, CELLS, GRID_WS_PORT, LESSONS_DIR
+from shared.schemas import MODES, Board, GridState, Lesson, SchemaError, SessionState
 
 RETRY_S = 1.0
 BAD_FRAME_JOURNAL_EVERY = 100  # journal the 1st, 101st, ... bad frame so a broken feed can't flood the log
 
 Frame = Union[str, GridState]  # raw JSON from a ws feed, or a GridState from the sim feed
-COMMANDS = ("start", "reset")
+COMMANDS = ("start", "reset", "list", "load", "mode")
 
 
 class Command(dict):
@@ -76,10 +83,14 @@ class BrainServer:
         new_session: Optional[Callable[[], tuple[Session, Journal]]] = None,
         grid: str = f"ws://localhost:{GRID_WS_PORT}",
         robot_spec: Optional[str] = None,
+        lessons_dir: Path = LESSONS_DIR,
+        robot_available: bool = False,
     ):
         """robot_status: a robot whose /status at_home gates arm_clear (the real arm over HTTP).
-        new_session: makes a fresh (Session, Journal) for {"cmd": "reset"}.
-        grid, robot_spec: the --grid and --robot flags, recorded in session_start."""
+        new_session: makes a fresh (Session, Journal) for {"cmd": "reset"}; called with lesson= and
+        mode= keywords for {"cmd": "load"} and {"cmd": "mode"}.
+        grid, robot_spec: the --grid and --robot flags, recorded in session_start.
+        lessons_dir: where {"cmd": "list"} and {"cmd": "load"} look. robot_available: robot mode allowed."""
         self.session = session
         self.journal = journal
         self.new_session = new_session
@@ -98,6 +109,9 @@ class BrainServer:
         self.robot_spec = robot_spec
         self.seen_source: Optional[str] = None  # "source" key of the latest ws frame
         self.autostart_pending = False           # --autostart: start once the first frame arrives
+        self.lessons_dir = lessons_dir
+        self.robot_available = robot_available
+        self._bad_lessons: set[tuple[str, float]] = set()  # (path, mtime) already logged as unreadable
         self._attach(session)
 
     def _attach(self, session: Session) -> None:
@@ -134,8 +148,17 @@ class BrainServer:
                 await ws.send(self.latest)
             async for msg in ws:
                 cmd = self.parse_command(msg)
-                if cmd is not None:
-                    self.frames.put_nowait((time.monotonic(), cmd))
+                if cmd is None:
+                    continue
+                if cmd["cmd"] == "list":  # a read, not a change: answer this UI now
+                    await ws.send(json.dumps({"lessons": await asyncio.to_thread(self.list_lessons)}))
+                    continue
+                error = await asyncio.to_thread(self.refuse, cmd)
+                if error:
+                    print(f"[brain] {cmd['cmd']} refused: {error}", flush=True)
+                    await ws.send(json.dumps({"error": error}))
+                    continue
+                self.frames.put_nowait((time.monotonic(), cmd))
         except ConnectionClosed:
             pass  # a UI that drops without a close frame is normal (laptop sleep, tab closed)
         finally:
@@ -159,6 +182,77 @@ class BrainServer:
                 print(f"[brain] start refused (phase {self.session.phase}): {self.session.hint_text}", flush=True)
         elif cmd["cmd"] == "reset":
             self.reset()
+        elif cmd["cmd"] in ("load", "mode"):
+            error = self.refuse(cmd)
+            if error:
+                print(f"[brain] {cmd['cmd']} refused: {error}", flush=True)
+            elif cmd["cmd"] == "load":
+                self.switch(lesson=self.find_lesson(cmd["lesson_id"]), mode=self.session.mode)
+            else:
+                self.switch(lesson=self.session.lesson, mode=cmd["mode"])
+
+    def refuse(self, cmd: Command) -> Optional[str]:
+        """Why a load or mode command cannot run (shown in the UI), or None if it can."""
+        if cmd["cmd"] not in ("load", "mode"):
+            return None
+        if self.new_session is None:
+            return "Switching is not available here."
+        if cmd["cmd"] == "load" and self.find_lesson(cmd.get("lesson_id")) is None:
+            return f"I can't find the lesson {cmd.get('lesson_id')!r}."
+        if cmd["cmd"] == "mode":
+            if cmd.get("mode") not in MODES:
+                return f"Unknown mode {cmd.get('mode')!r}."
+            if cmd["mode"] == "robot" and not self.robot_available:
+                return "No robot is connected, so the robot can't build this one."
+        return None
+
+    def switch(self, lesson: Lesson, mode: str) -> None:
+        """End this session (outcome "switched") and open a new one in "ready" on lesson and mode."""
+        self.session.end("switched")
+        self.journal.close()
+        self.session, self.journal = self.new_session(lesson=lesson, mode=mode)
+        self._attach(self.session)
+        if self.sim_robot is not None:
+            self.sim_robot.clear_board()  # stands in for a person clearing the table, as on reset
+        self.stabilizer.reset()
+        self.discard_before = time.monotonic()
+        print(f"[brain] switched: new session {self.journal.session_id}, lesson {lesson.lesson_id}, mode {mode}, "
+              f"journal {self.journal.path}", flush=True)
+        self.publish(self.session.state())
+
+    def list_lessons(self) -> list[dict[str, Any]]:
+        """Every lesson file in lessons_dir that loads, newest first. One entry per lesson_id (its newest file)."""
+        out: dict[str, dict[str, Any]] = {}
+        for lesson, mtime in self._lesson_files():
+            if lesson.lesson_id not in out or mtime > out[lesson.lesson_id]["mtime"]:
+                out[lesson.lesson_id] = {"lesson_id": lesson.lesson_id, "title": lesson.title,
+                                         "steps": len(lesson.steps), "mtime": mtime}
+        return sorted(out.values(), key=lambda d: d["mtime"], reverse=True)
+
+    def find_lesson(self, lesson_id: Any) -> Optional[Lesson]:
+        best: Optional[tuple[float, Lesson]] = None
+        for lesson, mtime in self._lesson_files():
+            if lesson.lesson_id == lesson_id and (best is None or mtime > best[0]):
+                best = (mtime, lesson)
+        return None if best is None else best[1]
+
+    def _lesson_files(self) -> list[tuple[Lesson, float]]:
+        found = []
+        for path in sorted(Path(self.lessons_dir).glob("*.json")):
+            if path.name.endswith(".hints.json"):
+                continue  # hint write-back output, not a lesson
+            mtime = 0.0
+            try:
+                mtime = path.stat().st_mtime
+                lesson = Lesson.from_dict(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError, TypeError, KeyError, SchemaError) as e:
+                if (str(path), mtime) not in self._bad_lessons:  # log once per file version, not every poll
+                    self._bad_lessons.add((str(path), mtime))
+                    print(f"[brain] skipping lesson file {path.name}: {e}", flush=True)
+                continue
+            if lesson.steps:
+                found.append((lesson, mtime))
+        return found
 
     def reset(self) -> None:
         if self.new_session is None:
@@ -339,15 +433,19 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     lesson = Lesson.from_dict(json.loads(Path(args.lesson).read_text()))
     robot = make_robot(args.robot, args.fake_wrong_on, args.fake_fail_on)
+    current = {"lesson": lesson, "mode": args.mode}  # load and mode change these; reset keeps them
 
-    def new_session() -> tuple[Session, Journal]:
-        journal = Journal.open_new(args.mode)
+    def new_session(lesson: Optional[Lesson] = None, mode: Optional[str] = None) -> tuple[Session, Journal]:
+        current["lesson"] = lesson or current["lesson"]
+        current["mode"] = mode or current["mode"]
+        journal = Journal.open_new(current["mode"])
         retries = {"max_retries": HTTP_ROBOT_MAX_RETRIES} if isinstance(robot, HttpRobotClient) else {}
-        return Session(lesson, args.mode, journal, robot=robot, **retries), journal
+        return Session(current["lesson"], current["mode"], journal, robot=robot, **retries), journal
 
     session, journal = new_session()
     server = BrainServer(session, journal, robot_status=robot if isinstance(robot, HttpRobotClient) else None,
-                         new_session=new_session, grid=args.grid, robot_spec=args.robot)
+                         new_session=new_session, grid=args.grid, robot_spec=args.robot,
+                         robot_available=robot is not None)
     print(f"[brain] session {journal.session_id}: lesson {lesson.lesson_id}, mode {args.mode}, "
           f"robot {args.robot or 'none'}, journal {journal.path}, "
           f"{'autostart' if args.autostart else 'waiting for start'}", flush=True)

@@ -240,3 +240,44 @@ def test_autostart_waits_for_the_first_frame_and_records_its_source(tmp_path):
     journal.close()
     start = [l for l in read_journal(journal.path) if l["kind"] == "session_start"][0]["data"]
     assert start["grid_source"] == "perception:ws://localhost:8765"
+
+
+def test_load_and_mode_switch_open_new_sessions(tmp_path):
+    from brain.server import Command
+
+    lessons = tmp_path / "lessons"
+    lessons.mkdir()
+    (lessons / "staircase-v1.json").write_text((FIXTURES_DIR / "staircase-v1.json").read_text())
+    (lessons / "broken.json").write_text("{not json")
+    journals = []
+
+    def new_session(lesson=LESSON, mode="human"):
+        j = Journal(f"s-new{len(journals)}", mode, directory=tmp_path)
+        journals.append(j)
+        return Session(lesson, mode, j, robot=FakeRobot(motion_s=0.0) if mode == "robot" else None), j
+
+    first = Journal("s-first", "human", directory=tmp_path)
+    server = BrainServer(Session(LESSON, "human", first), first, new_session=new_session,
+                         lessons_dir=lessons, robot_available=True)
+    assert [d["lesson_id"] for d in server.list_lessons()] == [LESSON.lesson_id]  # the broken file is skipped
+    assert server.refuse(Command(cmd="load", lesson_id="nope")) and server.refuse(Command(cmd="mode", mode="fly"))
+
+    server.command(Command(cmd="start"))
+    server.command(Command(cmd="load", lesson_id=LESSON.lesson_id))
+    assert server.session.phase == "ready" and server.session.mode == "human" and server.journal is journals[0]
+    server.command(Command(cmd="start"))
+    server.command(Command(cmd="mode", mode="robot"))
+    assert server.session.phase == "ready" and server.session.mode == "robot" and server.journal is journals[1]
+    server.command(Command(cmd="start"))
+    for j in (first, *journals):
+        j.close()
+
+    def kinds(j):
+        return [(l["kind"], l["data"].get("outcome") or l["data"].get("mode")) for l in read_journal(j.path)
+                if l["kind"] in ("session_start", "session_end")]
+
+    assert kinds(first) == [("session_start", "human"), ("session_end", "switched")]
+    assert kinds(journals[0]) == [("session_start", "human"), ("session_end", "switched")]
+    assert kinds(journals[1])[0] == ("session_start", "robot")
+    no_robot = BrainServer(Session(LESSON, "human", first), first, new_session=new_session, lessons_dir=lessons)
+    assert "robot" in no_robot.refuse(Command(cmd="mode", mode="robot")).lower()
