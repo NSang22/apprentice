@@ -149,16 +149,26 @@ class TeachSession:
         try:
             self._set_stage("rewind", 0.0)
             video = recorder.stop() if recorder else None
-            tops = None
-            if self.source == "table":  # the robot's own eyes name each cell's top block
+            source_video = str(video.relative_to(teach.REPO_ROOT)).replace("\\", "/") if video else None
+            title = "My lesson"
+            result = {"ok": None}
+            if self.source == "table" and video:
+                # the team's extractor on the video itself (fast 5 Hz sampling, robot colour memory,
+                # Gemini for any color nobody could name), run in the main checkout
+                video_s = recorder.frames / teach.VIDEO_FPS if recorder else 0.0
+                result = teach.learn_video(video, self.eyes.repo, title, video_s, stage=self._set_stage,
+                                           log=lambda line: self._log("extractor", {"line": line}))
+                if result.get("ok") is None:
+                    self._log("video_fallback", {"error": result.get("error")})
+            if self.source == "table" and result.get("ok") is None:
+                # no answer from the video: learn from perception's live frames, with the robot's
+                # own eyes naming each cell's top block
+                tops = None
                 res = self.eyes.scan()
                 if res.get("ok"):
                     tops = {b["cell"]: b["color"] for b in res["blocks"] if b.get("cell")}
-            source_video = str(video.relative_to(teach.REPO_ROOT)).replace("\\", "/") if video else None
-            title = "My lesson"
-            if self.source == "table":
                 result = teach.learn(frames, self.session_id, title, source_video, tops, stage=self._set_stage)
-            else:
+            elif self.source == "practice":
                 for name, _ in teach.STAGES[:4]:
                     self._set_stage(name, 1.0)
                 result = teach.learn_taps(taps, self.session_id, title)
@@ -169,7 +179,8 @@ class TeachSession:
             result = {"ok": False, "problem": teach.DEFAULT_PROBLEM, "reasons": {"error": f"{type(e).__name__}: {e}"}}
         with self.lock:
             self.video_path = video if "video" in locals() else None
-            self._log("learned", {"ok": result["ok"], "steps": result.get("steps"), "reasons": result.get("reasons"),
+            self._log("learned", {"ok": result["ok"], "via": result.get("via", "frames" if self.source == "table" else "taps"),
+                                  "steps": result.get("steps"), "reasons": result.get("reasons"),
                                   "frames": len(frames), "video": str(self.video_path) if self.video_path else None})
             if result["ok"]:
                 self.lesson, self.steps = result["lesson"], result["steps"]

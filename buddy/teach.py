@@ -6,8 +6,13 @@ boards, history-based stacks, corrections (a block taken back off deletes its st
 The result is an ordinary Lesson, saved under data/buddy/lessons/ with the child's name for it.
 Later, "Build it, Pip!" rebuilds it step by step with the arm (buddy/teach_session.py).
 
+How Pip learns on the table: the extractor runs on the recorded video itself (learn_video:
+python -m brain.extractor --video in the main checkout, sampling 5 frames a second, with the robot's
+colour memory and the Gemini fallback). If the video gives no answer, the live frames are used
+instead (learn).
+
 What is recorded on the table:
-  frames   every GridState perception sent while recording (what the extractor reads)
+  frames   every GridState perception sent while recording (the fallback's input)
   video    the camera's frames from perception's frame server, VIDEO_FPS, saved as WebM (VP8: the
            Jetson's OpenCV cannot write H.264, and phones play WebM) so the lesson has a real source
            video the child can watch back (data/buddy/videos/<lesson id>.webm)
@@ -34,7 +39,7 @@ RECORD_S = 60.0            # the longest recording
 MAX_HIGH = 2               # blocks per stack in this game
 BANK_SIZE = 2              # blocks the robot's bank beside the sheet holds at a time
 VIDEO_FPS = 8.0
-VIDEO_WIDTH = 960
+VIDEO_WIDTH = 1280        # the extractor finds the 4 tags in this video, so not too small
 VIDEO_EXT, VIDEO_FOURCC = ".webm", "VP80"
 FRAME_URL = "http://127.0.0.1:8771/frame"
 LESSONS_DIR = REPO_ROOT / "data" / "buddy" / "lessons"
@@ -201,6 +206,76 @@ def learn(frames: list[dict], lesson_id: str, title: str, source_video: Optional
     if not gate.gate.passed:
         return {"ok": False, "problem": kid_problem(gate.reasons), "reasons": gate.reasons}
     return {"ok": True, "lesson": lesson, "steps": [s.to_dict() for s in lesson.steps]}
+
+
+EXTRACT_TIMEOUT_S = 240.0   # the video run gives up after this long (the live frames take over)
+EXTRACT_S_PER_VIDEO_S = 0.6  # first guess at run time per second of video, for the progress bar
+# Lines the extractor prints, in the order it prints them -> the stage the bar is in by then.
+EXTRACT_MILESTONES = [("sampling", "flummox"), ("hand band", "count"), ("gemini", "squint"), ("run time", "check")]
+
+
+def learn_video(video: Path, repo: Path, title: str, video_s: float,
+                stage: Callable[[str, float], None] = lambda name, frac: None, log: Callable[[str], None] = print) -> dict:
+    """The recording's video -> lesson with the team's extractor on the video itself
+    (python -m brain.extractor --video, 5 frames a second by default), run in `repo` (the main
+    checkout) so it uses the calibration, robot colour memory and Gemini key everything else uses.
+
+    Returns like learn(), or {ok: None, error} when the video run could not produce an answer
+    (unreadable video, no tags in the first frame, a crash, a timeout): the caller then learns
+    from the live frames instead.
+    """
+    import os
+    import queue
+    import subprocess
+    import sys
+
+    work = LESSONS_DIR / "_work"
+    work.mkdir(parents=True, exist_ok=True)
+    out = work / f"{video.stem}.json"
+    cmd = [sys.executable, "-u", "-m", "brain.extractor", "--video", str(video.resolve()), "--out", str(out),
+           "--title", title]
+    proc = subprocess.Popen(cmd, cwd=str(repo), env={**os.environ, "PYTHONPATH": str(repo), "PYTHONUNBUFFERED": "1"},
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    lines: "queue.Queue[str]" = queue.Queue()
+    threading.Thread(target=lambda: [lines.put(l.rstrip("\n")) for l in proc.stdout], daemon=True).start()
+
+    names = [n for n, _ in STAGES]
+    estimate = max(6.0, video_s * EXTRACT_S_PER_VIDEO_S)
+    started, current = time.monotonic(), "flummox"
+    stage(current, 0.0)
+    while proc.poll() is None or not lines.empty():
+        try:
+            line = lines.get(timeout=0.3)
+            log(line)
+            for key, name in EXTRACT_MILESTONES:
+                if key in line and names.index(name) > names.index(current):
+                    current = name
+                    stage(current, 0.0)
+        except queue.Empty:
+            pass
+        elapsed = time.monotonic() - started
+        if elapsed > EXTRACT_TIMEOUT_S:
+            proc.kill()
+            return {"ok": None, "error": f"the video run took over {EXTRACT_TIMEOUT_S:.0f} s"}
+        # between milestones the bar creeps on with time, never past 90% of the current stage
+        stage(current, min(0.9, elapsed / estimate))
+    code = proc.wait()
+    log(f"[teach] extractor exit code {code}")
+    extract_files = sorted((work / "extract").glob(f"{video.stem}*.json"), key=lambda p: p.stat().st_mtime)
+    details = json.loads(extract_files[-1].read_text(encoding="utf-8")) if extract_files else {}
+    reasons = (details.get("gate") or {}).get("reasons") or {}
+    if code == 0 and out.is_file():
+        lesson = Lesson.from_dict(json.loads(out.read_text(encoding="utf-8")))
+        if any(s.level >= MAX_HIGH for s in lesson.steps):
+            return {"ok": False, "problem": PROBLEMS["too_high"], "reasons": {"too_high": f"max {MAX_HIGH} high"}}
+        if not lesson.steps:
+            return {"ok": False, "problem": PROBLEMS["nothing"], "reasons": {"nothing": "no steps"}}
+        return {"ok": True, "lesson": lesson, "steps": [s.to_dict() for s in lesson.steps], "via": "video"}
+    if code == 1:   # a lesson, but the gate refused it
+        return {"ok": False, "problem": kid_problem(reasons), "reasons": reasons, "via": "video"}
+    if code == 3:   # a step whose color no source could name
+        return {"ok": False, "problem": PROBLEMS["unknown_color"], "reasons": {"unknown_color": "draft only"}, "via": "video"}
+    return {"ok": None, "error": f"extractor exit code {code}"}
 
 
 def learn_taps(taps: list[dict], lesson_id: str, title: str) -> dict:
