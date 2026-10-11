@@ -306,20 +306,21 @@ python -m brain.server --mode robot --robot fake --grid sim --autostart  # defau
 python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --autostart  # 2nd place lands on the wrong cell, robot fixes it
 python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --fake-wrong-on 3 --fake-wrong-on 4 --autostart  # hits the retry cap and stops
 
-# Real perception: GridState on ws :8765 from the overhead camera, a video, or still images
-# First calibrate the block colors under the demo light (writes perception/calib/colors.json):
-# the window asks for one block at a time ("Put RED on A1, then press SPACE"), one block on the sheet at a time.
+# Real perception: GridState on ws :8765 from the overhead camera (or a video)
+# One-time setup per rig and lighting (perception/calibrate.py): (1) clear the board, SPACE: grid lock
+# + empty board (all 4 tags needed); (2) each color in B2, SPACE; writes perception/calib/{grid_lock.json,
+# empty_board.png,colors.json}. On Linux it also locks exposure and white balance (--exposure, --wb).
 python -m perception.calibrate --camera 1
-# --debug opens a window labeling each block "B2 teal 0.93" (a "?" means the brain will see unknown)
-# and prints area / margin / fill per block. At start-up it prints which tag sits at which corner cell.
+# --debug: status band (GRID LOCKED n/4 / GRID LOST: moved / GRID NOT LOCKED), each block "B2 teal 0.93"
+# ("?" = the brain will see unknown), hands in magenta. E re-takes the empty board. Blocks on the tags are fine.
 python -m perception.publish --camera 1 --debug
-python -m perception.publish --list-cameras        # which index/backend sees the grid
+python -m perception.publish --list-cameras        # Windows: which index/backend sees the grid
 python -m perception.publish --video videos/demo.mp4
-python -m perception.publish --images "robot/samples/overhead_*.png" --debug
 
 # Real setup: camera on the Jetson, brain + UI on the laptop (same network)
-#   Jetson:  python -m perception.calibrate --camera <index>           # DISPLAY=:0 if over ssh
-#            python -m perception.publish --camera <index> --host 0.0.0.0 --debug
+#   Jetson:  v4l2-ctl --list-devices                                   # camera index N (/dev/videoN)
+#            python -m perception.calibrate --camera N                 # DISPLAY=:0 over ssh; prints the exposure it picked
+#            python -m perception.publish --camera N --exposure <picked> --host 0.0.0.0 --debug
 #   Laptop:  scp <jetson>:apprentice/perception/calib/colors.json perception/calib/   # UI shows the measured colors
 #            python -m brain.server --mode human --grid ws://<jetson-ip>:8765
 #            python ui/serve.py      # http://localhost:8000, F11, Space starts, R resets
