@@ -39,6 +39,15 @@ def _yaw_deg(points_mm):
     return float((yaw + 45) % 90 - 45)
 
 
+YAW_AGREE_DEG = 12.0  # a rejected cube fit is kept if the blob's box angle agrees this closely
+
+
+def _same_yaw(a, b):
+    """Yaws agree, allowing for the 90 deg wrap of a square."""
+    d = abs(a - b) % 90
+    return min(d, 90 - d) <= YAW_AGREE_DEG
+
+
 _namers = {}
 
 
@@ -51,7 +60,7 @@ def _namer(naming):
     return _namers[naming]
 
 
-def build_scene(frame_bgr, localizer, detector=segment.detect, names=None, naming="auto"):
+def build_scene(frame_bgr, localizer, detector=segment.detect, names=None, naming="auto", bank_zone=None):
     """Returns (scene dict, pose, detections). scene is None when the sheet isn't visible.
 
     naming: "auto" names blocks from the session's colour memory and asks the vision model when
@@ -63,7 +72,8 @@ def build_scene(frame_bgr, localizer, detector=segment.detect, names=None, namin
         return None, None, []
     if detector is segment.detect:
         tags = {k: v["corners_mm"] for k, v in localizer.spec["tags"].items()}
-        detections = detector(frame_bgr, None, pose=pose, tags=tags)
+        extra = {} if bank_zone is None else {"bank_zone": bank_zone}  # e.g. a wider look for a missing block
+        detections = detector(frame_bgr, None, pose=pose, tags=tags, **extra)
         if naming != "off" and detections:
             colours = _namer(naming).name(frame_bgr, [d.contour for d in detections], pose, tags)
             seen = {}
@@ -87,7 +97,10 @@ def build_scene(frame_bgr, localizer, detector=segment.detect, names=None, namin
             # The blob's box rotation is unreliable (sides in view, glare-cut corners): fit a real
             # cube outline, and if even that fits poorly, assume the cube sits square to the sheet.
             _, fit_yaw, overlap = cubefit.fit_cube(pose, d.contour, center, yaw)
-            yaw = fit_yaw if overlap >= YAW_FIT_MIN_OVERLAP else 0.0
+            if overlap >= YAW_FIT_MIN_OVERLAP or _same_yaw(fit_yaw, yaw):
+                yaw = fit_yaw  # a weaker fit still counts when the blob's own box turns the same way
+            else:  # (bank blocks at the image edge fit 0.81-0.84 while turned 20 deg, 2026-10-11)
+                yaw = 0.0
         objects.append({
             "name": d.name,
             "center_mm": [round(float(center[0]), 1), round(float(center[1]), 1)],

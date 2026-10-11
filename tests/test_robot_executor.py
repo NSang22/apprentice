@@ -39,7 +39,7 @@ class ScriptedExecutor(Executor):
         super().__init__(skills, cam=None, loc=None, log=lambda *a: None)
         self.block = np.asarray(start_xy, float)
 
-    def observe(self):
+    def observe(self, source=None):
         self.camera_xyz = None  # no parallax: positions read as they are
         if self.sk.landed is not None:
             self.block = self.sk.landed
@@ -75,6 +75,20 @@ def test_aim_shift_is_capped_and_retries_stop_at_two():
         ex.run([{"object": "red", "goal": {"type": "cell", "cell": "B2"}}])
     assert len(sk.moves) == MAX_RETRIES + 1
     assert all(np.hypot(*(m["aim"] - cell_center("B2"))) <= 25.0 + 1e-6 for m in sk.moves)
+
+
+def test_slip_is_not_learned_so_the_repick_goes_where_the_block_is():
+    # Run 00:12: the block slipped 41 mm in the jaws; the retry shifted the pick by the miss
+    # and closed on nothing. A slip doesn't repeat, so pick it where it is and aim straight.
+    sk = FakeSkills((0.0, -41.0))
+    ex = ScriptedExecutor(sk, start_xy=cell_center("A1"))
+    place = sk.place
+    sk.place = lambda *a, **k: (place(*a, **k), setattr(sk, "bias", np.zeros(2)))  # slips once
+    report = ex.run([{"object": "red", "goal": {"type": "cell", "cell": "B2"}}])
+    target = cell_center("B2")
+    assert len(sk.moves) == 2 and report["steps"][0]["ok"]
+    assert np.allclose(sk.moves[1]["src"], target + (0.0, -41.0))  # where the camera saw it
+    assert np.allclose(sk.moves[1]["aim"], target)
 
 
 def test_failed_step_puts_the_held_block_back():
@@ -123,7 +137,7 @@ class World(Executor):
 
         sk.pick, sk.place = pick, place
 
-    def observe(self):
+    def observe(self, source=None):
         self.camera_xyz = None
         return {n: {"name": n, "center_mm": xy.tolist(), "yaw_deg": 0.0, "height_mm": 48.0, "score": 0.9}
                 for n, xy in self.blocks.items()}
@@ -233,3 +247,315 @@ def test_hemmed_in_block_gets_a_neighbour_moved_then_retries():
     assert np.allclose(w.blocks["red_cube"], cell_center("C1"))
     aside = [s for s in report["steps"] if s["step"] == "aside"]
     assert len(aside) == 1 and aside[0]["description"].startswith("purple")  # red's nearest neighbour
+
+
+class SceneCam:
+    def read(self):
+        return None
+
+
+def bank_executor(monkeypatch, objects):
+    scene = {"sheet": {"camera_xyz_mm": None}, "objects": [
+        {"name": n, "center_mm": list(xy), "yaw_deg": 0.0, "height_mm": 48.0, "score": 0.9} for n, xy in objects]}
+    monkeypatch.setattr(executor, "build_scene", lambda frame, loc: (scene, None, []))
+    return Executor(FakeSkills((0.0, 0.0)), cam=SceneCam(), loc=None, log=lambda *a: None)
+
+
+def test_a_colour_missing_from_the_sheet_is_taken_from_the_bank(monkeypatch):
+    ex = bank_executor(monkeypatch, [("purple_cube", cell_center("A1")), ("red_cube", (290.0, 120.0)),
+                                     ("purple_cube_2", (290.0, 50.0))])
+    objs = ex.observe(source="red_cube")
+    assert np.allclose(objs["red_cube"]["center_mm"], (290.0, 120.0))   # building from the bank
+    assert "red_cube" not in ex.bank and "purple_cube" in ex.bank       # the bank's purple, renumbered
+    objs = ex.observe(source="purple_cube")
+    assert np.allclose(objs["purple_cube"]["center_mm"], cell_center("A1"))  # the sheet's block wins
+
+
+def test_bank_blocks_count_as_neighbours_but_not_as_sheet_blocks(monkeypatch):
+    ex = bank_executor(monkeypatch, [("red_cube", (290.0, 120.0)), ("yellow_cube", (290.0, 190.0))])
+    objs = ex.observe(source="red_cube")
+    assert set(objs) == {"red_cube"}                                    # yellow stays a spare
+    assert [n[:2] for n in ex.neighbours("red_cube", objs)] == [(290.0, 190.0)]  # but the jaws avoid it
+
+
+def test_a_missing_block_outside_the_bank_is_reported_with_where_it_is(monkeypatch):
+    # Run 01:47: purple sat above the bank, out of reach, and the task only said "can't see 'purple'".
+    def scene(objects):
+        return {"sheet": {"camera_xyz_mm": None}, "objects": [
+            {"name": n, "center_mm": list(xy), "yaw_deg": 0.0, "height_mm": 48.0, "score": 0.9} for n, xy in objects]}
+    seen = [("red_cube", (290.0, 120.0))]
+    monkeypatch.setattr(executor, "build_scene", lambda frame, loc, naming="auto", bank_zone=None: (
+        scene(seen + ([("purple_cube", (247.0, -13.0))] if bank_zone else [])), None, []))
+    monkeypatch.setattr(executor, "MISSING_WAIT_S", 0.0)
+    ex = Executor(FakeSkills((0.0, 0.0)), cam=SceneCam(), loc=None, log=lambda *a: None)
+    with pytest.raises(TaskError, match=r"purple.*there is one at \(247, -13\) mm, outside the bank"):
+        ex.run([{"object": "purple", "goal": {"type": "cell", "cell": "B2"}}])
+
+
+def test_a_bank_block_boxed_in_by_its_neighbour_gets_the_neighbour_moved_first(monkeypatch):
+    # Run 02:30: red at the top of the bank had purple almost beside it; no grip fit, and only
+    # sheet blocks were considered for moving, so the task stopped.
+    from robot.skills import SkillError
+    state = {"red_cube": np.array([246.0, 37.0]), "purple_cube": np.array([297.0, 62.0])}
+    start = {k: v.copy() for k, v in state.items()}
+
+    class BoxedSkills(FakeSkills):
+        def plan_move(self, src_xy, *a, **k):
+            red_at_start = np.allclose(src_xy, start["red_cube"], atol=1)
+            if red_at_start and np.allclose(state["purple_cube"], start["purple_cube"]):
+                raise SkillError("every side of the block is blocked by a neighbouring block (best gap -14 mm)")
+            return super().plan_move(src_xy, *a, **k)
+
+        def pick(self, xy, *a, **k):
+            self.held = min(state, key=lambda n: np.hypot(*(state[n] - np.asarray(xy))))
+
+        def place(self, aim, yaw, on, grip=None):
+            state[self.held] = np.asarray(aim, float)
+
+    monkeypatch.setattr(executor, "build_scene", lambda frame, loc, naming="auto", bank_zone=None: (
+        {"sheet": {"camera_xyz_mm": None}, "objects": [
+            {"name": n, "center_mm": xy.tolist(), "yaw_deg": 0.0, "height_mm": 48.0, "score": 0.9}
+            for n, xy in state.items()]}, None, []))
+    ex = Executor(BoxedSkills((0.0, 0.0)), cam=SceneCam(), loc=None, log=lambda *a: None)
+    report = ex.run([{"object": "red", "goal": {"type": "cell", "cell": "C2"}}])
+    assert report["result"] == "done"
+    assert np.allclose(state["red_cube"], cell_center("C2"))
+    assert not np.allclose(state["purple_cube"], start["purple_cube"])        # moved out of the way
+    assert [s["step"] for s in report["steps"]] == [1, "aside"] or [s["step"] for s in report["steps"]] == ["aside", 1]
+
+
+def test_a_miss_carrying_a_block_from_the_bank_is_not_learned_as_arm_error(monkeypatch):
+    # Run 02:45: red picked in the bank, placed 23 mm off; the retry applied that miss to the
+    # re-pick on the sheet, went 23 mm from the block, and closed on nothing.
+    state = {"red_cube": np.array([266.0, 45.0])}
+
+    class BankSkills(FakeSkills):
+        def pick(self, xy, *a, **k):
+            self.picked_at = np.asarray(xy, float)
+
+        def place(self, aim, yaw, on, grip=None):
+            bias = (0.0, -23.0) if np.hypot(*(self.picked_at - [266.0, 45.0])) < 1 else (0.0, 0.0)
+            state["red_cube"] = np.asarray(aim, float) + bias
+
+    monkeypatch.setattr(executor, "build_scene", lambda frame, loc, naming="auto", bank_zone=None: (
+        {"sheet": {"camera_xyz_mm": None}, "objects": [
+            {"name": n, "center_mm": xy.tolist(), "yaw_deg": 0.0, "height_mm": 48.0, "score": 0.9}
+            for n, xy in state.items()]}, None, []))
+    sk = BankSkills((0.0, 0.0))
+    ex = Executor(sk, cam=SceneCam(), loc=None, log=lambda *a: None)
+    report = ex.run([{"object": "red", "goal": {"type": "cell", "cell": "C2"}}])
+    target = cell_center("C2")
+    assert report["steps"][0]["ok"] and report["steps"][0]["retries"] == 1
+    assert np.allclose(sk.moves[1]["src"], target + (0.0, -23.0))   # re-picked where it landed
+    assert np.allclose(sk.moves[1]["aim"], target)                  # and aimed straight
+
+
+def test_a_block_added_to_the_bank_during_the_run_is_found_on_a_later_look(monkeypatch):
+    # Two blocks at a time in the bank, refilled while the arm works: the step waits for it.
+    looks = {"n": 0}
+    state = {}  # the bank is empty when the step starts; red arrives before the third look
+
+    class Placing(FakeSkills):
+        def place(self, aim, yaw, on, grip=None):
+            state["red_cube"] = np.asarray(aim, float)
+
+    def scene(frame, loc, naming="auto", bank_zone=None):
+        looks["n"] += 1
+        if looks["n"] == 3:
+            state["red_cube"] = np.array([266.0, 50.0])
+        return {"sheet": {"camera_xyz_mm": None}, "objects": [
+            {"name": n, "center_mm": xy.tolist(), "yaw_deg": 0.0, "height_mm": 48.0, "score": 0.9}
+            for n, xy in state.items()]}, None, []
+
+    monkeypatch.setattr(executor, "build_scene", scene)
+    monkeypatch.setattr(executor, "MISSING_WAIT_S", 0.0)
+    ex = Executor(Placing((0.0, 0.0)), cam=SceneCam(), loc=None, log=lambda *a: None)
+    report = ex.run([{"object": "red", "goal": {"type": "cell", "cell": "C2"}}])
+    assert report["result"] == "done" and report["steps"][0]["retries"] == 0
+    assert np.allclose(state["red_cube"], cell_center("C2"))
+
+
+def test_a_big_wrist_roll_miss_fixes_its_own_retry_but_is_not_remembered(tmp_path, monkeypatch):
+    # Run 04:21: three identical 22 mm misses at roll 84 and no correction, because a big-roll
+    # miss was not learned at all. It must steer the retry (it repeats to ~1 mm), and nothing more:
+    # the 01:00 lesson from a -77 deg pick, kept for good, pushed purple off its tower at 03:21.
+    class RolledGrip(FakeSkills):
+        def plan_move(self, src_xy, *a, **k):
+            super().plan_move(src_xy, *a, **k)
+            return {"roll": -77.0}, {"roll": -2.0}
+
+    sk = RolledGrip((0.0, -19.0))
+    ex = ScriptedExecutor(sk, start_xy=cell_center("A1"))
+    report = ex.run([{"object": "red", "goal": {"type": "cell", "cell": "B2"}}])
+    assert report["steps"][0]["ok"] and report["steps"][0]["retries"] == 1
+    assert np.allclose(sk.moves[1]["aim"], cell_center("B2") + (0.0, 19.0))  # the retry aimed off by the miss
+    assert 0.0 not in ex.level_err and executor.load_level_offsets() == {}  # and nothing was kept
+
+
+def test_an_offset_that_makes_the_landing_worse_is_replaced(monkeypatch):
+    ex = ScriptedExecutor(FakeSkills((0.0, 2.0)), start_xy=cell_center("A1"))
+    ex.level_err[0.0] = np.array([0.0, 19.0])  # a stale lesson: aim 19 mm off
+    ex.run([{"object": "red", "goal": {"type": "cell", "cell": "B2"}}])
+    assert np.allclose(ex.level_err[0.0], (0.0, 2.0))  # this landing's real 2 mm error, not an average
+
+
+def test_jaws_closing_on_nothing_looks_again_and_picks_where_the_block_is(monkeypatch):
+    # One empty grab used to end the task. Here the jaws nudged the block 15 mm; the retry
+    # must pick it up where the camera sees it afterwards.
+    from robot.skills import SkillError
+    state = {"red_cube": np.array([266.0, 50.0])}
+
+    class PushySkills(FakeSkills):
+        grabs = 0
+
+        def pick(self, xy, *a, **k):
+            PushySkills.grabs += 1
+            if PushySkills.grabs == 1:
+                state["red_cube"] = state["red_cube"] + (15.0, 0.0)
+                raise SkillError("grasp failed: jaws closed on nothing")
+
+        def place(self, aim, yaw, on, grip=None):
+            state["red_cube"] = np.asarray(aim, float)
+
+    monkeypatch.setattr(executor, "build_scene", lambda frame, loc, naming="auto", bank_zone=None: (
+        {"sheet": {"camera_xyz_mm": None}, "objects": [
+            {"name": n, "center_mm": xy.tolist(), "yaw_deg": 0.0, "height_mm": 48.0, "score": 0.9}
+            for n, xy in state.items()]}, None, []))
+    sk = PushySkills((0.0, 0.0))
+    ex = Executor(sk, cam=SceneCam(), loc=None, log=lambda *a: None)
+    report = ex.run([{"object": "red", "goal": {"type": "cell", "cell": "C2"}}])
+    assert report["result"] == "done" and report["steps"][0]["grasp_retries"] == 1
+    assert np.allclose(sk.moves[1]["src"], (281.0, 50.0))   # picked where it was seen after the push
+    assert np.allclose(state["red_cube"], cell_center("C2"))
+
+
+def test_a_block_behind_a_tower_is_placed_without_taking_the_tower_apart(monkeypatch):
+    # Run 04:48: purple (on red at B2) had landed 9 mm toward C2, so yellow -> C2 saw it as "too
+    # close", lifted it off, and set it down into its own tower (red, hidden, "wasn't there").
+    state = {"red_cube": np.array(cell_center("B2")), "purple_cube": np.array(cell_center("B2")) + (-4.0, 9.0),
+             "yellow_cube": np.array([266.0, 50.0])}
+    stacked = {"purple_cube"}
+
+    class Placing(FakeSkills):
+        def pick(self, xy, *a, **k):
+            self.held = min(state, key=lambda n: np.hypot(*(state[n] - np.asarray(xy))))
+
+        def place(self, aim, yaw, on, grip=None):
+            state[self.held] = np.asarray(aim, float)
+
+    def scene(frame, loc, naming="auto", bank_zone=None):
+        seen = [n for n in state if n != "red_cube"]  # red is under purple: the camera can't see it
+        return {"sheet": {"camera_xyz_mm": None}, "objects": [
+            {"name": n, "center_mm": state[n].tolist(), "yaw_deg": 0.0, "height_mm": 48.0, "score": 0.9}
+            for n in seen]}, None, []
+
+    monkeypatch.setattr(executor, "build_scene", scene)
+    sk = Placing((0.0, 0.0))
+    ex = Executor(sk, cam=SceneCam(), loc=None, log=lambda *a: None)
+    ex.under["purple_cube"] = "red_cube"                      # as the earlier "purple on red" step left it
+    ex.last_xy["red_cube"] = cell_center("B2").tolist()
+    report = ex.run([{"object": "yellow", "goal": {"type": "cell", "cell": "C2"}}])
+    assert report["result"] == "done" and [s["step"] for s in report["steps"]] == [1]   # no "aside"
+    assert np.allclose(state["yellow_cube"], cell_center("C2"))
+    assert np.allclose(state["purple_cube"], cell_center("B2") + (-4.0, 9.0))           # the tower stands
+
+
+def _scene_of(state, hide=()):
+    return {"sheet": {"camera_xyz_mm": None}, "objects": [
+        {"name": n, "center_mm": np.asarray(xy, float).tolist(), "yaw_deg": 0.0, "height_mm": 48.0, "score": 0.9}
+        for n, xy in state.items() if n not in hide]}
+
+
+def test_a_hidden_sheet_gets_the_arm_parked_and_more_looks(monkeypatch):
+    looks = {"n": 0}
+    state = {"red_cube": np.array([266.0, 50.0])}
+
+    class Placing(FakeSkills):
+        parks = 0
+
+        def park(self, **k):
+            Placing.parks += 1
+
+        def place(self, aim, yaw, on, grip=None):
+            state["red_cube"] = np.asarray(aim, float)
+
+    def scene(frame, loc, naming="auto", bank_zone=None):
+        looks["n"] += 1
+        return (None, None, []) if looks["n"] <= 2 else (_scene_of(state), None, [])  # tags hidden at first
+
+    monkeypatch.setattr(executor, "build_scene", scene)
+    monkeypatch.setattr(executor, "MISSING_WAIT_S", 0.0)
+    ex = Executor(Placing((0.0, 0.0)), cam=SceneCam(), loc=None, log=lambda *a: None)
+    report = ex.run([{"object": "red", "goal": {"type": "cell", "cell": "C2"}}])
+    assert report["result"] == "done" and Placing.parks >= 2
+
+
+def test_a_reference_block_hidden_for_a_moment_is_waited_for(monkeypatch):
+    looks = {"n": 0}
+    state = {"red_cube": np.array(cell_center("B2")), "purple_cube": np.array([266.0, 50.0])}
+
+    class Placing(FakeSkills):
+        def place(self, aim, yaw, on, grip=None):
+            state["purple_cube"] = np.asarray(aim, float)
+
+    def scene(frame, loc, naming="auto", bank_zone=None):
+        looks["n"] += 1
+        return _scene_of(state, hide=("red_cube",) if looks["n"] <= 2 else ()), None, []
+
+    monkeypatch.setattr(executor, "build_scene", scene)
+    monkeypatch.setattr(executor, "MISSING_WAIT_S", 0.0)
+    ex = Executor(Placing((0.0, 0.0)), cam=SceneCam(), loc=None, log=lambda *a: None)
+    report = ex.run([{"object": "purple", "goal": {"type": "on_top", "reference": "red"}}])
+    assert report["result"] == "done" and np.allclose(state["purple_cube"], cell_center("B2"))
+
+
+def test_a_slip_while_lifting_is_retried_from_a_fresh_look(monkeypatch):
+    from robot.skills import SkillError
+    state = {"red_cube": np.array([266.0, 50.0])}
+
+    class Slippy(FakeSkills):
+        grabs = 0
+
+        def pick(self, xy, *a, **k):
+            Slippy.grabs += 1
+            if Slippy.grabs == 1:
+                state["red_cube"] = state["red_cube"] + (0.0, 20.0)  # dropped a little further on
+                raise SkillError("cube slipped out while lifting")
+
+        def place(self, aim, yaw, on, grip=None):
+            state["red_cube"] = np.asarray(aim, float)
+
+    monkeypatch.setattr(executor, "build_scene", lambda frame, loc, naming="auto", bank_zone=None: (_scene_of(state), None, []))
+    sk = Slippy((0.0, 0.0))
+    ex = Executor(sk, cam=SceneCam(), loc=None, log=lambda *a: None)
+    report = ex.run([{"object": "red", "goal": {"type": "cell", "cell": "C2"}}])
+    assert report["result"] == "done" and report["steps"][0]["grasp_retries"] == 1
+    assert np.allclose(sk.moves[1]["src"], (266.0, 70.0))
+
+
+def test_a_place_that_hits_something_puts_the_block_back_and_retries(monkeypatch):
+    from robot.skills import SkillError
+    state = {"red_cube": np.array([266.0, 50.0])}
+
+    class Bumpy(FakeSkills):
+        places = 0
+        holding = None
+
+        def pick(self, xy, *a, **k):
+            self.holding, self.picked = "red_cube", np.asarray(xy, float)
+
+        def put_back(self):
+            state["red_cube"], self.holding = self.picked, None
+
+        def place(self, aim, yaw, on, grip=None):
+            Bumpy.places += 1
+            if Bumpy.places == 1:
+                raise SkillError("blocked: tips 16 mm high, 2 mm sideways; backed off")
+            state["red_cube"], self.holding = np.asarray(aim, float), None
+
+    monkeypatch.setattr(executor, "build_scene", lambda frame, loc, naming="auto", bank_zone=None: (_scene_of(state), None, []))
+    monkeypatch.setattr(executor, "MISSING_WAIT_S", 0.0)
+    ex = Executor(Bumpy((0.0, 0.0)), cam=SceneCam(), loc=None, log=lambda *a: None)
+    report = ex.run([{"object": "red", "goal": {"type": "cell", "cell": "C2"}}])
+    assert report["result"] == "done" and report["steps"][0]["retries"] == 1
+    assert np.allclose(state["red_cube"], cell_center("C2"))

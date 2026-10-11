@@ -1,0 +1,11 @@
+{
+  "title": "A line of three down the middle column with a tower in the centre, built from the cube bank",
+  "why_a_column": "Robot cell names: rows A-C run from the arm toward the operator, columns 1-3 left to right. A2-B2-C2 is the middle column. Built as a left-right row (B1-B2-B3) every placement next to a neighbour needs an ~85 deg wrist roll (the jaws must stand across the row, and the arm's natural jaw direction is along it), which lands 20 mm off (run 04:21). Down the column every pick and place is a small roll (planner, 2026-10-11: -9 to 17 deg).",
+  "bank": "Two blocks at a time: top spot square, bottom spot a diamond. Start with light blue (top) and red (bottom); after light blue is taken put purple at the top; after red is taken put yellow at the bottom.",
+  "steps": [
+    {"object": "light blue", "goal": {"type": "cell", "cell": "A2"}},
+    {"object": "red", "goal": {"type": "cell", "cell": "B2"}},
+    {"object": "purple", "goal": {"type": "on_top", "reference": "red"}},
+    {"object": "yellow", "goal": {"type": "cell", "cell": "C2"}}
+  ]
+}
