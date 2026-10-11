@@ -12,7 +12,7 @@ import statistics
 from collections import Counter, defaultdict
 from typing import Any, Iterable, Optional
 
-from analytics.load import VALUES, Attempt, SessionRow, TaskStep
+from analytics.load import VALUES, Attempt, CameraChecks, SessionRow, TaskStep
 from shared.config import CELLS
 from shared.schemas import Verdict
 
@@ -252,6 +252,18 @@ def hints_file_effect(sessions: list[SessionRow], attempts: list[Attempt]) -> li
             "with_file": _step_summary([t for (sid, _), t in tries.items() if sid in with_file]),
             "without_file": _step_summary([t for (sid, _), t in tries.items() if sid not in with_file]),
         })
+    return out
+
+
+def camera_unreadable(rows: list[CameraChecks]) -> list[dict]:
+    """Per lesson_id and mode: stable boards graded, how many had a block the camera could not
+    read (WAITING with a fault_cell), and that share. A camera reliability number: the brain waits
+    on such a board instead of grading it, so each one costs time, never a wrong verdict."""
+    out = []
+    for k, group in _group(rows, ("mode",)).items():
+        boards, unreadable = sum(r.boards for r in group), sum(r.unreadable for r in group)
+        out.append({**_labels(k, ("mode",)), "boards": boards, "unreadable": unreadable,
+                    "share": None if boards == 0 else round(unreadable / boards, 4)})
     return out
 
 

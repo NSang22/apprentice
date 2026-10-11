@@ -155,6 +155,18 @@ class RobotCmd:
 
 
 @dataclass
+class CameraChecks:
+    """One session's stable boards, and how many had a block the camera could not read."""
+
+    session: str
+    mode: str
+    provenance: str
+    lesson_id: Optional[str]
+    boards: int       # stable boards the brain graded (after session_start)
+    unreadable: int   # WAITING verdicts with a fault_cell: the brain waited on an unreadable block
+
+
+@dataclass
 class TaskStep:
     """One step of a robot/outputs/tasks/*.json report from robot/executor.py."""
 
@@ -188,6 +200,7 @@ class Tables:
     attempts: list[Attempt] = field(default_factory=list)
     hints: list[HintShown] = field(default_factory=list)
     robot_cmds: list[RobotCmd] = field(default_factory=list)
+    camera: list[CameraChecks] = field(default_factory=list)
     task_steps: list[TaskStep] = field(default_factory=list)
     skipped_lines: int = 0
     never_started: int = 0        # journal files with no session_start (only board lines)
@@ -204,6 +217,7 @@ class Tables:
             attempts=[a for a in self.attempts if a.provenance in keep],
             hints=[h for h in self.hints if h.provenance in keep],
             robot_cmds=[r for r in self.robot_cmds if r.provenance in keep],
+            camera=[c for c in self.camera if c.provenance in keep],
         )
 
 
@@ -393,6 +407,18 @@ def build_robot_cmds(events: list[dict]) -> list[RobotCmd]:
     return out
 
 
+def build_camera(events: list[dict]) -> Optional[CameraChecks]:
+    """Stable boards and unreadable-block waits in one session, from session_start on."""
+    all_events, events = events, _after_start(events)
+    if not events:
+        return None
+    start = events[0]
+    unreadable = sum(1 for e in events if e["kind"] == "verdict"
+                     and field_of(e, "verdict") == VALUES["waiting"] and field_of(e, "fault_cell") is not None)
+    return CameraChecks(start.get("session", ""), start.get("mode", ""), provenance(start, all_events),
+                        field_of(start, "lesson_id"), sum(1 for e in events if e["kind"] == "board"), unreadable)
+
+
 def furthest_step(events: list[dict]) -> int:
     """Steps completed: the furthest step_advance reached. Counting advances would count a
     step again each time it is re-passed after a step_back."""
@@ -522,6 +548,7 @@ def load_all(
         t.attempts += build_attempts(events, lessons)
         t.hints += build_hints(events)
         t.robot_cmds += build_robot_cmds(events)
+        t.camera.append(build_camera(events))  # not None: build_session found a session_start
     if tasks_dir is not None:
         t.task_steps = read_task_reports(tasks_dir)
     t.unknown_lessons = sorted(unknown)

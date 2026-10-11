@@ -50,6 +50,7 @@ def bucket(t: Tables) -> dict[str, Any]:
         "leaderboard": m.leaderboard(s, a),
         "hints_file_effect": m.hints_file_effect(s, a),
         "gate_stats": m.gate_stats(s),
+        "camera_unreadable": m.camera_unreadable(t.camera),
     }
 
 
@@ -108,6 +109,10 @@ def summary(report: dict[str, Any]) -> str:
             lines.append(f"{name}: {r['lesson_id']} {r['mode']} first try {r['passes']}/{r['n']} ({_pct(r)})")
         for r in b["robot_retry_stats"]:
             lines.append(f"{name}: {r['lesson_id']} robot stopped {r['stopped']['passes']}/{r['n']} steps")
+        for r in b["camera_unreadable"]:
+            if r["unreadable"]:
+                lines.append(f"{name}: {r['lesson_id']} {r['mode']} camera could not read a block on "
+                             f"{r['unreadable']}/{r['boards']} boards")
     t = report["robot_trials"]
     if t["task_steps"]:
         o = t["overall"]

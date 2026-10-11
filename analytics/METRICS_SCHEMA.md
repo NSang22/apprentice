@@ -43,6 +43,7 @@ Provenance: `real` means the grid came from the camera (`perception:`). `simulat
 | `leaderboard` | `[{rank, lesson_id, session, provenance, total_seconds, mistakes, max_hint_level}]`. Completed human sessions, ranked per lesson |
 | `hints_file_effect` | `[{lesson_id, step, with_file, without_file}]`, each side shaped like a `step_difficulty` row without the labels. Empty until the brain logs which hints file it loaded |
 | `gate_stats` | `[{lesson_id, sessions, n, passes, rate}]`. `n` counts sessions whose lesson had a gate |
+| `camera_unreadable` | `[{lesson_id, mode, boards, unreadable, share}]`. Camera reliability: of the stable boards the brain graded, how many had a block it could not read (`WAITING` with a `fault_cell`). The brain waits on those instead of grading, so they cost time, never a wrong verdict. `share` is `null` when `boards` is 0. Not a rate: no `passes` |
 
 ## `robot_trials`
 

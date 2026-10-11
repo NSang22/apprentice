@@ -4,6 +4,7 @@ from pathlib import Path
 
 from analytics.fake_journal import generate, write_journals
 from analytics.load import DEFAULT_LESSON_DIRS, build_attempts, build_session, load_all, provenance, read_journal
+from analytics.metrics import camera_unreadable
 from brain.journal import Journal
 from brain.session import Session
 from brain.settings import DEMO_LESSON
@@ -118,6 +119,12 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
     assert [(a.verdict, a.attempt_no, a.fault_cell) for a in robot if a.step == 0] == [
         ("PASS", 1, None), ("WRONG_CELL", 2, "A2")]  # the judge slid red to A2: a revisit, then a re-pass (skipped)
     assert [(a.verdict, a.retry) for a in robot if a.step == 3] == [("WRONG_CELL", 0), ("WRONG_CELL", 1), ("WRONG_CELL", 2)]
+    # The camera number: the human run has one block the camera could not read (A3).
+    assert [(c.unreadable, c.boards > c.unreadable) for c in t.camera if c.session == HUMAN] == [(1, True)]
+    assert [(c.unreadable, c.boards > 0) for c in t.camera if c.session == ROBOT] == [(0, True)]
+    sim = camera_unreadable(t.only(["simulation"]).camera)
+    assert [(r["lesson_id"], r["mode"], r["unreadable"]) for r in sim] == [
+        ("sample-flat-v1", "human", 1), ("sample-flat-v1", "robot", 0)]
     rows = {s.session: s for s in t.sessions}
     assert (rows[HUMAN].steps_completed, rows[HUMAN].outcome) == (6, "complete")
     assert (rows[ROBOT].steps_completed, rows[ROBOT].outcome) == (3, "robot_stopped")
