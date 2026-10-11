@@ -836,6 +836,19 @@ def hub_page():
     return FileResponse(HERE / "hub_static" / "index.html", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/metrics")
+def metrics():
+    """data/analytics/metrics.json from python -m analytics.report (schema: analytics/METRICS_SCHEMA.md)."""
+    path = REPO_ROOT / "data" / "analytics" / "metrics.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        data = {"missing": True}
+    except (OSError, ValueError) as e:
+        data = {"missing": True, "error": f"{type(e).__name__}: {e}"}
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/calibrate")
 def calibrate_page():
     return FileResponse(REPO_ROOT / "robot" / "web_control_static" / "index.html")

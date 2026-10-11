@@ -144,10 +144,86 @@
     .prompt { font-size: 22px; }
     .section { padding: 16px; border-radius: 22px; }
   }
+
+  /* ---------------------------------------------------------------- Track view (#track) */
+  [hidden] { display: none !important; }
+  .tv-top { display: flex; align-items: center; gap: 12px; padding: 8px 0 10px; border-bottom: 2px solid var(--line);
+            position: sticky; top: 0; z-index: 5; background: var(--bg); }
+  .tv-top .title { flex: 1; }
+  .tv-top .btn { width: auto; flex: none; }
+  .x-btn { width: 48px; height: 48px; border: 0; background: none; color: #afafaf; cursor: pointer; border-radius: 16px;
+           display: flex; align-items: center; justify-content: center; }
+  .x-btn:active { transform: translateY(2px); }
+  .scene { margin-top: 20px; transition: opacity .5s; }
+  .scene.off { opacity: 0; pointer-events: none; }
+  .scene .section { margin-top: 0; }
+  .caption { font-size: 25px; font-weight: 900; margin: 0 0 4px; line-height: 1.2; }
+  .warn-pill { display: inline-flex; margin-top: 12px; padding: 8px 16px; border-radius: 99px; background: var(--orange-l);
+               color: var(--orange-d); font-size: 15px; font-weight: 800; }
+  .n { font-size: 12px; font-weight: 800; letter-spacing: .06em; color: var(--dim); margin-left: 6px; white-space: nowrap; }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 6px 0 18px; }
+  .stat-tile { border-radius: 16px; padding: 14px 16px; background: var(--l); border: 2px solid var(--d); box-shadow: 0 4px 0 var(--d);
+               transform: translateY(-16px); opacity: 0; transition: transform .45s cubic-bezier(.3,1.5,.6,1), opacity .35s; }
+  .stat-tile.in { transform: none; opacity: 1; }
+  .stat-tile b { display: block; font-size: 30px; font-weight: 900; line-height: 1.1; }
+  .stat-tile .label { color: var(--d); }
+  .switcher { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; }
+  .switcher .btn { width: auto; min-height: 48px; padding: 10px 16px; font-size: 15px; }
+  .switcher .btn.ghost.on { background: var(--blue-l); border-color: #84d8ff; box-shadow: 0 4px 0 #84d8ff; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; font-size: 15px; color: var(--dim); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 18px; height: 14px; border-radius: 5px; display: inline-block; }
+
+  /* Bricks: rounded, 6 px darker ledge. Positioned by transform only, so 300 of them stay at 60 fps. */
+  .brick { position: absolute; left: 0; top: 0; border-radius: 13px; background: var(--f); box-shadow: 0 6px 0 var(--d);
+           will-change: transform; display: flex; align-items: center; justify-content: center;
+           color: #fff; font-size: 15px; font-weight: 900; }
+  .brick.g { --f: var(--green); --d: var(--green-d); }
+  .brick.y { --f: var(--yellow); --d: var(--yellow-d); }
+  .brick.o { --f: var(--orange); --d: var(--orange-d); }
+  .brick.s { --f: var(--soft); --d: var(--line); }
+
+  .wall { position: relative; }
+  .wall-floor { position: absolute; left: 0; right: 0; height: 6px; border-radius: 99px; background: var(--line); }
+  .col-label { position: absolute; text-align: center; opacity: 0; transition: opacity .5s; font-size: 15px; }
+  .col-label.in { opacity: 1; }
+  .col-label b { display: block; font-size: 17px; font-weight: 900; }
+  .col-label span { color: var(--dim); }
+
+  .side-lab { text-align: center; margin-top: 12px; }
+  .rlab, .clab { display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 900; color: var(--dim); }
+  .cells { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 12px; background: var(--soft);
+           border: 2px solid var(--line); border-radius: 22px; }
+  .clabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 6px 12px 0; }
+  .cell { position: relative; aspect-ratio: 1; border-radius: 16px; background: #fff; border: 2px solid var(--line);
+          box-shadow: 0 4px 0 var(--line); overflow: visible; }
+  .cell .name { position: absolute; left: 10px; top: 8px; font-size: 12px; font-weight: 800; letter-spacing: .08em; color: #afafaf; }
+  .cell .zero { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cfcfcf; font-weight: 900; }
+  .sheet-wrap { display: grid; grid-template-columns: 24px 1fr; gap: 10px; max-width: 520px; margin: 12px auto 0; }
+  .sheet-wrap .rows { display: grid; grid-template-rows: repeat(3, 1fr); padding: 12px 0; gap: 10px; }
+
+  .towers { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 620px; margin: 10px auto 0; }
+  .tower { display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .tower .stack { position: relative; width: 120px; }
+  .tower b { font-size: 22px; font-weight: 900; margin-top: 14px; }
+
+  .badge { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px;
+           padding: 14px 18px; border-radius: 22px; background: var(--blue-l); color: #2b7ea6; font-size: 15px; }
+  .badge a { color: var(--blue-d); font-weight: 800; text-decoration: underline; min-height: 48px; display: inline-flex; align-items: center; }
+
+  /* Pip in the top-right corner of the sticky header, so the bubble never covers the data. */
+  .corner-pip { display: flex; align-items: center; gap: 12px; flex-direction: row-reverse; }
+  .corner-pip .pip { width: 54px; height: 60px; }
+  .corner-pip .bubble { flex: none; max-width: 260px; margin: 0; min-height: 0; font-size: 15px; padding: 8px 14px; }
+  .corner-pip .bubble::before { left: auto; right: -11px; bottom: auto; top: calc(50% - 9px); transform: rotate(-135deg); }
+  @media (max-width: 820px) { .stats { grid-template-columns: 1fr; } }
+  @media (max-width: 560px) { .corner-pip .bubble { display: none; } }
 </style>
 </head>
 <body>
-<main>
+<main id="hub">
   <div class="top">
     <h1 class="title">Apprentice</h1>
     <div class="blocks" aria-hidden="true">
@@ -254,10 +330,9 @@
     <div class="track">
       <div>
         <h2 style="margin-bottom: 0">See progress</h2>
-        <p class="sub">Every session, step, and hint, for people and the robot, side by side.</p>
+        <p class="sub">Every real try at the table, one brick each.</p>
       </div>
-      <a class="btn blue" target="_blank" rel="noopener"
-         href="https://dbc-bcd88b06-db88.cloud.databricks.com/sql/dashboardsv3/01f1c51dfb2119eb9f71f3f2d15f9dd2">Open the dashboard</a>
+      <a class="btn blue" href="#track">See progress</a>
     </div>
   </section>
 
@@ -266,6 +341,23 @@
     <div class="facts"><span>Jetson</span><span>Overhead camera</span><span>SO-101 arm</span><span>Databricks</span></div>
   </footer>
 </main>
+
+<div id="trackview" hidden>
+  <main>
+    <div class="tv-top">
+      <button class="x-btn" id="tv-close" aria-label="Back to the hub">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg>
+      </button>
+      <h1 class="title">Track</h1>
+      <button class="btn ghost" id="tv-skip">Skip</button>
+      <div class="corner-pip" aria-live="polite">
+        <div id="tv-pip"></div>
+        <div class="bubble" id="tv-say"></div>
+      </div>
+    </div>
+    <div id="tv-body"></div>
+  </main>
+</div>
 
 
 <script>
@@ -445,6 +537,460 @@ function openLesson(lessonId, mode, card, errEl) {
 }
 
 loadLessons();
+
+// ---------------------------------------------------------------- Track view (#track)
+// Reads /api/metrics (data/analytics/metrics.json, schema in analytics/METRICS_SCHEMA.md) and shows
+// by_provenance.real only. Three scenes play in order, then everything stays put.
+const DATABRICKS_URL = "https://dbc-bcd88b06-db88.cloud.databricks.com/sql/dashboardsv3/01f1c51dfb2119eb9f71f3f2d15f9dd2";
+const STACK_LESSON = "stack-test-v1";   // the 3-high stack lesson
+const FLAT_LESSON = "sample-flat-v1";   // a flat lesson
+const MEASURED = { stack: { unreadable: 47, boards: 104 }, flat: { unreadable: 2, boards: 26 } };  // camera_unreadable in testing
+const STAGGER_MS = 25;
+const GRAVITY = 3200;   // px/s^2
+const BOUNCE = 0.28;    // one small bounce, then the brick settles
+const LEDGE = 6;
+const SCENE_GAP_MS = 1600;
+const SAY = ["Every brick is a real try!", "Here is where it gets tricky", "We learned from this one"];
+const ROWS = ["A", "B", "C"];
+const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const hubEl = document.getElementById("hub");
+const tvEl = document.getElementById("trackview");
+const tvBody = document.getElementById("tv-body");
+const tvSay = document.getElementById("tv-say");
+const tvSkip = document.getElementById("tv-skip");
+const cornerPip = document.querySelector("#hub .pip").cloneNode(true);
+cornerPip.dataset.mood = "happy";
+document.getElementById("tv-pip").replaceWith(cornerPip);
+
+let metrics = null;
+let lessonId = null;
+let run = null;           // the current playthrough: {bricks, active, timers, raf, scenes}
+let cameFromHub = false;
+
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+};
+const sum = (xs, f) => xs.reduce((a, x) => a + (f(x) || 0), 0);
+const pct = (passes, n) => (n ? `${Math.round((100 * passes) / n)}%` : "no data");
+
+// A rate as text, with "n = X" beside it when n < 5.
+function rateNode(passes, n, suffix) {
+  const span = el("span", null, pct(passes, n) + (n && suffix ? suffix : ""));
+  if (n < 5) span.appendChild(el("span", "n", `n = ${n}`));
+  return span;
+}
+
+function say(text) { tvSay.textContent = text; }
+
+// ---- data
+
+// Real attempts per lesson, most first (verdict_mix counts every graded attempt).
+function lessonsByAttempts(real) {
+  const by = new Map();
+  for (const m of real.verdict_mix || []) by.set(m.lesson_id, (by.get(m.lesson_id) || 0) + m.n);
+  return [...by.entries()].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+}
+
+// One column per step, bricks bottom to top: tries that did not pass, a pass after a hint, a first-try pass.
+function wallColumns(real, id) {
+  const rows = (real.step_difficulty || []).filter((r) => r.lesson_id === id);
+  const steps = 1 + Math.max(-1, ...rows.map((r) => r.step));
+  const cols = Array.from({ length: steps }, () => ({ first: 0, hinted: 0, tries: 0, unpassed: 0, n: 0 }));
+  for (const r of rows) {
+    const c = cols[r.step];
+    c.first += r.passes;
+    c.hinted += r.n_passed - r.passes;
+    c.tries += Math.max(0, Math.round(r.n_passed * (r.mean_attempts || 1)) - r.n_passed);
+    c.unpassed += r.n_not_passed;
+    c.n += r.n;
+  }
+  // Tries on a step that never passed are not in step_difficulty, only in verdict_mix's total.
+  // Put the rest on the steps with an unpassed try, split by how many each has.
+  const mix = (real.verdict_mix || []).filter((m) => m.lesson_id === id);
+  let rest = sum(mix, (m) => m.n - m.passes) - sum(cols, (c) => c.tries);
+  const unpassed = sum(cols, (c) => c.unpassed);
+  if (rest > 0 && unpassed > 0) {
+    const open = cols.filter((c) => c.unpassed > 0);
+    open.forEach((c, i) => {
+      const share = i === open.length - 1 ? rest : Math.round((rest * c.unpassed) / unpassed);
+      c.tries += share;
+      rest -= share;
+    });
+  }
+  return cols;
+}
+
+function towerData(real) {
+  const pick = (id) => {
+    const rows = (real.camera_unreadable || []).filter((r) => r.lesson_id === id);
+    return { unreadable: sum(rows, (r) => r.unreadable), boards: sum(rows, (r) => r.boards) };
+  };
+  const stack = pick(STACK_LESSON);
+  const flat = pick(FLAT_LESSON);
+  if (stack.boards && flat.boards) return { stack, flat, measured: false };
+  return { ...MEASURED, measured: true };
+}
+
+// ---- bricks: one rAF loop, transforms only
+
+function brick(parent, cls, x, y, w, h, text) {
+  const b = el("div", "brick " + cls, text);
+  b.style.width = `${w}px`;
+  b.style.height = `${h}px`;
+  if (h < 26) b.style.borderRadius = `${Math.max(4, Math.floor(h / 2))}px`;
+  b.style.visibility = "hidden";
+  parent.appendChild(b);
+  const item = { el: b, x, y, from: -h - LEDGE - 160 - y * 0.2 };
+  place(item, item.from);
+  run.bricks.push(item);
+  return item;
+}
+
+function place(b, y) { b.el.style.transform = `translate3d(${b.x}px, ${y}px, 0)`; }
+
+function land(b) { b.live = false; b.el.style.visibility = "visible"; place(b, b.y); }
+
+// Drop a group with gravity and one small bounce; resolves when every brick has landed.
+function drop(bricks) {
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    bricks.forEach((b, i) => Object.assign(b, { start: t0 + i * STAGGER_MS, pos: b.from, v: 0, bounced: false, live: true }));
+    run.active.push({ bricks, resolve });
+    if (!run.raf) { run.last = 0; run.raf = requestAnimationFrame(tick); }
+  });
+}
+
+function tick(now) {
+  const dt = run.last ? Math.min(0.033, (now - run.last) / 1000) : 0;
+  run.last = now;
+  for (const g of run.active) {
+    let flying = 0;
+    for (const b of g.bricks) {
+      if (!b.live) continue;
+      flying++;
+      if (now < b.start) continue;
+      if (b.el.style.visibility !== "visible") b.el.style.visibility = "visible";
+      b.v += GRAVITY * dt;
+      b.pos += b.v * dt;
+      if (b.pos >= b.y) {
+        b.pos = b.y;
+        if (!b.bounced && b.v > 200) { b.v = -b.v * BOUNCE; b.bounced = true; } else { b.live = false; }
+      }
+      place(b, b.pos);
+    }
+    if (!flying) { g.done = true; g.resolve(); }
+  }
+  run.active = run.active.filter((g) => !g.done);
+  run.raf = run.active.length ? requestAnimationFrame(tick) : 0;
+}
+
+function wait(ms) { return new Promise((r) => run.timers.push(setTimeout(r, ms))); }
+
+function stopRun() {
+  if (!run) return;
+  cancelAnimationFrame(run.raf);
+  run.timers.forEach(clearTimeout);
+  run.dead = true;
+}
+
+// ---- scenes
+
+function sceneShell(label, caption) {
+  const scene = el("div", "scene off");
+  const card = el("section", "section");
+  card.append(el("div", "label", label));
+  if (caption) card.append(el("p", "caption", caption));
+  scene.append(card);
+  tvBody.append(scene);
+  return { scene, card, bricks: [], reveal: () => {} };
+}
+
+function buildWall(real) {
+  const s = sceneShell("Every try", null);
+  const lessons = lessonsByAttempts(real);
+
+  const ftp = real.first_try_pass_rate || [];
+  const ftpN = sum(ftp, (r) => r.n);
+  const ftpPasses = sum(ftp, (r) => r.passes);
+  const stats = el("div", "stats");
+  const tile = (l, d, label, value) => {
+    const t = el("div", "stat-tile");
+    t.style.setProperty("--l", l);
+    t.style.setProperty("--d", d);
+    const b = el("b");
+    b.append(value);
+    t.append(el("div", "label", label), b);
+    stats.append(t);
+    return t;
+  };
+  const tiles = [
+    tile("var(--blue-l)", "var(--blue-d)", "Real sessions", String(real.sessions)),
+    tile("var(--green-l)", "var(--green-d)", "Real attempts", String(real.attempts)),
+    tile("var(--yellow-l)", "var(--yellow-d)", "First-try pass rate", rateNode(ftpPasses, ftpN)),
+  ];
+  s.card.append(stats);
+
+  if (!lessons.length) {
+    s.card.append(el("span", "pill", "No real tries yet. Practice a lesson with the camera on."));
+    s.reveal = () => tiles.forEach((t) => t.classList.add("in"));
+    return s;
+  }
+  if (!lessons.includes(lessonId)) lessonId = lessons[0];
+  if (lessons.length > 1) {
+    const sw = el("div", "switcher");
+    for (const id of lessons) {
+      const b = el("button", "btn ghost" + (id === lessonId ? " on" : ""), id);
+      b.onclick = () => { if (id !== lessonId) { lessonId = id; start({ replayWallOnly: true }); } };
+      sw.append(b);
+    }
+    s.card.append(sw);
+  }
+
+  const cols = wallColumns(real, lessonId);
+  const wall = el("div", "wall");
+  s.card.append(wall);
+  const W = wall.clientWidth;
+  const colW = W / cols.length;
+  const bw = Math.min(colW - 14, 130);
+  const most = Math.max(1, ...cols.map((c) => c.tries + c.hinted + c.first));
+  const room = Math.min(380, Math.max(200, innerHeight * 0.42));
+  const pitch = Math.max(10, Math.min(34, Math.floor(room / most)));
+  const bh = pitch - LEDGE - 2;
+  const floorY = most * pitch + 4;
+  wall.style.height = `${floorY + 70}px`;
+  const floor = el("div", "wall-floor");
+  floor.style.top = `${floorY}px`;
+  wall.append(floor);
+
+  const order = [];   // drop column by column, bottom brick first
+  const labels = [];
+  cols.forEach((c, i) => {
+    const x = i * colW + (colW - bw) / 2;
+    const kinds = [...Array(c.tries).fill("o"), ...Array(c.hinted).fill("y"), ...Array(c.first).fill("g")];
+    kinds.forEach((k, j) => order.push(brick(wall, k, x, floorY - (j + 1) * pitch, bw, bh)));
+    const lab = el("div", "col-label");
+    lab.style.left = `${i * colW}px`;
+    lab.style.width = `${colW}px`;
+    lab.style.top = `${floorY + 14}px`;
+    lab.append(el("b", null, `Step ${i + 1}`), rateNode(c.first, c.n, " first try"));
+    wall.append(lab);
+    labels.push(lab);
+  });
+  s.bricks = order;
+
+  const legend = el("div", "legend");
+  for (const [cls, text] of [["g", "Passed first try"], ["y", "Passed after a hint"], ["o", "Try again"]]) {
+    const item = el("span");
+    const sw = el("i", "brick " + cls);
+    sw.style.position = "static";
+    sw.style.boxShadow = "none";
+    sw.style.background = "var(--f)";
+    item.append(sw, text);
+    legend.append(item);
+  }
+  s.card.append(legend);
+  s.reveal = () => { labels.forEach((l) => l.classList.add("in")); tiles.forEach((t) => t.classList.add("in")); };
+  return s;
+}
+
+function buildBoard(real) {
+  const s = sceneShell("The board", "Where mistakes happen");
+  const map = ((real.cell_error_map || {}).human || {})[lessonId];
+  const total = map ? sum(Object.values(map), (c) => c.fails) : 0;
+  s.card.append(el("p", "sub", map ? `${lessonId}: ${total} mistake${total === 1 ? "" : "s"}, one brick each, on the sheet as printed.` : ""));
+  if (!map) {
+    s.card.append(el("span", "pill", "No mistakes recorded for this lesson yet"));
+    return s;
+  }
+  s.card.append(el("div", "label side-lab", "Robot side"));
+  const wrap = el("div", "sheet-wrap");
+  const rowLabs = el("div", "rows");
+  ROWS.forEach((r) => rowLabs.append(el("div", "rlab", r)));
+  const right = el("div");
+  const cells = el("div", "cells");
+  const clabs = el("div", "clabs");
+  [1, 2, 3].forEach((n) => clabs.append(el("div", "clab", String(n))));
+  right.append(cells, clabs);
+  wrap.append(rowLabs, right);
+  s.card.append(wrap, el("div", "label side-lab", "Your side"));
+
+  const cellEls = [];
+  for (const r of ROWS) for (const n of [1, 2, 3]) {
+    const name = `${r}${n}`;
+    const c = el("div", "cell");
+    c.append(el("span", "name", name));
+    cells.append(c);
+    cellEls.push([name, c]);
+  }
+  const order = [];
+  for (const [name, c] of cellEls) {
+    const fails = (map[name] || {}).fails || 0;
+    if (!fails) { c.append(el("div", "zero", "0")); continue; }
+    const size = c.clientWidth;
+    const bw = Math.round(size * 0.62);
+    const x = (size - bw) / 2 - 2;
+    const pitch = 16;
+    const topH = 26;
+    // One brick per mistake while they fit in the cell; the top brick always carries the count.
+    const fit = Math.max(1, Math.floor((size - 34 - topH) / pitch) + 1);
+    const shown = Math.min(fails, fit);
+    let y = size - 14;
+    for (let i = 0; i < shown; i++) {
+      const last = i === shown - 1;
+      const h = last ? topH : pitch - LEDGE;
+      y -= h + LEDGE;
+      order.push(brick(c, "o", x, y, bw, h, last ? String(fails) : null));
+    }
+  }
+  s.bricks = order;
+  return s;
+}
+
+function buildTowers(real) {
+  const s = sceneShell("The lesson we learned", "Tall towers hid the board from the camera, so we capped stacks at two.");
+  const t = towerData(real);
+  s.card.append(el("p", "sub", `Each brick is a tenth of the boards the brain graded. Orange: the camera could not read a block.${t.measured ? " Measured during testing." : ""}`));
+  const towers = el("div", "towers");
+  s.card.append(towers);
+  const order = [];
+  const pitch = 26;
+  for (const [title, d] of [["3-high stacks", t.stack], ["Flat lesson", t.flat]]) {
+    const tw = el("div", "tower");
+    const stack = el("div", "stack");
+    stack.style.height = `${10 * pitch + 4}px`;
+    tw.append(stack, el("b", null, title), el("span", "sub", `${d.unreadable} of ${d.boards} boards unreadable${t.measured ? " (measured during testing)" : ""}`));
+    towers.append(tw);
+    const bad = d.unreadable ? Math.max(1, Math.round((10 * d.unreadable) / d.boards)) : 0;
+    for (let i = 0; i < 10; i++) {
+      order.push(brick(stack, i < 10 - bad ? "s" : "o", 0, 10 * pitch - (i + 1) * pitch + 4, 120, pitch - LEDGE - 2));
+    }
+  }
+  s.bricks = order;
+  return s;
+}
+
+function buildBadge() {
+  const b = el("div", "badge");
+  b.append(el("span", null, "Computed with the same code in Databricks. Cloud and local match."));
+  const a = el("a", null, "Open in Databricks");
+  a.href = DATABRICKS_URL;
+  a.target = "_blank";
+  a.rel = "noopener";
+  b.append(a);
+  tvBody.append(b);
+}
+
+// ---- play
+
+function finish() {
+  if (!run) return;
+  stopRun();
+  run.bricks.forEach(land);
+  run.scenes.forEach((s) => { s.scene.classList.remove("off"); s.reveal(); });
+  say(SAY[SAY.length - 1]);
+  tvSkip.hidden = true;
+}
+
+function build() {
+  stopRun();
+  tvBody.innerHTML = "";
+  run = { bricks: [], active: [], timers: [], raf: 0, scenes: [], last: 0 };
+  const real = metrics.by_provenance.real;
+  if (metrics.contains_synthetic_data) tvBody.append(el("span", "warn-pill", "This report includes made-up practice data. The numbers here use real tries only."));
+  run.scenes = [buildWall(real), buildBoard(real), buildTowers(real)];
+  buildBadge();
+}
+
+async function start({ replayWallOnly = false } = {}) {
+  build();
+  const me = run;
+
+  if (reducedMotion()) {
+    tvBody.style.opacity = "0";
+    finish();
+    requestAnimationFrame(() => { tvBody.style.transition = "opacity .6s"; tvBody.style.opacity = "1"; });
+    return;
+  }
+  tvSkip.hidden = false;
+  if (replayWallOnly) {
+    run.scenes.forEach((s, i) => { if (i) { s.scene.classList.remove("off"); s.bricks.forEach(land); s.reveal(); } });
+    run.scenes[0].scene.classList.remove("off");
+    say(SAY[0]);
+    await drop(run.scenes[0].bricks);
+    if (me.dead) return;
+    run.scenes[0].reveal();
+    tvSkip.hidden = true;
+    return;
+  }
+  for (let i = 0; i < run.scenes.length; i++) {
+    const s = run.scenes[i];
+    s.scene.classList.remove("off");
+    say(SAY[i]);
+    if (i) window.scrollTo({ top: s.scene.getBoundingClientRect().top + scrollY - 96, behavior: "smooth" });
+    await drop(s.bricks);
+    if (me.dead) return;
+    s.reveal();
+    await wait(SCENE_GAP_MS);
+    if (me.dead) return;
+  }
+  tvSkip.hidden = true;
+}
+
+async function openTrack() {
+  window.scrollTo(0, 0);
+  tvBody.innerHTML = "";
+  tvSkip.hidden = true;
+  say("Let me find the numbers...");
+  try {
+    const r = await fetch("/api/metrics", { cache: "no-store" });
+    metrics = await r.json();
+  } catch (e) {
+    metrics = { missing: true };
+  }
+  if (tvEl.hidden) return;   // closed while loading
+  if (metrics.missing || !metrics.by_provenance || !metrics.by_provenance.real) {
+    tvBody.append(el("span", "pill", "Run python -m analytics.report to see progress"));
+    tvBody.firstChild.style.marginTop = "24px";
+    say("No bricks yet. Run the report and I will build the wall!");
+    return;
+  }
+  start();
+}
+
+function route() {
+  const on = location.hash === "#track";
+  if (on && !hubEl.hidden) cameFromHub = true;
+  hubEl.hidden = on;
+  tvEl.hidden = !on;
+  if (on) openTrack();
+  else { stopRun(); run = null; tvBody.innerHTML = ""; }
+}
+
+document.getElementById("tv-close").onclick = () => {
+  if (cameFromHub) history.back();
+  else { history.replaceState(null, "", location.pathname + location.search); route(); }
+};
+tvSkip.onclick = finish;
+
+// A new width moves every brick: rebuild in the finished state.
+let resizeTimer = 0;
+let lastWidth = innerWidth;
+addEventListener("resize", () => {
+  if (tvEl.hidden || !run || innerWidth === lastWidth) return;
+  lastWidth = innerWidth;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    build();
+    finish();
+  }, 200);
+});
+
+addEventListener("hashchange", route);
+route();
 </script>
 </body>
 </html>
