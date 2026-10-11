@@ -1,4 +1,11 @@
-"""Convert workspace-sheet millimetres to the frozen 3x3 cell names."""
+"""Convert workspace-sheet millimetres to the frozen 3x3 cell names.
+
+This is the one place perception names cells (decision D1): the letter is the column along
+tag 0 -> tag 1 (A to C), the number is the row along tag 0 -> tag 3 (1 to 3). So A1 sits at
+tag 0, C1 at tag 1, C3 at tag 2, A3 at tag 3. The sheet's own printed labels and
+workspace_sheet.json's "rows"/"cols" use the transposed convention (letters down the page),
+and so does robot/perception/sheet.cell_center; perception ignores both.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +23,30 @@ DEFAULT_SHEET_SPEC = (
 def _grid_geometry(spec_path: str) -> tuple[float, float, float]:
     grid = json.loads(Path(spec_path).read_text(encoding="utf-8"))["grid"]
     return float(grid["origin_mm"][0]), float(grid["origin_mm"][1]), float(grid["cell_mm"])
+
+
+def grid_geometry(spec_path: str | Path = DEFAULT_SHEET_SPEC) -> tuple[float, float, float]:
+    """(x0_mm, y0_mm, cell_mm): the grid's corner nearest tag 0 and its cell size."""
+    return _grid_geometry(str(Path(spec_path).resolve()))
+
+
+def cell_center_mm(cell: str, spec_path: str | Path = DEFAULT_SHEET_SPEC) -> tuple[float, float]:
+    """Sheet mm at the centre of a cell, the inverse of mm_to_cell."""
+    x0, y0, cell_mm = grid_geometry(spec_path)
+    column, row = "ABC".index(cell[0]), int(cell[1]) - 1
+    return x0 + (column + 0.5) * cell_mm, y0 + (row + 0.5) * cell_mm
+
+
+def tag_corner_cells(spec_path: str | Path = DEFAULT_SHEET_SPEC) -> dict[int, str]:
+    """Tag id -> the corner cell nearest it, from the sheet spec: the start-up self-check."""
+    spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
+    corners = ("A1", "C1", "A3", "C3")
+    out = {}
+    for tag, t in spec["tags"].items():
+        tx, ty = t["center_mm"]
+        out[int(tag)] = min(corners, key=lambda c: (cell_center_mm(c, spec_path)[0] - tx) ** 2
+                                                   + (cell_center_mm(c, spec_path)[1] - ty) ** 2)
+    return out
 
 
 def mm_to_cell(
