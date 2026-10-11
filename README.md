@@ -355,8 +355,10 @@ python -m perception.publish --video videos/demo.mp4
 # Writes lessons/<id>.json only when every step has a known color, plus lessons/extract/<id>.json (gate
 # reasons, color reads, draft + colors-file template if a color is unknown) and step pictures. No --calib:
 # grid lock + empty board from the video's first second. Exit 0 gate passed, 1 gate failed, 3 colors unknown.
-python -m brain.extractor --video videos/expert_take1.mp4 --block-mm 48 --colors red,yellow,orange,purple,skyblue --boards-out data/boards.json
-python -m brain.extractor --video videos/expert_take1.mp4 --block-mm 48 --colors red,yellow,orange,purple,skyblue --colors-file colors.json
+# Stacks up to 3 come from history (a clear new top color on an occupied cell), never the camera's height read.
+# Defaults: --block-mm 48, --colors all shared colors, --color-memory robot/outputs/color_memory.json if present.
+python -m brain.extractor --video videos/expert_take1.mp4 --color-memory videos/calib_oct11/color_memory.json --boards-out data/boards.json
+python -m brain.extractor --video videos/expert_take1.mp4 --colors red,yellow,orange,purple,skyblue --colors-file colors.json
 python -m brain.extractor --script tests/scripts/staircase_with_mistake.json   # or --grid ws://<host>:8765 (live camera; Ctrl+C ends the take)
 
 # Robot API on the Jetson (README 5.3), in the lerobot venv, started after perception.publish (it reads the
