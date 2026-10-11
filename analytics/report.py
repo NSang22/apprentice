@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 from collections import Counter
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -65,6 +66,7 @@ def build_report(t: Tables, include_synthetic: bool = False, now: Optional[datet
         "skipped_lines": t.skipped_lines,
         "bad_lesson_files": t.bad_lessons,
         "lessons_not_found": t.unknown_lessons,
+        "lesson_mismatch": [asdict(x) for x in t.lesson_mismatches],  # left out of every number below
         "contains_synthetic_data": include_synthetic and counts.get("synthetic", 0) > 0,
         "contains_simulation_data": counts.get("simulation", 0) > 0,
         "contains_unverified_data": counts.get("unverified", 0) > 0,
@@ -111,6 +113,9 @@ def summary(report: dict[str, Any]) -> str:
         o = t["overall"]
         lines.append(f"robot trials (robot cell naming, not tested against a real file): ok {o['passes']}/{o['n']} ({_pct(o)})")
     lines.append(f"skipped lines {report['skipped_lines']}, never started {report['never_started']}")
+    if report["lesson_mismatch"]:
+        lines.append(f"left out, lesson changed since recorded: {len(report['lesson_mismatch'])} session(s), "
+                     + ", ".join(x["session"] for x in report["lesson_mismatch"]))
     return "\n".join(lines)
 
 

@@ -170,6 +170,19 @@ class TaskStep:
 
 
 @dataclass
+class LessonMismatch:
+    """A session whose recorded step count differs from the lesson file its lesson_id maps to
+    (the lesson changed under the same id), so its step numbers can't be read against it."""
+
+    session: str
+    path: str
+    provenance: str
+    lesson_id: Optional[str]
+    recorded_steps: int
+    lesson_steps: int
+
+
+@dataclass
 class Tables:
     sessions: list[SessionRow] = field(default_factory=list)
     attempts: list[Attempt] = field(default_factory=list)
@@ -180,6 +193,7 @@ class Tables:
     never_started: int = 0        # journal files with no session_start (only board lines)
     bad_lessons: int = 0
     unknown_lessons: list[str] = field(default_factory=list)
+    lesson_mismatches: list[LessonMismatch] = field(default_factory=list)  # left out of every other table
 
     def only(self, provenances: Iterable[str]) -> Tables:
         """The same tables restricted to sessions of the given provenances."""
@@ -267,6 +281,15 @@ def lesson_steps(start: dict, lessons: dict[str, Lesson]) -> Optional[list[dict]
         return steps
     lesson = lessons.get(field_of(start, "lesson_id"))
     return None if lesson is None else [s.to_dict() for s in lesson.steps]
+
+
+def lesson_mismatch(row: SessionRow, start: dict, lessons: dict[str, Lesson]) -> Optional[LessonMismatch]:
+    """The mismatch if session_start recorded a step count and the lesson file has another."""
+    recorded = field_of(start, "steps")
+    steps = lesson_steps(start, lessons)
+    if not isinstance(recorded, int) or isinstance(recorded, bool) or steps is None or recorded == len(steps):
+        return None
+    return LessonMismatch(row.session, row.path, row.provenance, row.lesson_id, recorded, len(steps))
 
 
 def _step_info(steps: Optional[list[dict]], step: int) -> tuple[Any, Any, Any]:
@@ -474,7 +497,8 @@ def load_all(
     lesson_dirs: Iterable[Path] = DEFAULT_LESSON_DIRS,
     tasks_dir: Optional[Path] = None,
 ) -> Tables:
-    """Every session of every provenance. Callers filter with Tables.only()."""
+    """Every session of every provenance, except lesson mismatches, which are only listed.
+    Callers filter with Tables.only()."""
     lessons, bad_lessons = load_lessons(lesson_dirs)
     t = Tables(bad_lessons=bad_lessons)
     unknown: set[str] = set()
@@ -484,6 +508,10 @@ def load_all(
         row = build_session(events, lessons, path.name, skipped)
         if row is None:
             t.never_started += 1
+            continue
+        mismatch = lesson_mismatch(row, _session_start(events), lessons)
+        if mismatch is not None:
+            t.lesson_mismatches.append(mismatch)  # its steps would map to the wrong cubes: no metric sees it
             continue
         if row.lesson_id is not None and lesson_steps(_session_start(events), lessons) is None:
             unknown.add(row.lesson_id)

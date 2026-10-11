@@ -14,10 +14,12 @@ on top of the brain's own fields; the report leaves these out unless asked. The 
 only writes files whose names start with "synthetic_" and replaces earlier ones of the same name.
 
 What the journals contain:
-  - human sessions with every failing verdict the checker gives (WRONG_CELL, WRONG_COLOR,
-    WRONG_LEVEL, EXTRA, MISSING for a knocked cube) and hint levels 1 to 4 (level 4 makes
-    the fake robot hover over the right cell)
-  - humans who lift an earlier block off and put it back (step_back, then a re-pass)
+  - human sessions with every failing verdict a human gets (WRONG_CELL, WRONG_COLOR,
+    WRONG_LEVEL, EXTRA) and hint levels 1 to 4 (level 4 makes the fake robot hover over the
+    right cell)
+  - humans who lift an earlier block off and put it back (step_back, then a re-pass). The
+    brain's progress follows the board, so a knocked-off older cube is a step back too, never
+    a MISSING mistake; only "still placing" MISSING shows up
   - robot sessions with retries that pass, a cube a judge moved, a failed place, and one
     session that hits the retry cap and stops
   - one human session stopped early (outcome server_stopped) and one cut off mid-line
@@ -50,18 +52,18 @@ WRONG_CELL = Verdict.WRONG_CELL.value
 WRONG_COLOR = Verdict.WRONG_COLOR.value
 WRONG_LEVEL = Verdict.WRONG_LEVEL.value
 EXTRA = Verdict.EXTRA.value
-MISSING = Verdict.MISSING.value  # here: an older cube knocked off, so fault_cell is set
-MISTAKES = [WRONG_CELL, WRONG_COLOR, WRONG_LEVEL, EXTRA, MISSING]
+MISSING = Verdict.MISSING.value  # only "still placing" (fault_cell None): a knocked cube is a step_back
+MISTAKES = [WRONG_CELL, WRONG_COLOR, WRONG_LEVEL, EXTRA]
 
 # Simulated human.
 MAX_HUMAN_ATTEMPTS = 6  # by then the robot is pointing at the cell, so they get it
 FIRST_TRY_P = {0: 0.75, 1: 0.6, 2: 0.45}  # by step level: higher stacks are harder
-HUMAN_MISTAKE_WEIGHTS = {WRONG_CELL: 0.35, WRONG_COLOR: 0.25, WRONG_LEVEL: 0.15, EXTRA: 0.10, MISSING: 0.15}
+HUMAN_MISTAKE_WEIGHTS = {WRONG_CELL: 0.40, WRONG_COLOR: 0.30, WRONG_LEVEL: 0.15, EXTRA: 0.15}
 # Chance the attempt after a hint passes, by the hint level now showing and the last mistake.
 # Text fixes color and count mistakes; spatial mistakes need the ghost cube or more.
 FIX_P = {
-    1: {WRONG_CELL: 0.30, WRONG_COLOR: 0.80, WRONG_LEVEL: 0.35, EXTRA: 0.70, MISSING: 0.70},
-    2: {WRONG_CELL: 0.80, WRONG_COLOR: 0.75, WRONG_LEVEL: 0.80, EXTRA: 0.70, MISSING: 0.75},
+    1: {WRONG_CELL: 0.30, WRONG_COLOR: 0.80, WRONG_LEVEL: 0.35, EXTRA: 0.70},
+    2: {WRONG_CELL: 0.80, WRONG_COLOR: 0.75, WRONG_LEVEL: 0.80, EXTRA: 0.70},
     3: {m: 0.70 for m in MISTAKES},
     4: {m: 0.90 for m in MISTAKES},
 }
@@ -156,19 +158,13 @@ def mistake_board(rng: random.Random, before: Board, step: Step, mistake: str) -
         board[step.cell] += [rng.choice([c for c in COLORS if c != step.color]), step.color]
         return board
     if mistake == EXTRA:
+        # Placed the cube, plus a second one of the same color elsewhere. A color an open slot
+        # still needs would be WRONG_CELL (move it there), so the extra is the color just used.
         board = apply_step(before, step)
         options = [c for c in CELLS if c != step.cell and _has_room(board, c)]
         if not options:
             return None
-        board[rng.choice(options)].append(rng.choice(COLORS))
-        return board
-    if mistake == MISSING:
-        # Placed the cube but knocked an older one off the grid.
-        board = apply_step(before, step)
-        knockable = [c for c in CELLS if c != step.cell and board[c]]
-        if not knockable:
-            return None
-        board[rng.choice(knockable)].pop()
+        board[rng.choice(options)].append(step.color)
         return board
     raise ValueError(f"not a mistake: {mistake}")
 

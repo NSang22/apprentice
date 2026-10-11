@@ -23,9 +23,10 @@ def test_report_keeps_provenance_apart(tmp_path):
 
     assert set(report) == {
         "schema_version", "generated_at", "sessions", "included_provenances", "never_started", "skipped_lines",
-        "bad_lesson_files", "lessons_not_found", "contains_synthetic_data", "contains_simulation_data",
+        "bad_lesson_files", "lessons_not_found", "lesson_mismatch", "contains_synthetic_data", "contains_simulation_data",
         "contains_unverified_data", "by_provenance", "robot_trials"}
     assert report["sessions"] == {"real": 0, "unverified": 0, "simulation": 2, "synthetic": 16}
+    assert report["lesson_mismatch"] == []
     assert set(report["by_provenance"]) == {"real", "simulation", "unverified"}  # synthetic left out by default
     real = report["by_provenance"]["real"]
     assert (real["sessions"], real["attempts"], real["judge_facing"]) == (0, 0, True)

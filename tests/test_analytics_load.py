@@ -59,9 +59,15 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
     # Synthetic journals are written by the real brain too, and add a robot place that fails.
     lesson = Lesson.from_dict(json.loads(DEMO_LESSON.read_text()))
     write_journals(generate(lesson, seed=7), sessions)
+    # Recorded before sample-flat-v1 went from 5 steps to 6 under the same id: listed, in no table.
+    (sessions / "s-old.jsonl").write_text(
+        '{"t":2.0,"session":"s-old","mode":"human","kind":"session_start","data":{"lesson_id":"sample-flat-v1","steps":5}}\n'
+        '{"t":3.0,"session":"s-old","mode":"human","kind":"verdict","data":{"step":0,"verdict":"PASS"}}\n')
 
     t = load_all(sessions, DEFAULT_LESSON_DIRS)
 
+    assert [(m.session, m.recorded_steps, m.lesson_steps) for m in t.lesson_mismatches] == [("s-old", 5, 6)]
+    assert "s-old" not in {s.session for s in t.sessions} | {a.session for a in t.attempts}
     assert t.never_started == 1
     assert t.skipped_lines == 2  # our cut line plus the generator's one cut-off session
     assert t.unknown_lessons == []
