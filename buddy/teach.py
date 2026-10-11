@@ -40,6 +40,7 @@ MAX_HIGH = 2               # blocks per stack in this game
 BANK_SIZE = 2              # blocks the robot's bank beside the sheet holds at a time
 VIDEO_FPS = 8.0
 VIDEO_WIDTH = 1280        # the extractor finds the 4 tags in this video, so not too small
+EXTRACT_EXT = ".avi"      # MJPG at a fixed rate: what the extractor reads (VideoRecorder)
 VIDEO_EXT, VIDEO_FOURCC = ".webm", "VP80"
 FRAME_URL = "http://127.0.0.1:8771/frame"
 LESSONS_DIR = REPO_ROOT / "data" / "buddy" / "lessons"
@@ -87,14 +88,25 @@ def kid_problem(reasons: dict[str, str]) -> str:
 
 
 class VideoRecorder:
-    """Saves the camera's frames (perception's frame server, which owns the webcam) as a WebM video."""
+    """The camera's frames (perception's frame server, which owns the webcam) at a fixed VIDEO_FPS,
+    as MJPG in an AVI for the extractor.
+
+    One thread fetches frames as fast as the frame server gives them; another writes the newest one
+    every 1/VIDEO_FPS seconds, repeating it when the next is late, so the video's clock is the real
+    clock. (Encoding WebM while recording managed about 2 frames a second at 1280 px on the Jetson:
+    a 43 s build came out as a 12 s video and the extractor saw too few clear frames.) MJPG costs one
+    JPEG per frame. The WebM with sound for playback is made afterwards (make_playback)."""
 
     def __init__(self, path: Path, url: str = FRAME_URL, fps: float = VIDEO_FPS, width: int = VIDEO_WIDTH):
         self.path, self.url, self.fps, self.width = path, url, fps, width
-        self.frames = 0
+        self.frames = 0                   # written (including repeats)
+        self.fetched = 0                  # distinct frames from the camera
+        self.started = 0.0
         self.error: Optional[str] = None
+        self._latest = None
+        self._lock = threading.Lock()
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._threads: list[threading.Thread] = []
 
     def _grab(self):
         import numpy as np
@@ -102,36 +114,74 @@ class VideoRecorder:
             shape = tuple(int(v) for v in r.headers["X-Shape"].split(","))
             return np.frombuffer(r.read(), np.uint8).reshape(shape)
 
-    def _run(self) -> None:
+    def _fetch(self) -> None:
+        import cv2
+        while not self._stop.is_set():
+            try:
+                frame = self._grab()
+            except Exception as e:
+                self.error = str(e)
+                self._stop.wait(0.2)
+                continue
+            h, w = frame.shape[:2]
+            small = cv2.resize(frame, (self.width, int(h * self.width / w)), interpolation=cv2.INTER_AREA)
+            with self._lock:
+                self._latest = small
+                self.fetched += 1
+
+    def _write(self) -> None:
         import cv2
         writer = None
         try:
             while not self._stop.is_set():
-                started = time.monotonic()
-                frame = self._grab()
-                h, w = frame.shape[:2]
-                size = (self.width, int(h * self.width / w))
+                with self._lock:
+                    frame = self._latest
+                if frame is None:
+                    self._stop.wait(0.05)
+                    continue
                 if writer is None:
                     self.path.parent.mkdir(parents=True, exist_ok=True)
-                    writer = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*VIDEO_FOURCC), self.fps, size)
-                writer.write(cv2.resize(frame, size, interpolation=cv2.INTER_AREA))
-                self.frames += 1
-                self._stop.wait(max(0.0, 1.0 / self.fps - (time.monotonic() - started)))
-        except Exception as e:  # no video is not a reason to lose the lesson
+                    writer = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*"MJPG"), self.fps,
+                                             (frame.shape[1], frame.shape[0]))
+                    self.started = time.monotonic()
+                due = int((time.monotonic() - self.started) * self.fps) + 1
+                while self.frames < due:          # catch up with the clock (repeats the newest frame)
+                    writer.write(frame)
+                    self.frames += 1
+                self._stop.wait(max(0.0, self.started + self.frames / self.fps - time.monotonic()))
+        except Exception as e:
             self.error = str(e)
         finally:
             if writer is not None:
                 writer.release()
 
     def start(self) -> None:
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
+        self._threads = [threading.Thread(target=self._fetch, daemon=True), threading.Thread(target=self._write, daemon=True)]
+        for t in self._threads:
+            t.start()
 
     def stop(self) -> Optional[Path]:
         self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=3)
+        for t in self._threads:
+            t.join(timeout=3)
         return self.path if self.frames else None
+
+
+def make_playback(video: Path, audio: Optional[Path], out: Path, width: int = 640) -> bool:
+    """The recording as WebM (VP8, plus the narration as Opus) that phones play, with GStreamer.
+    Small and fast settings: it runs while Pip thinks, next to the extractor."""
+    import subprocess
+    cmd = ["gst-launch-1.0", "-q", "-e", "webmmux", "name=m", "!", "filesink", f"location={out}",
+           "filesrc", f"location={video}", "!", "avidemux", "!", "jpegdec", "!", "videoconvert", "!", "videoscale", "!",
+           f"video/x-raw,width={width},height={width * 9 // 16}", "!", "vp8enc", "deadline=1", "cpu-used=8",
+           "target-bitrate=1500000", "!", "queue", "!", "m."]
+    if audio:
+        cmd += ["filesrc", f"location={audio}", "!", "oggdemux", "!", "opusparse", "!", "queue", "!", "m."]
+    try:
+        subprocess.run(cmd, timeout=180, capture_output=True)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.is_file() and out.stat().st_size > 10000
 
 
 MIC = "hw:CARD=Camera,DEV=0"   # the overhead webcam's own microphone (arecord -l: card "Camera")
@@ -201,7 +251,8 @@ def _align(said: list[str], seen: list[str]) -> list[tuple[int, int]]:
     """Longest common subsequence of two color lists: (spoken index, step index) pairs, in order.
     A near-miss color ("light blue" for teal) counts too, but an exact color wins a tie."""
     def score(a, b):
-        return 2 if a == b else 1 if SAID_LIKE.get(a) == b else 0
+        # a step whose color nobody could read lines up with any spoken color (speech then names it)
+        return 2 if a == b else 1 if SAID_LIKE.get(a) == b or b == UNKNOWN else 0
     n, m = len(said), len(seen)
     best = [[0] * (m + 1) for _ in range(n + 1)]
     for i in range(n - 1, -1, -1):
@@ -261,6 +312,23 @@ def check_narration(steps: list, placements: list[dict]) -> dict:
             "unheard": [f[0] for f in unheard], "spoken": len(spoken), "steps": len(fields)}
 
 
+def speech_colors(steps: list, placements: list[dict]) -> dict[int, str]:
+    """{step number (1-based): spoken color} for the steps whose color nobody could read, lined up
+    with what was said, in order (narration is the ground truth people give naturally). A spoken
+    color already used by another step is not given twice."""
+    spoken = [p for p in placements if isinstance(p, dict) and p.get("action", "place") == "place"
+              and p.get("color") in COLORS]
+    fields = [_step_fields(s) for s in steps]
+    used = {f[0] for f in fields if f[0] in COLORS}
+    out = {}
+    for i, j in _align([p["color"] for p in spoken], [f[0] for f in fields]):
+        color = spoken[i]["color"]
+        if fields[j][0] == UNKNOWN and color not in used:
+            out[j + 1] = color
+            used.add(color)
+    return out
+
+
 # ---------------------------------------------------------------- learning (the extractor)
 
 
@@ -282,7 +350,8 @@ def rebase(frames: list[dict]) -> list[GridState]:
 
 def learn(frames: list[dict], lesson_id: str, title: str, source_video: Optional[str],
           final_tops: Optional[dict[str, str]] = None,
-          stage: Callable[[str, float], None] = lambda name, frac: None) -> dict:
+          stage: Callable[[str, float], None] = lambda name, frac: None,
+          spoken: Optional[list[dict]] = None) -> dict:
     """Recording -> lesson, through brain/extractor.py exactly as its own command line runs it.
 
     final_tops: the robot eyes' color of each cell's top block at the end; it names those steps
@@ -327,6 +396,9 @@ def learn(frames: list[dict], lesson_id: str, title: str, source_video: Optional
             if c.level == top_level[c.cell] and color in COLORS:
                 manual[i + 1] = color
     rows = ext.step_rows(ex, manual)
+    if spoken and any(r.color == UNKNOWN for r in rows):   # what was said names what nobody could read
+        manual.update(speech_colors([{"color": r.color, "cell": r.cell, "level": r.level} for r in rows], spoken))
+        rows = ext.step_rows(ex, manual)
     stage("squint", 1.0)
     if any(r.color == UNKNOWN for r in rows):
         return {"ok": False, "problem": PROBLEMS["unknown_color"],
@@ -350,7 +422,8 @@ EXTRACT_MILESTONES = [("sampling", "flummox"), ("hand band", "count"), ("] model
 
 
 def learn_video(video: Path, repo: Path, title: str, video_s: float,
-                stage: Callable[[str, float], None] = lambda name, frac: None, log: Callable[[str], None] = print) -> dict:
+                stage: Callable[[str, float], None] = lambda name, frac: None, log: Callable[[str], None] = print,
+                colors_file: Optional[list[dict]] = None) -> dict:
     """The recording's video -> lesson with the team's extractor on the video itself
     (python -m brain.extractor --video, 5 frames a second by default), run in `repo` (the main
     checkout) so it uses the calibration, robot colour memory and OpenAI key everything else uses.
@@ -366,11 +439,15 @@ def learn_video(video: Path, repo: Path, title: str, video_s: float,
 
     work = LESSONS_DIR / "_work"
     work.mkdir(parents=True, exist_ok=True)
-    out = work / f"{video.stem}.json"
+    out = work / f"{video.stem}{'-said' if colors_file else ''}.json"
     # the colors in play and the block size, as scripts/jetson_up.sh runs perception: the extractor's
     # default is every shared color, which the 4-color calibration refuses (exit code 2)
     cmd = [sys.executable, "-u", "-m", "brain.extractor", "--video", str(video.resolve()), "--out", str(out),
            "--title", title, "--colors", ",".join(calibrated_colors(repo)), "--block-mm", os.environ.get("BLOCK_MM", "47")]
+    if colors_file:   # step colors from the narration, for steps no source could read
+        cf = work / f"{video.stem}-said-colors.json"
+        cf.write_text(json.dumps(colors_file), encoding="utf-8")
+        cmd += ["--colors-file", str(cf)]
     extractor_src = (repo / "brain" / "extractor.py").read_text(encoding="utf-8", errors="ignore")
     if "--no-gemini" in extractor_src:  # an older main checkout: never call Gemini (the project uses OpenAI)
         cmd.append("--no-gemini")
@@ -404,7 +481,7 @@ def learn_video(video: Path, repo: Path, title: str, video_s: float,
     code = proc.wait()
     log(f"[teach] extractor exit code {code}")
     trace.update({"exit_code": code, "seconds": round(time.monotonic() - started, 1)})
-    extract_files = sorted((work / "extract").glob(f"{video.stem}*.json"), key=lambda p: p.stat().st_mtime)
+    extract_files = sorted((work / "extract").glob(f"{out.stem}*.json"), key=lambda p: p.stat().st_mtime)
     details = json.loads(extract_files[-1].read_text(encoding="utf-8")) if extract_files else {}
     reasons = (details.get("gate") or {}).get("reasons") or {}
     trace["report"] = report(details) if details else None

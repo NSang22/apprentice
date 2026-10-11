@@ -343,7 +343,7 @@ function footer(key, html) {
 }
 
 function renderGame() {
-  const ph = S.phase, rec = ph === "recording";
+  const ph = S.phase, rec = ph === "recording" || ph === "finishing";
   $("pip").dataset.mood = S.mood; $("say").textContent = S.say;
   $("rec").style.visibility = rec ? "visible" : "hidden";
   $("rec-row").style.display = rec ? "flex" : "none";
@@ -351,9 +351,10 @@ function renderGame() {
   if (ph === "bank") $("bank").innerHTML = S.bank.map(sw).join("");
   $("bar").style.width = building() ? `${(S.build.i / Math.max(1, S.build.total)) * 100}%` : rec ? `${(1 - S.record_left / S.record_s) * 100}%` : "0%";
   renderGrid(); renderPalette();
-  if (rec) footer("rec" + (S.source === "practice"), S.source === "practice"
+  if (ph === "recording") footer("rec" + (S.source === "practice"), S.source === "practice"
       ? `<div class="row"><button class="btn ghost" id="f-undo" style="flex:1">Undo</button><button class="btn red" id="f-done" style="flex:2">I'm done!</button></div>`
       : `<button class="btn red" id="f-done">I'm done!</button>`);
+  else if (ph === "finishing") footer("finishing", `<button class="btn" disabled>Hands away! Taking one last look...</button>`);
   else if (ph === "bank") footer("bank", `<button class="btn orange" id="f-ready">Ready!</button>`);
   else if (ph === "bank_check") footer("bank_check", `<button class="btn" disabled>Pip is looking in the bank...</button>`);
   else if (ph === "build_fix") footer("fix", `<button class="btn" id="f-ready">${S.pip.arm ? "Fixed it!" : "Done"}</button>`);

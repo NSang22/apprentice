@@ -4,6 +4,8 @@ Phases:
   home        the intro and the child's saved lessons
   clear       (table) waiting for an empty board, before recording or before a rebuild
   recording   the child builds while Pip watches: at most RECORD_S seconds, or "I'm done!"
+  finishing   (table) "Hands away!": recording goes on until the board is clear for FINISH_CLEAR_S
+              (at most FINISH_MAX_S), so the extractor always has a clear last frame
   processing  Pip turns the recording into steps; the phone shows a fun stage name and a bar
   problem     the gate (or the rules) refused it: a kind line and "Teach it again"
   review      the steps Pip learned; the child names the lesson and saves it
@@ -32,6 +34,8 @@ from buddy.scanner import Scanner
 from buddy.session import SESSIONS_DIR, Profile, default_colors, empty_board
 from buddy.table import Pip, RobotEyes, TableBoard, missing_from_bank
 
+FINISH_CLEAR_S = 1.5       # "I'm done!": the board must be clear this long before recording stops
+FINISH_MAX_S = 8.0         # ... but never wait longer than this
 MIN_STAGE_S = 0.9          # each fun stage name stays up at least this long, so a child can read it
 PRACTICE_PLACE_S = 1.5     # practice rebuild: one block appears this often
 
@@ -71,6 +75,9 @@ class TeachSession:
         self.bank_result: Optional[dict] = None
         self.place_retried = False
         self.place_fails = 0                 # failed places on the current rebuild step
+        self.finish_started = 0.0
+        self.clear_since: Optional[float] = None
+        self.extract_video = None            # the MJPG the extractor read (renamed with the lesson)
         self.mood, self.say = "happy", ""
 
     @property
@@ -108,7 +115,7 @@ class TeachSession:
                     if self.source == "table" else "I'm watching! Pick a color and tap squares to build. Towers can be 2 high.")
         if self.source == "table":
             self.table.record_start()
-            self.recorder = teach.VideoRecorder(teach.VIDEOS_DIR / f"{self.session_id}_silent{teach.VIDEO_EXT}")
+            self.recorder = teach.VideoRecorder(teach.VIDEOS_DIR / f"{self.session_id}{teach.EXTRACT_EXT}")
             self.recorder.start()
             self.audio = teach.AudioRecorder(teach.VIDEOS_DIR / f"{self.session_id}.ogg")
             self.audio.start()
@@ -134,7 +141,15 @@ class TeachSession:
     def done_teaching(self) -> None:
         with self.lock:
             if self.phase == "recording":
-                self._process()
+                self._finish_recording()
+
+    def _finish_recording(self) -> None:
+        if self.source != "table":
+            self._process()
+            return
+        self.phase, self.mood = "finishing", "look"
+        self.finish_started, self.clear_since = self.clock(), None
+        self.say = "Hands away from the board! Taking one last look..."
 
     def _process(self) -> None:
         self.phase, self.mood, self.say = "processing", "think", "Hmm, let me think about what you taught me..."
@@ -181,7 +196,8 @@ class TeachSession:
             silent = recorder.stop() if recorder else None
             if recorder:
                 self._trace("video", "Video", "ok" if silent else "fail",
-                            f"{recorder.frames} frames at {teach.VIDEO_FPS:g} fps, {teach.VIDEO_WIDTH} px wide"
+                            f"{recorder.frames} frames at {teach.VIDEO_FPS:g} fps ({recorder.fetched} new from the camera), "
+                            f"{teach.VIDEO_WIDTH} px wide"
                             if silent else f"no video: {recorder.error or 'no frames from the frame server'}",
                             time.monotonic() - t, {"file": str(silent) if silent else None, "error": recorder.error,
                                                     "bytes": silent.stat().st_size if silent else 0})
@@ -192,15 +208,19 @@ class TeachSession:
                             f"{sound.stat().st_size // 1024} KB of sound" if sound else f"no sound: {audio.error or 'silent'}",
                             time.monotonic() - t, {"file": str(sound) if sound else None, "device": audio.device,
                                                     "error": audio.error})
-            video = silent
-            if silent and sound:  # one WebM with the narration, for playback and the record
-                t = time.monotonic()
-                joined = silent.with_name(silent.name.replace("_silent", ""))
-                ok = teach.mux(silent, sound, joined)
-                video = joined if ok else silent
-                self._trace("join", "Video + sound", "ok" if ok else "warn",
-                            "joined into one WebM" if ok else "could not join; the video has no sound",
-                            time.monotonic() - t, {"file": str(video)})
+            video = silent            # the extractor reads the fixed-rate MJPG
+            playback = {}
+            if silent:                # the WebM with sound for the phone, made while Pip thinks
+                target = silent.with_suffix(teach.VIDEO_EXT)
+
+                def make():
+                    t = time.monotonic()
+                    ok = teach.make_playback(silent, sound, target)
+                    playback.update(ok=ok, seconds=time.monotonic() - t, file=target if ok else None)
+                maker = threading.Thread(target=make, daemon=True)
+                maker.start()
+            else:
+                maker = None
             listener, t_listen = None, time.monotonic()
             if self.source == "table" and sound:
                 # OpenAI transcribes the narration while the extractor works on the video
@@ -229,6 +249,26 @@ class TeachSession:
                             time.monotonic() - t, {"command": tr.get("command"), "cwd": tr.get("cwd"),
                                                     "output": tr.get("lines"), "exit_code": code})
                 rep = tr.get("report")
+                if result.get("ok") is False and "unknown_color" in (result.get("reasons") or {}) and listener:
+                    # a step no source could read: what was said names it (the extractor's colors file)
+                    listener.join(timeout=60)
+                    named = teach.speech_colors((rep or {}).get("steps") or [], heard.get("placements", [])) if heard.get("ok") else {}
+                    steps_by_n = {st["step"]: st for st in (rep or {}).get("steps") or []}
+                    entries = [{"step": n, "cell": steps_by_n[n]["cell"], "color": c} for n, c in named.items() if n in steps_by_n]
+                    if entries:
+                        t = time.monotonic()
+                        again = teach.learn_video(video, self.eyes.repo, title, video_s, stage=self._set_stage,
+                                                  log=lambda line: None, colors_file=entries)
+                        tr2 = again.get("trace") or {}
+                        self._trace("extractor_said", "Extractor again, with colors from what you said",
+                                    "ok" if again.get("ok") else "fail",
+                                    ", ".join(f"step {e['step']} {e['color']}" for e in entries) + ": " +
+                                    (f"{len(again['steps'])} steps" if again.get("ok") else
+                                     ", ".join(again.get("reasons") or {}) or again.get("error", "no answer")),
+                                    time.monotonic() - t, {"colors_file": entries, "output": tr2.get("lines"),
+                                                            "exit_code": tr2.get("exit_code")})
+                        if again.get("ok") is not None:
+                            result, rep = again, tr2.get("report") or rep
                 if rep:
                     gate = rep.get("gate") or {}
                     self._trace("gate", "Gate checks", "ok" if gate.get("passed") else "fail",
@@ -246,8 +286,11 @@ class TeachSession:
                 self._trace("eyes", "Robot's eyes on the final board", "ok" if res.get("ok") else "warn",
                             ", ".join(f"{c} {col}" for c, col in (tops or {}).items()) or res.get("error", "nothing on the grid"),
                             time.monotonic() - t, res)
+                if listener is not None:   # speech can name a step no camera read
+                    listener.join(timeout=60)
                 t = time.monotonic()
-                result = teach.learn(frames, self.session_id, title, source_video, tops, stage=self._set_stage)
+                result = teach.learn(frames, self.session_id, title, source_video, tops, stage=self._set_stage,
+                                     spoken=heard.get("placements") if heard.get("ok") else None)
                 self._trace("fallback", "Extractor on the live camera boards", "ok" if result["ok"] else "fail",
                             f"{len(result['steps'])} steps" if result["ok"] else
                             "; ".join(f"{k}: {v}" for k, v in (result.get("reasons") or {}).items()),
@@ -257,6 +300,11 @@ class TeachSession:
                 for name, _ in teach.STAGES[:4]:
                     self._set_stage(name, 1.0)
                 result = teach.learn_taps(taps, self.session_id, title)
+            if maker is not None:
+                maker.join(timeout=180)
+                self._trace("playback", "Video with sound for the phone", "ok" if playback.get("ok") else "warn",
+                            "WebM ready" if playback.get("ok") else "could not make the WebM; the lesson has no playable video",
+                            playback.get("seconds"), {"file": str(playback.get("file")) if playback.get("file") else None})
             if listener is not None:
                 listener.join(timeout=60)
                 ok = heard.get("ok")
@@ -289,7 +337,8 @@ class TeachSession:
             result = {"ok": False, "problem": teach.DEFAULT_PROBLEM, "reasons": {"error": f"{type(e).__name__}: {e}"}}
             self._trace("crash", "Crash", "fail", f"{type(e).__name__}: {e}", details=traceback.format_exc())
         with self.lock:
-            self.video_path = video
+            self.extract_video = video
+            self.video_path = playback.get("file") if "playback" in locals() else None
             self.audio_path = sound
             self.heard = {k: heard.get(k) for k in ("ok", "transcript", "notes", "matched", "error")} if heard else {}
             self._trace("result", "Result", "ok" if result["ok"] else "fail",
@@ -316,6 +365,8 @@ class TeachSession:
                 self.video_path.rename(target)
                 self.video_path = target
                 self.lesson.source_video = str(target.relative_to(teach.REPO_ROOT)).replace("\\", "/")
+            if self.extract_video and self.extract_video.exists():
+                self.extract_video.rename(self.extract_video.with_name(f"{self.lesson.lesson_id}{teach.EXTRACT_EXT}"))
             if self.audio_path and self.audio_path.exists():
                 target = self.audio_path.with_name(f"{self.lesson.lesson_id}.ogg")
                 self.audio_path.rename(target)
@@ -449,7 +500,16 @@ class TeachSession:
                 if stable is not None and recall.block_count(stable) == 0 and self.table.hands_away():
                     self._record() if self.after_clear == "record" else self._bank_or_place()
             elif self.phase == "recording" and now - self.record_started >= teach.RECORD_S:
-                self._process()
+                self._finish_recording()
+            elif self.phase == "finishing":
+                if self.table.hands_away():
+                    self.clear_since = self.clear_since or now
+                else:
+                    self.clear_since = None
+                clear_long_enough = self.clear_since is not None and now - self.clear_since >= FINISH_CLEAR_S
+                if clear_long_enough or now - self.finish_started >= FINISH_MAX_S:
+                    self._log("finish", {"clear": clear_long_enough, "waited_s": round(now - self.finish_started, 1)})
+                    self._process()
             elif self.phase == "building":
                 if not self.arm_used:
                     if now >= self.until:  # practice: the block appears
