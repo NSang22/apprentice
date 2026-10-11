@@ -736,7 +736,6 @@ export function createView3D(container, options = {}) {
     }
     for (const g of glows) g.material.opacity = 0.5 + 0.25 * (0.5 + 0.5 * Math.sin(t * 2.4));
     if (arrow) arrow.userData.tex.offset.x -= dt * 1.4;
-    const still = reducedMotion();
     let settling = false;   // a hologram still dropping in
     for (const h of holos.values()) {
       const f = (now - h.born) / (still ? HOLO_FADE_MS : HOLO_DROP_MS);
