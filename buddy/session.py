@@ -37,9 +37,8 @@ NAME_MAX = 16
 
 GAMES = [
     {"id": "recall", "title": "Picture Recall", "desc": "Look, remember, build it!", "ready": True},
-    {"id": "simon", "title": "Robot Simon", "desc": "Follow the robot's pointing", "ready": False},
-    {"id": "change", "title": "Spot the Change", "desc": "What did the robot move?", "ready": False},
-    {"id": "mirror", "title": "Mirror Me", "desc": "Build the other half", "ready": False},
+    {"id": "turns", "title": "Take Turns", "desc": "Build it together with Pip", "ready": False},
+    {"id": "teach", "title": "Teach the Robot", "desc": "You build, Pip learns", "ready": False},
 ]
 
 
