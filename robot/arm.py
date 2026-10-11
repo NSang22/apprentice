@@ -6,10 +6,34 @@
 - After a move, a short outer loop can correct gravity sag on the shoulder, elbow and wrist.
 """
 
+import logging
 import time
 
 import numpy as np
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+
+
+class _OncePerFewSeconds(logging.Filter):
+    """LeRobot warns on every 20 ms command it clamps; when the gripper closes on a block that
+    is ~100 lines a second (run 19:42). Let one through every few seconds."""
+
+    def __init__(self, seconds=5.0):
+        super().__init__()
+        self.seconds, self.last = seconds, 0.0
+
+    def filter(self, record):
+        if "clamped" not in record.getMessage():
+            return True
+        now = time.monotonic()
+        if now - self.last < self.seconds:
+            return False
+        self.last = now
+        return True
+
+
+logging.getLogger("lerobot.robots.utils").addFilter(_OncePerFewSeconds())
+
+READ_RETRIES = 3  # a garbled status packet on the servo bus is usually a one-off (run 20:37 died on one)
 
 PORT = "COM7"
 ROBOT_ID = "my_follower"
@@ -49,9 +73,9 @@ class Arm:
 
     def enable(self):
         """Hold the arm where it is right now."""
-        present = self.robot.bus.sync_read("Present_Position")
+        present = self.robot.bus.sync_read("Present_Position", num_retry=READ_RETRIES)
         self.robot.bus.sync_write("Goal_Position", present)
-        goal = self.robot.bus.sync_read("Goal_Position")
+        goal = self.robot.bus.sync_read("Goal_Position", num_retry=READ_RETRIES)
         worst = max(abs(goal[m] - present[m]) for m in present)
         if worst > 2.0:
             raise RuntimeError(f"Goal/present mismatch {worst:.1f} deg after sync; not enabling torque")
@@ -67,7 +91,7 @@ class Arm:
 
     # -- state ------------------------------------------------------------
     def read(self):
-        return self.robot.bus.sync_read("Present_Position")
+        return self.robot.bus.sync_read("Present_Position", num_retry=READ_RETRIES)
 
     # -- motion -----------------------------------------------------------
     def move_to(self, target, speed_deg_s=None, fix_sag=True):
