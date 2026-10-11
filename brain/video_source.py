@@ -26,7 +26,8 @@ board back while it runs, and nothing here may change the team's calibration.
 For each settled board the 9 cells of that frame are cropped (on_settle), so save_pictures()
 can write one picture per step.
 
-With a robot color memory (--color-memory, robot/perception/color.py's ColorMemory file), each
+With a robot color memory (--color-memory, or robot/outputs/color_memory.json when that exists;
+robot/perception/color.py's ColorMemory file), each
 settled frame is also named the way the robot names blocks (robot/perception/scene.build_scene):
 segment.detect blobs, then ColorNamer.name with the vision model off. Each blob goes to the cell
 under its centre at half a block's height, as the robot places blobs (pose.to_sheet, then
@@ -157,6 +158,8 @@ class VideoSource:
         self._crops: dict[int, dict[str, np.ndarray]] = {}
         self._robot_reads: dict[int, dict[str, str]] = {}
         self._robot_active = robot_naming.ACTIVE_COLORS
+        if color_memory is None and robot_color.MEMORY_FILE.is_file():
+            color_memory = robot_color.MEMORY_FILE  # the robot's own file, read only
         self.namer = None if color_memory is None else self._robot_namer(Path(color_memory))
 
     def _robot_namer(self, path: Path) -> Any:

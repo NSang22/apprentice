@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from brain.extractor import (ColorsFileError, FlatLog, build_lesson, extract, flat_frames, gate_lesson, manual_colors,
-                             script_frames, split_transients, step_rows, write_outputs)
+from brain.extractor import (ColorsFileError, build_lesson, extract, gate_lesson, manual_colors, script_frames,
+                             split_transients, step_rows, write_outputs)
 from brain.fake_feed import HZ, make_frame, parse_script
 from brain.journal import Journal, read_journal
 from brain.session import COMPLETE, Session
@@ -45,12 +45,12 @@ def failed(gate):
     return [c.name for c in gate.gate.checks if not c.passed]
 
 
-def test_clean_build_gives_steps_in_order():
+def test_staircase_gives_stacked_steps_from_history():
     _, _, lesson, gate = lesson_from(script_frames(SCRIPTS / "staircase_clean.json"))
-    assert placed(lesson) == placed(STAIRCASE)
+    assert placed(lesson) == placed(STAIRCASE)   # levels 0, 1 and 2, no flag
     times = [s.t_video for s in lesson.steps]
     assert times == sorted(times) and times[0] > 0
-    assert gate.gate.passed, gate.reasons
+    assert failed(gate) == ["one_cube_per_color"]   # the staircase uses two skyblue and two red
 
 
 def test_expert_correction_leaves_one_step():
@@ -58,7 +58,7 @@ def test_expert_correction_leaves_one_step():
     ex, _, lesson, gate = lesson_from(script_frames(SCRIPTS / "staircase_with_mistake.json"))
     assert placed(lesson) == placed(STAIRCASE)
     assert [(c.cell, c.level) for c in ex.removed] == [("C2", 0)]
-    assert gate.gate.passed, gate.reasons
+    assert failed(gate) == ["one_cube_per_color"]
 
 
 def test_two_cubes_at_once_fails_one_cube_check():
@@ -91,7 +91,7 @@ def test_hands_and_jitter_produce_no_steps():
 def test_round_trip_lesson_teaches_what_was_shown(tmp_path):
     frames = script_frames(SCRIPTS / "staircase_clean.json")
     _, _, lesson, gate = lesson_from(frames)
-    assert gate.gate.passed
+    assert failed(gate) == ["one_cube_per_color"]
     lesson = Lesson.from_dict(lesson.to_dict())
     journal = Journal("s-roundtrip", "human", directory=tmp_path, clock=lambda: 0.0)
     session = Session(lesson, "human", journal, sleep=lambda s: None)
@@ -132,24 +132,37 @@ def test_colors_file_fills_unknown_and_gate_passes(tmp_path):
 
 
 def test_trust_order_manual_then_robot_memory_then_camera():
-    ex = extract(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "B2": ["unknown"]}),
-                            seg({"A1": ["red"], "B2": ["unknown"], "C3": ["yellow"]})]))
     robot = {"A1": "unknown", "B2": "orange", "C3": "purple"}   # the robot memory read per cell
-    rows = step_rows(ex, {3: "teal"}, lambda frame_id, cell: robot[cell])
+    ex = extract(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "B2": ["unknown"]}),
+                            seg({"A1": ["red"], "B2": ["unknown"], "C3": ["yellow"]})]),
+                 robot_read=lambda frame_id, cell: robot[cell])
+    rows = step_rows(ex, {3: "teal"})
     assert [(r.color, r.source) for r in rows] == [("red", "camera"), ("orange", "robot_memory"), ("teal", "manual")]
     assert [(r.camera_color, r.robot_color, r.manual_color) for r in rows] == [
         ("red", "unknown", None), ("unknown", "orange", None), ("yellow", "purple", "teal")]
 
 
-def test_flat_mode_reads_a_tall_cell_as_one_block():
-    segments = [seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "C1": ["unknown", "yellow"]})]  # C1 misread 2-high
-    _, _, lesson, gate = lesson_from(frames_of(segments))
-    assert placed(lesson) == [("red", "A1", 0), ("unknown", "C1", 0), ("yellow", "C1", 1)]   # as before, no --flat
-    log = FlatLog()
-    _, _, lesson, gate = lesson_from(flat_frames(frames_of(segments), log))
+def test_single_cube_the_camera_reads_two_high_stays_level_0():
+    # the C1 case from expert_take1: perception says two high, sometimes one; one cube was placed
+    _, _, lesson, gate = lesson_from(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "C1": ["unknown", "yellow"]}),
+                                                seg({"A1": ["red"], "C1": ["yellow"]}),
+                                                seg({"A1": ["red"], "C1": ["yellow", "yellow"]})]))
     assert placed(lesson) == [("red", "A1", 0), ("yellow", "C1", 0)]
     assert gate.gate.passed, gate.reasons
-    assert [(r["cell"], r["perception_said"], r["t_first"]) for r in log.runs] == [("C1", ["unknown", "yellow"], 3.0)]
+
+
+def test_cube_put_on_a_stack_and_taken_off_is_a_correction():
+    ex, _, lesson, gate = lesson_from(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["red", "purple"]}),
+                                                 seg({"A1": ["red", "purple", "teal"]}), seg({"A1": ["red", "purple"]})]))
+    assert placed(lesson) == [("red", "A1", 0), ("purple", "A1", 1)]
+    assert [(c.color(), c.cell, c.level) for c in ex.removed] == [("teal", "A1", 2)]
+    assert gate.gate.passed, gate.reasons
+
+
+def test_two_cubes_of_one_color_fail_one_cube_per_color():
+    _, _, lesson, gate = lesson_from(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "C3": ["red"]})]))
+    assert placed(lesson) == [("red", "A1", 0), ("red", "C3", 0)]
+    assert failed(gate) == ["one_cube_per_color"]
 
 
 def test_object_with_no_known_color_that_leaves_is_a_transient():
