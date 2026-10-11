@@ -315,6 +315,10 @@ python ui/serve.py      # then open http://localhost:8000 and press F11; keys 2 
 # Robot module on its own (LeRobot venv, see robot/README.md and docs/SETUP_NOTES.md)
 python -m robot.scripts.tests.scene_snapshot robot/samples/overhead_02.png   # offline, no hardware
 python -m robot.scripts.tests.pick_place_test red_cube B2                     # moves the arm
+
+# Analytics (offline, standard library only)
+python -m analytics.fake_journal --seed 7   # synthetic_*.jsonl journals in data/sessions/, written by the real brain; --lesson picks the lesson
+python -m analytics.report --sessions data/sessions --out data/analytics/metrics.json   # every metric, per provenance; add --tasks robot/outputs/tasks, --include-synthetic
 ```
 
 Planned, not built yet:
