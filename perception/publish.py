@@ -42,13 +42,11 @@ from websockets.asyncio.server import ServerConnection, broadcast, serve
 
 from perception import camera_controls
 from perception.cells import cell_center_mm, grid_geometry, tag_corner_cells
-from perception.blocks import Block
-from perception.change import sheet_to_image
 from perception.colors import CALIB_PATH, load_calibration, parse_colors
 from perception.robot_bridge import default_active_colors, set_block_mm
 from perception.perceive import FrameResult, Perceiver
 from robot.perception.sheet import SheetLocalizer, SheetPose
-from shared.config import GRID_WS_PORT, MIN_CONFIDENCE, UNKNOWN
+from shared.config import GRID_WS_PORT, MIN_CONFIDENCE
 
 HZ = 10.0
 MIN_TAGS = 3     # --list-cameras: a camera that sees this many tags is pointed at the sheet
@@ -65,14 +63,12 @@ def _text(img: np.ndarray, text: str, org: tuple[int, int], scale: float = 0.7, 
     cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2, cv2.LINE_AA)
 
 
-def block_label(block: Block, confidence: dict[str, float]) -> str:
-    """"B2 teal 0.93", with a "?" when the published confidence is below MIN_CONFIDENCE, so the
-    Jetson window says what the brain will see (the brain treats that cell as unknown)."""
-    if block.cell is None:
-        return f"off-grid {block.color}"
-    conf = confidence.get(block.cell, 0.0)
-    unsure = "?" if conf < MIN_CONFIDENCE or block.color == UNKNOWN else ""
-    return f"{block.cell} {block.color}{unsure} {conf:.2f}"
+def cell_label(cell: str, stack: list[str], confidence: dict[str, float]) -> str:
+    """"B2 L2 [red, teal] 0.93": cell, stack height, colors bottom to top, published confidence
+    (a "?" when it is below MIN_CONFIDENCE: the brain will read the cell as unknown)."""
+    conf = confidence.get(cell, 0.0)
+    unsure = "?" if conf < MIN_CONFIDENCE else ""
+    return f"{cell} L{len(stack)} [{', '.join(stack)}]{unsure} {conf:.2f}"
 
 
 def _polyline(img: np.ndarray, pts_px: np.ndarray, color, thickness: int) -> np.ndarray:
@@ -82,10 +78,11 @@ def _polyline(img: np.ndarray, pts_px: np.ndarray, color, thickness: int) -> np.
 
 
 def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note: str = "",
-             speed: str = "") -> np.ndarray:
-    """Camera frame with the grid, changed regions (cyan), each block's blob (thin white), fitted
-    cube outline (its color), corrected centre (dot) and "cell color confidence" label, and hands
-    and unknown objects in magenta. Status sits in its own band on top,
+             speed: str = "", show_render: bool = False) -> np.ndarray:
+    """Camera frame with the grid, changed regions (cyan), each occupied cell's visible top face
+    (outlined in its color) with "B2 L2 [red, teal] 0.93" or a red "B2 ? <reason>", hands and
+    unknown objects in magenta, and (key R) the rendered board the model believes, painted over
+    the view. Status sits in its own band on top,
     the hands line and notes in a band at the bottom, so messages never overlap the picture."""
     out = frame.copy()
     lock = perceiver.lock
@@ -102,22 +99,29 @@ def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note:
             _text(out, cell, tuple(p), 0.55, (200, 200, 200))
     a = result.analysis
     if a is not None and lock is not None:
-        contours, _ = cv2.findContours(a.mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for c in contours:
-            _polyline(out, sheet_to_image(c.reshape(-1, 2), lock.H), CHANGE_BGR, 1)
+        if show_render:  # the board the model believes, painted over the camera view
+            sc, cx0, cy0 = a.to_full
+            h_c, w_c = int(round(a.render_bgr.shape[0] / sc)), int(round(a.render_bgr.shape[1] / sc))
+            big = cv2.resize(a.render_bgr, (w_c, h_c), interpolation=cv2.INTER_NEAREST)
+            region = out[cy0:cy0 + h_c, cx0:cx0 + w_c]
+            big = big[:region.shape[0], :region.shape[1]]
+            painted = big.any(axis=2)
+            region[painted] = (0.35 * region[painted] + 0.65 * big[painted]).astype(np.uint8)
+        for c in cv2.findContours(a.mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+            _polyline(out, a.to_full_px(c), CHANGE_BGR, 1)
         refs = perceiver.refs
-        for b in a.blocks:
-            _polyline(out, b.contour_px, (255, 255, 255), 1)
-            _polyline(out, b.outline_px, _bgr(refs[b.color].hex) if b.color in refs else (128, 128, 128), 3)
-            _polyline(out, b.top_px, (255, 255, 255), 1)
-            x, y = (int(v) for v in b.center_px)
-            cv2.circle(out, (x, y), 7, (0, 0, 0), -1)
-            cv2.circle(out, (x, y), 5, (255, 255, 255), -1)
-            stack, why = result.stacks.get(b.cell, (None, ""))
-            if b.cell is not None and stack is None:  # unknown: say why, in red
-                _text(out, f"{b.cell} ? {why}", (x - 70, y - 16), 0.7, (60, 60, 255))
+        for cell, r in a.cells.items():
+            if r.state == "empty":
+                continue
+            color = _bgr(refs[r.color].hex) if r.color in refs else (60, 60, 255)
+            for poly in r.top_px:  # the visible part of the top face
+                _polyline(out, poly, color, 3)
+            stack, why = result.stacks.get(cell, (None, ""))
+            x, y = (int(v) for v in r.center_px)
+            if stack is None:  # unknown: say why, in red
+                _text(out, f"{cell} ? {why}", (x - 70, y - 16), 0.65, (60, 60, 255))
             else:
-                _text(out, stack_label(b, stack, result.state.confidence), (x - 70, y - 16), 0.8)
+                _text(out, cell_label(cell, stack, result.state.confidence), (x - 70, y - 16), 0.8)
         for r in a.others:
             pts = _polyline(out, r.contour_px, HAND_BGR, 4)
             x, y = pts.mean(axis=0).astype(int)
@@ -130,37 +134,29 @@ def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note:
         cv2.putText(out, speed, (w - tw - 14, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (230, 230, 230), 2, cv2.LINE_AA)
     cv2.rectangle(out, (0, h - BAND_H), (w, h), (20, 20, 20), -1)
     bottom = f"hands_clear={result.state.hands_clear}" + (f" ({result.reason})" if result.reason else "")
-    bottom += f"   frame {result.state.frame_id}   E: re-take empty board   Q: quit"
+    bottom += f"   frame {result.state.frame_id}   E: re-take empty board   R: rendered board   Q: quit"
     cv2.putText(out, bottom + (f"   {note}" if note else ""), (14, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.65,
                 (230, 230, 230), 1, cv2.LINE_AA)
     return out
 
 
-def stack_label(block: Block, stack: Optional[list[str]], confidence: dict[str, float]) -> str:
-    """"B2 L2 [red, teal] 0.93": cell, stack height, colors bottom to top, confidence."""
-    if block.cell is None or not stack:
-        return block_label(block, confidence)
-    conf = confidence.get(block.cell, 0.0)
-    unsure = "?" if conf < MIN_CONFIDENCE else ""
-    return f"{block.cell} L{len(stack)} [{', '.join(stack)}]{unsure} {conf:.2f}"
-
-
 def debug_lines(result: FrameResult) -> list[str]:
-    """The status, then one line per block (label, the three scores, color distances) and per hand."""
+    """The status, then one line per occupied or unknown cell (this frame's reading, what is
+    published after stack memory and the 5-frame vote) and per hand."""
     lines = [result.status + (f"; hands_clear false: {result.reason}" if result.reason else "")]
     a = result.analysis
     if a is None:
         return lines
-    for b in sorted(a.blocks, key=lambda b: (b.cell or "~", b.color)):
-        stack, why = result.stacks.get(b.cell, (None, ""))
-        label = stack_label(b, stack, result.state.confidence) if stack else f"{b.cell} ? {why}"
-        fits = "/".join(f"{o:.2f}" for o in b.overlaps)
-        sides = " ".join(f"{c or '-'}({n}px)" for c, n in zip(b.sides, b.side_px))
-        lines.append(f"{label:<30} centre ({b.center_mm[0]:.0f}, {b.center_mm[1]:.0f}) mm edge={b.edge_mm:.1f}mm "
-                     f"fit L1/L2/L3={fits} sides=[{sides}] margin={b.margin_score:.2f} "
-                     f"(dE {b.d_nearest:.1f} vs {b.d_second:.1f})")
+    for cell, r in a.cells.items():
+        stack, why = result.stacks.get(cell, (None, ""))
+        if r.state == "empty" and stack == []:
+            continue
+        frame = (f"L{r.level + 1} {r.color} sides={list(r.sides)}" if r.state == "block"
+                 else f"{r.state}{': ' + r.reason if r.reason else ''}")
+        published = cell_label(cell, stack, result.state.confidence) if stack else f"{cell} ? {why}"
+        lines.append(f"{published:<34} frame: {frame} (conf {r.confidence:.2f})")
     for r in a.others:
-        lines.append(f"{r.kind:<22} {r.area_mm2:.0f} mm2: {r.why}")
+        lines.append(f"{r.kind:<34} {r.area_mm2:.0f} mm2: {r.why}")
     return lines
 
 
@@ -317,6 +313,7 @@ async def run(args: argparse.Namespace) -> None:
         print(f"[perception] self-check: {line}", flush=True)
     period = 1.0 / HZ
     note = ""
+    show_render = False
     fps, step_ms, last_t = 0.0, 0.0, None   # smoothed over ~10 frames
     async with serve(publisher.handler, args.host, args.port):
         print(f"[perception] publishing GridState on ws://{args.host}:{args.port} at {HZ:g} Hz", flush=True)
@@ -341,10 +338,13 @@ async def run(args: argparse.Namespace) -> None:
             broadcast(publisher.clients, json.dumps({**result.state.to_dict(), "source": "perception"}))
             if args.debug:
                 cv2.imshow("Apprentice perception",
-                           annotate(frame, result, perceiver, note, f"{fps:.1f} fps   {step_ms:.0f} ms/frame"))
+                           annotate(frame, result, perceiver, note, f"{fps:.1f} fps   {step_ms:.0f} ms/frame",
+                                    show_render))
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), 27):
                     break
+                if key in (ord("r"), ord("R")):
+                    show_render = not show_render
                 if key in (ord("e"), ord("E")):
                     ok, note = perceiver.capture(frame)
                     print(f"[perception] {'E: ' + note if ok else 'E failed: ' + note}", flush=True)
