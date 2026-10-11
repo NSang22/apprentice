@@ -7,13 +7,13 @@
     {"color": "teal", "cell": "C1", "level": 0, "t_video": null, "narration": "Teal goes on C1."},
     {"color": "purple", "cell": "B2", "level": 0, "t_video": null, "narration": "Purple in the middle, on B2."},
     {"color": "yellow", "cell": "A3", "level": 0, "t_video": null, "narration": "Yellow on A3."},
-    {"color": "skyblue", "cell": "C3", "level": 0, "t_video": null, "narration": "Sky blue on C3."},
-    {"color": "orange", "cell": "C2", "level": 0, "t_video": null, "narration": "Finish with orange on C2."}
+    {"color": "teal", "cell": "C3", "level": 0, "t_video": null, "narration": "A second teal on C3."},
+    {"color": "yellow", "cell": "C2", "level": 0, "t_video": null, "narration": "Finish with yellow on C2."}
   ],
   "final_board": {
     "A1": ["red"], "A2": [], "A3": ["yellow"],
     "B1": [], "B2": ["purple"], "B3": [],
-    "C1": ["teal"], "C2": ["orange"], "C3": ["skyblue"]
+    "C1": ["teal"], "C2": ["yellow"], "C3": ["teal"]
   },
   "gate": null
 }

@@ -5,6 +5,7 @@ from brain.fake_robot import FakeRobot
 from brain.journal import Journal
 from brain.session import COMPLETE, RUNNING, Session
 from brain.settings import DEMO_LESSON
+from perception.robot_bridge import default_active_colors
 from shared.config import CELLS, COLORS
 from shared.schemas import Lesson, apply_step, boards_equal, empty_board, validate_board
 
@@ -36,6 +37,12 @@ def test_demo_lesson_fits_the_robot_today():
     colors = Counter(s.color for s in steps)
     assert set(colors) <= set(COLORS)
     assert max(colors.values()) <= 2  # the kit has 2 blocks of each color
+    assert set(colors) <= set(default_active_colors())  # perception separates only these
+    for s in steps:  # same colors never touch: they would merge into one blob
+        for t in steps:
+            dx = abs(ord(s.cell[0]) - ord(t.cell[0]))
+            dy = abs(int(s.cell[1]) - int(t.cell[1]))
+            assert s is t or s.color != t.color or max(dx, dy) > 1, (s, t)
     assert len({s.cell for s in steps}) == len(steps)  # one cube per cell, spread out
 
 
