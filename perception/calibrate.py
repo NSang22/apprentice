@@ -36,7 +36,7 @@ from perception.change import change_mask, warp_to_sheet
 from perception.colors import (CALIB_PATH, ColorRef, default_calibration, distances, lab_to_hex, sample_stats,
                                save_calibration)
 from perception.perceive import Perceiver
-from perception.publish import _text, add_block_args, add_camera_args, capture_frames, image_frames, lock_camera, use_block_size
+from perception.publish import _text, add_block_args, add_camera_args, image_frames, live_camera_frames, lock_camera, use_block_size
 from robot.perception import segment
 
 CELL = "B2"                  # every color is sampled in the centre cell, clear of the tags
@@ -148,7 +148,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     colors = args.colors
     print(f"[calibrate] colors to sample, in order: {', '.join(colors)}")
 
-    frames = image_frames(args.images) if args.images else capture_frames(args.camera, loop=False, backend=args.backend)
+    # The same camera setup as perception.publish (MJPG 1920x1080), so the grid lock matches it.
+    frames = image_frames(args.images) if args.images else live_camera_frames(args.camera, args.backend)
     if args.camera is not None:
         lock_camera(args, frames)
     # Nominal references only stand in until this run measures the real ones.
