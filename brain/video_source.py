@@ -293,6 +293,14 @@ class VideoSource:
         u1, v1 = np.clip(np.ceil(pts.max(axis=0)).astype(int), 0, [w, h])
         return frame[v0:v1, u0:u1].copy()
 
+    def crop_jpeg(self, frame_id: int, cell: str) -> Optional[bytes]:
+        """That cell's crop from a settled frame, as JPEG (what Gemini is shown), None if not kept."""
+        crop = self._crops.get(frame_id, {}).get(cell)
+        if crop is None or crop.size == 0:
+            return None
+        ok, jpg = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        return jpg.tobytes() if ok else None
+
     def save_pictures(self, folder: Path, steps: list[tuple[int, str, int]]) -> list[str]:
         """step_<n>_<cell>.png for each (step number, cell, frame id). Returns the files written."""
         written = []

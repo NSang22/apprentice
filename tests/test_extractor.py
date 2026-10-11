@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from brain.extractor import (ColorsFileError, build_lesson, extract, gate_lesson, manual_colors, script_frames,
-                             split_transients, step_rows, write_outputs)
+from brain.extractor import (ColorsFileError, build_lesson, extract, gate_lesson, gemini_fallback, manual_colors,
+                             script_frames, split_transients, step_rows, write_outputs)
 from brain.fake_feed import HZ, make_frame, parse_script
 from brain.journal import Journal, read_journal
 from brain.session import COMPLETE, Session
@@ -213,6 +213,28 @@ def test_object_with_no_known_color_that_leaves_is_a_transient():
     gate = gate_lesson(lesson, ex)
     assert placed(lesson) == [("red", "A1", 0), ("teal", "C1", 0)]
     assert gate.gate.passed, gate.reasons
+
+
+def test_gemini_fallback_accepts_and_rejects():
+    # A1 red from the camera; B2, C3, B1 never read. A fake Gemini: purple (taken), red (already on A1), none.
+    ex = extract(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "B2": ["unknown"]}),
+                            seg({"A1": ["red"], "B2": ["unknown"], "C3": ["unknown"]}),
+                            seg({"A1": ["red"], "B2": ["unknown"], "C3": ["unknown"], "B1": ["unknown"]})]))
+    replies = iter(["purple", "red", "none"])
+    rows = step_rows(ex)
+    records = gemini_fallback(rows, ex, lambda frame_id, cell: b"jpeg", lambda jpeg: {"answer": next(replies)}, {})
+    assert [(r.cell, r.color, r.source) for r in rows] == [
+        ("A1", "red", "camera"), ("B2", "purple", "gemini"), ("C3", "unknown", "none"), ("B1", "unknown", "none")]
+    assert [(g["answer"], g["accepted"]) for g in records] == [("purple", True), ("red", False), ("none", False)]
+    gate = gate_lesson(build_lesson(rows, "test-lesson", "Test", None), ex, rows=rows)
+    assert gate.notes["colors_known"] == ["step 2: gemini, unverified (purple)"]
+    assert "B2: gemini, unverified (purple)" in gate.notes["replay_matches_final_frame"]
+    assert set(failed(gate)) == {"replay_matches_final_frame", "colors_known"}   # C3 and B1 stay unknown
+    # a rerun reuses the saved answers and never calls Gemini
+    saved = {g["key"]: {"answer": g["answer"]} for g in records}
+    rows = step_rows(ex)
+    gemini_fallback(rows, ex, lambda frame_id, cell: b"jpeg", lambda jpeg: pytest.fail("called Gemini"), saved)
+    assert [r.color for r in rows] == ["red", "purple", "unknown", "unknown"]
 
 
 def test_colors_file_with_wrong_cell_is_refused():

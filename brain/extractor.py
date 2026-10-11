@@ -47,7 +47,13 @@ a step's color is decided, so a color model can plug in there later):
   robot_memory  --color-memory (--video; default robot/outputs/color_memory.json if it exists):
                 the robot's ColorMemory file, blocks named the way the robot names them
   camera        perception's reads in the GridState stream
-The first source with a known color wins; the extract file keeps all three per step.
+  gemini        (--video, offline; --no-gemini turns it off) only for a step still in the lesson at
+                the end and still unknown: the crop from the clearest settled board where it was on
+                top, a closed answer (a shared color or "none", brain/gemini_colors.py). "none", or a
+                color already on the board, is rejected and the step stays unknown (a draft). Answers
+                are saved in the extract file and reused on a rerun of the same video, so runs match.
+                No GEMINI_API_KEY: skipped with a warning. The robot's color memory is never written.
+The first source with a known color wins; the extract file keeps every source's read per step.
 
 Output, next to --out (default lessons/<lesson_id>.json):
   lessons/<id>.json             only when every step has a known color; always loads with
@@ -75,6 +81,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
 from brain.gate import Change, GateResult, History, run_gate
+from brain.gemini_colors import GeminiUnavailable
 from brain.provenance import git_info
 from brain.stabilizer import StabilizerState, frame_board, step as stabilizer_step
 from shared.config import CELLS, COLORS, GRID_WS_PORT, LESSONS_DIR, MAX_LEVEL, REPO_ROOT, UNKNOWN
@@ -102,6 +109,7 @@ class Settled:
     frame_id: int
     board: Board       # occupancy and top only: each cell [] or [top color]
     camera_board: Optional[Board] = None  # the camera's own stacks on that frame (evidence only)
+    camera_confidence: Optional[dict[str, float]] = None  # the camera's confidence per cell on that frame
 
 
 @dataclass
@@ -189,7 +197,7 @@ def settle(frames: Iterable[GridState], extraction: Extraction,
         state, board = stabilizer_step(state, gs)
         if board is not None:
             s = Settled(t=state.since, t_settled=gs.t, frame_id=gs.frame_id, board=board,
-                        camera_board=copy_board(raw.board))
+                        camera_board=copy_board(raw.board), camera_confidence=dict(raw.confidence))
             if on_settle is not None:
                 on_settle(s)
             yield s
@@ -312,7 +320,7 @@ class StepRow:
     level: int
     t_video: float
     color: str                   # a color from COLORS, or "unknown"
-    source: str                  # "manual", "robot_memory", "camera", or "none" (unknown)
+    source: str                  # "manual", "robot_memory", "camera", "gemini", or "none" (unknown)
     camera_color: str
     reads: dict[str, int]
     frame_id: int
@@ -425,6 +433,74 @@ def step_rows(ex: Extraction, manual: Optional[dict[int, str]] = None) -> list[S
     return rows
 
 
+GeminiAsk = Callable[[bytes], dict]  # crop (jpeg) -> {"answer": a COLORS name or "none", "model", "raw"}
+
+
+def clearest_frame(cube: Cube, ex: Extraction) -> Optional[int]:
+    """The settled board where the cube was on top and the camera was most sure of its cell."""
+    conf = {s.frame_id: (s.camera_confidence or {}).get(cube.cell, 0.0) for s in ex.settled}
+    return max(cube.settles, key=lambda fid: (conf.get(fid, 0.0), -fid)) if cube.settles else None
+
+
+def gemini_fallback(rows: list[StepRow], ex: Extraction, crop: Callable[[int, str], Optional[bytes]],
+                    ask: Optional[GeminiAsk], saved: dict[str, dict]) -> list[dict[str, Any]]:
+    """The last color source, for steps still unknown (rows are ex.steps, so removed cubes and
+    transients are never asked about). One record per step considered; accepted answers set the
+    row's color with source "gemini". saved: earlier answers by "cell@frame", reused without a call."""
+    records = []
+    for row, cube in zip(rows, ex.steps):
+        if row.color != UNKNOWN:
+            continue
+        fid = clearest_frame(cube, ex)
+        if fid is None:
+            continue
+        key = f"{cube.cell}@{fid}"
+        rec: dict[str, Any] = {"step": row.number, "cell": cube.cell, "frame_id": fid, "key": key}
+        if key in saved:
+            reply, rec["reused"] = saved[key], True
+        else:
+            jpeg = crop(fid, cube.cell)
+            if ask is None or jpeg is None:
+                records.append({**rec, "accepted": False, "reason": "not asked (no key or no crop)"})
+                continue
+            try:
+                reply, rec["reused"] = ask(jpeg), False
+            except GeminiUnavailable as e:
+                records.append({**rec, "accepted": False, "reason": f"unavailable: {e}"})
+                continue
+        answer = reply.get("answer", "none")
+        rec.update(answer=answer, model=reply.get("model"), raw=reply.get("raw"))
+        taken = {r.color for r in rows if r is not row and r.color in COLORS}
+        if answer not in COLORS:
+            rec.update(accepted=False, reason="none")
+        elif answer in taken:
+            rec.update(accepted=False, reason=f"{answer} is already on the board")
+        else:
+            rec.update(accepted=True, reason="")
+            row.color, row.source = answer, "gemini"
+        records.append(rec)
+    return records
+
+
+def saved_gemini(lessons_dir: Path, source_sha256: Optional[str]) -> dict[str, dict]:
+    """Gemini answers from earlier extract records of the same source file, by "cell@frame"."""
+    saved: dict[str, dict] = {}
+    folder = lessons_dir / "extract"
+    if not source_sha256 or not folder.is_dir():
+        return saved
+    for path in sorted(folder.glob("*.json")):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        if (record.get("source") or {}).get("sha256") != source_sha256:
+            continue
+        for g in record.get("gemini", []):
+            if "answer" in g:
+                saved[g["key"]] = {"answer": g["answer"], "model": g.get("model"), "raw": g.get("raw")}
+    return saved
+
+
 def build_lesson(rows: list[StepRow], lesson_id: str, title: str, source_video: Optional[str]) -> Lesson:
     """The lesson the steps describe. final_board is the replay of the steps (the board a student
     builds), which the gate compares with the recording's last settled board."""
@@ -437,9 +513,9 @@ def build_lesson(rows: list[StepRow], lesson_id: str, title: str, source_video: 
 
 def gate_lesson(lesson: Lesson, ex: Extraction, reference_empty: Optional[bool] = None,
                 rows: Optional[list[StepRow]] = None) -> GateResult:
-    """rows: the step rows, so a manual color can stand in for an unreadable final read."""
-    manual = {r.number - 1 for r in rows or [] if r.source == "manual"}
-    result = run_gate(lesson.steps, gate_history(ex), reference_empty, manual)
+    """rows: the step rows, so a manual or Gemini color can stand in for an unreadable final read."""
+    unverified = {r.number - 1: r.source for r in rows or [] if r.source in ("manual", "gemini")}
+    result = run_gate(lesson.steps, gate_history(ex), reference_empty, unverified)
     lesson.gate = result.gate
     return result
 
@@ -529,7 +605,8 @@ class Outcome:
 
 def write_outputs(ex: Extraction, rows: list[StepRow], lesson: Lesson, gate: GateResult, out: Path,
                   info: dict[str, Any], boards_out: Optional[Path] = None,
-                  pictures: Optional[Callable[[Path], list[str]]] = None) -> Outcome:
+                  pictures: Optional[Callable[[Path], list[str]]] = None,
+                  gemini: Optional[list[dict[str, Any]]] = None) -> Outcome:
     """Write the lesson (only when every color is known), the extract file, and --boards-out."""
     extract_dir = out.parent / "extract"
     extract_dir.mkdir(parents=True, exist_ok=True)
@@ -559,6 +636,7 @@ def write_outputs(ex: Extraction, rows: list[StepRow], lesson: Lesson, gate: Gat
         "baseline_cubes": [cube_dict(c, ex) for c in ex.baseline],
         "transients": [cube_dict(c, ex) for c in ex.transients],
         "weak_reads": ex.weak_reads,
+        "gemini": gemini or [],
         "gate": {**gate.gate.to_dict(), "reasons": gate.reasons, "notes": gate.notes},
         "pictures": [repo_relative(Path(p)) for p in pictures(extract_dir / lesson.lesson_id)] if pictures else [],
     }
@@ -679,6 +757,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--source-video", help="--script/--grid: video path to store in the lesson (for show-me clips)")
     p.add_argument("--seed", type=int, default=0, help="--script: jitter seed (default 0)")
     p.add_argument("--seconds", type=float, help="--grid: stop after this many seconds (default: Ctrl+C)")
+    p.add_argument("--no-gemini", action="store_true", help="--video: never ask Gemini for a color")
     v = p.add_argument_group("--video only")
     v.add_argument("--calib", type=Path, help="folder with grid_lock.json, empty_board.png, colors.json "
                                               "(default: grid lock and empty board from the video's first second)")
@@ -741,6 +820,35 @@ def main(argv: Optional[list[str]] = None) -> int:
             video.close()
 
 
+def ask_gemini(args: argparse.Namespace, rows: list[StepRow], ex: Extraction, video: Any,
+               lessons_dir: Path) -> list[dict[str, Any]]:
+    """The Gemini fallback for --video runs; prints how many calls it made."""
+    unknown = [r for r in rows if r.color == UNKNOWN]
+    if video is None or args.no_gemini or not unknown:
+        if video is not None:
+            print(f"[extract] gemini: 0 calls ({'off' if args.no_gemini else 'no step needs it'})")
+        return []
+    from brain import gemini_colors
+
+    key = gemini_colors.api_key()
+    calls = 0
+
+    def ask(jpeg: bytes) -> dict:
+        nonlocal calls
+        calls += 1
+        return gemini_colors.ask_color(jpeg, key)
+
+    if key is None:
+        print("[extract] WARNING: no GEMINI_API_KEY set, so the Gemini color fallback only reuses saved answers")
+    saved = saved_gemini(lessons_dir, (video.info.get("source") or {}).get("sha256"))
+    records = gemini_fallback(rows, ex, video.crop_jpeg, ask if key else None, saved)
+    print(f"[extract] gemini: {calls} call(s), {sum(1 for r in records if r.get('reused'))} saved answer(s) reused")
+    for r in records:
+        print(f"  gemini step {r['step']} {r['cell']}: {r.get('answer', '-')} "
+              + ("accepted (unverified)" if r["accepted"] else f"rejected: {r['reason']}"))
+    return records
+
+
 def finish(args: argparse.Namespace, entries: list[dict[str, Any]], name: str, frames: Iterable[GridState],
            info: dict[str, Any], source_video: Optional[str], video: Any) -> int:
     robot_read = video.robot_read if video is not None and video.namer is not None else None
@@ -761,12 +869,13 @@ def finish(args: argparse.Namespace, entries: list[dict[str, Any]], name: str, f
         print(f"[extract] {out} already exists; pick another --out (lessons are never overwritten)", file=sys.stderr)
         return EXIT_BAD_INPUT
     rows = step_rows(ex, manual)
+    gemini = ask_gemini(args, rows, ex, video, lessons_dir)
     lesson = build_lesson(rows, lesson_id, args.title or name.replace("_", " ").replace("-", " ").title(), source_video)
     gate = gate_lesson(lesson, ex, video.reference_empty if video is not None else None, rows)
     pictures = None
     if video is not None:
         pictures = lambda folder: video.save_pictures(folder, [(r.number, r.cell, r.frame_id) for r in rows])  # noqa: E731
-    outcome = write_outputs(ex, rows, lesson, gate, out, info, args.boards_out, pictures)
+    outcome = write_outputs(ex, rows, lesson, gate, out, info, args.boards_out, pictures, gemini)
     print_report(outcome, ex)
     return outcome.exit_code
 

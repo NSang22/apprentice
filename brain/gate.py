@@ -10,9 +10,10 @@ saves it next to the lesson).
   replay_matches_final_frame  the steps, replayed on an empty board, leave the same cells occupied
                               as the last settled board, with the same top color. A final read that
                               is unclear but close to the expected top passes ("weak read"); a step
-                              colored by the manual colors file stands in for an unreadable final
-                              read ("manual, unverified"). A clear different color, or an unclear
-                              read that is not close and not manual, fails
+                              colored by the manual colors file or by Gemini stands in for an
+                              unreadable final read ("manual, unverified" / "gemini, unverified").
+                              A clear different color, or an unclear read that is not close and
+                              not stood in for, fails
   starts_empty                the first settled board has no cubes, and the reference the camera
                               compared against was itself checked empty (reference_empty is False
                               when that independent check failed or could not run)
@@ -24,7 +25,8 @@ saves it next to the lesson).
   levels_match_stack_height   every step's level is the number of cubes already in its cell, at
                               most MAX_LEVEL, and no fourth cube was seen on a cell
   has_steps                   at least one step
-  colors_known                every step has a known color
+  colors_known                every step has a known color (a Gemini color passes with the note
+                              "gemini, unverified")
 
 None of these use the camera's own stack height. Pure functions only.
 """
@@ -88,10 +90,11 @@ def _slots(xs: list[Slot]) -> str:
 
 
 def run_gate(steps: list[Step], history: History, reference_empty: Optional[bool] = None,
-             manual_steps: frozenset[int] | set[int] = frozenset()) -> GateResult:
+             unverified: Optional[dict[int, str]] = None) -> GateResult:
     """reference_empty: None when the camera's empty-board reference did not come from the
-    recording, else whether it was checked empty. manual_steps: indexes of steps whose color came
-    from the manual colors file."""
+    recording, else whether it was checked empty. unverified: step index -> "manual" or "gemini"
+    for colors no camera confirmed."""
+    unverified = unverified or {}
     results: dict[str, bool] = {}
     reasons: dict[str, str] = {}
     notes: dict[str, list[str]] = {}
@@ -128,8 +131,9 @@ def run_gate(steps: list[Step], history: History, reference_empty: Optional[bool
                 if history.weak_limit is not None and d is not None and d <= history.weak_limit:
                     notes.setdefault("replay_matches_final_frame", []).append(
                         f"{cell}: weak read, {d:.1f} from {top} (limit {history.weak_limit:g})")
-                elif top_step.get(cell) in manual_steps:
-                    notes.setdefault("replay_matches_final_frame", []).append(f"{cell}: manual, unverified ({top})")
+                elif top_step.get(cell) in unverified:
+                    notes.setdefault("replay_matches_final_frame", []).append(
+                        f"{cell}: {unverified[top_step[cell]]}, unverified ({top})")
                 else:
                     fail("replay_matches_final_frame", f"{cell}: the last board cannot read the top color")
             elif top is not None and top != seen:
@@ -154,6 +158,9 @@ def run_gate(steps: list[Step], history: History, reference_empty: Optional[bool
     if not steps:
         fail("has_steps", "no cube appeared in the recording")
 
+    for i, source in sorted(unverified.items()):
+        if source == "gemini" and i < len(steps) and steps[i].color in COLORS:
+            notes.setdefault("colors_known", []).append(f"step {i + 1}: gemini, unverified ({steps[i].color})")
     unknown = [i + 1 for i, s in enumerate(steps) if s.color not in COLORS]
     if unknown:
         fail("colors_known", "no known color for step " + ", ".join(map(str, unknown)))
