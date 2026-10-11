@@ -18,6 +18,10 @@ robot.api moves to) is the same point on the sheet as perception's centre for th
                      BANK_ZONE_MM) and lists the block colors in it. robot.api names bank blocks
                      with the camera's sheet calibration, which can misread them on the green box;
                      this is the second opinion Buddy asks before telling a child a color is missing.
+  blank              calibrate the empty board, like perception.calibrate's first step: with all 4
+                     tags in view and nothing on the grid, save the grid lock and the empty-board
+                     reference (perception/calib/grid_lock.json, empty_board.png; the old ones are
+                     kept as *.bak). perception.publish reads them when it starts.
   narration <path>   speech to text (OPENAI_TRANSCRIBE_MODEL, gpt-4o-transcribe), then the vision
                      model lists the placements spoken in it ("red on B2"). Advice only: the grid
                      decides (AGENTS.md rule 2).
@@ -234,6 +238,31 @@ def board(path: str) -> dict:
     return {"ok": True, "blocks": blocks, "seconds": r["seconds"], "model": r["model"]}
 
 
+def blank(localizer: SheetLocalizer) -> dict:
+    """The empty board, saved where perception.publish reads it at start-up (see the docstring)."""
+    import shutil
+    import cv2
+    from perception.change import warp_to_sheet
+    from perception.grid_lock import CALIB_DIR, LOCK_PATH, lock_from_frame, save_lock
+    img = frame()
+    lock, why = lock_from_frame(img, localizer)
+    if lock is None:
+        return {"ok": False, "error": why}
+    scene, _, _ = scene_mod.build_scene(img, localizer, naming="off")
+    on_grid = [o for o in (scene or {}).get("objects", []) if mm_to_cell(*o["center_mm"])]
+    if on_grid:
+        cells = sorted({mm_to_cell(*o["center_mm"]) for o in on_grid})
+        return {"ok": False, "error": f"something is on the grid ({', '.join(cells)}): clear the board and keep hands away"}
+    ref_path = CALIB_DIR / "empty_board.png"
+    for p in (LOCK_PATH, ref_path):
+        if p.exists():
+            shutil.copy2(p, p.with_name(p.name + ".bak"))
+    save_lock(lock, LOCK_PATH)
+    cv2.imwrite(str(ref_path), warp_to_sheet(img, lock.H))
+    return {"ok": True, "created": lock.created, "lock": str(LOCK_PATH), "reference": str(ref_path),
+            "camera_xyz_mm": [round(float(v), 1) for v in lock.camera_xyz] if lock.camera_xyz is not None else None}
+
+
 def main() -> None:
     # Picture Recall and Take Turns make patterns from the colors in play (robot ACTIVE_COLORS) and the
     # camera grades with those, so their scans name only those colors. Teach the Robot takes any block
@@ -245,12 +274,12 @@ def main() -> None:
     say({"ready": True, "cell_map": cell_map(), "model": openai_vision.model() if openai_vision.available() else None})
     for line in sys.stdin:
         cmd, _, arg = line.strip().partition(" ")
-        if cmd not in ("scan", "bank", "narration", "board"):
+        if cmd not in ("scan", "bank", "narration", "board", "blank"):
             continue
         naming.NAMEABLE = every if (cmd == "scan" and arg == "all") else in_play
         try:
             say(scan(localizer) if cmd == "scan" else bank(localizer) if cmd == "bank"
-                else board(arg) if cmd == "board" else narration(arg))
+                else board(arg) if cmd == "board" else blank(localizer) if cmd == "blank" else narration(arg))
         except Exception as e:
             traceback.print_exc(file=sys.stdout)
             say({"ok": False, "error": f"{type(e).__name__}: {e}"})

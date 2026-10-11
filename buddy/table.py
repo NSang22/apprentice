@@ -286,6 +286,10 @@ class RobotEyes:
         """The vision model's reading of a recording's final board: {ok, blocks: [{cell, stack}]}."""
         return self._ask(f"board {Path(video).resolve()}", 90.0)
 
+    def blank(self) -> dict:
+        """Calibrate the empty board (grid lock + empty-board reference): {ok, created, reference}."""
+        return self._ask("blank", EYES_SCAN_S)
+
     def narration(self, audio: Path) -> dict:
         """The recording's narration as text (OpenAI speech to text) and the placements said in it."""
         return self._ask(f"narration {Path(audio).resolve()}", 90.0)

@@ -86,6 +86,18 @@
   .ev.bad .kind { color: var(--red-d); }
   .ev pre { margin: 0; padding: 8px 12px 12px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; background: #fcfcfc; color: #555; }
   .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 9px 14px; border-radius: 12px; font-size: 14px; display: none; }
+  .cal { background: #fff; border: 2px solid var(--line); border-radius: 16px; padding: 14px; }
+  .cal ol { margin: 0 0 12px; padding-left: 20px; font-size: 15px; line-height: 1.6; }
+  .cal .pics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0; }
+  .cal figure { margin: 0; } .cal figcaption { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; font-weight: 800; margin-bottom: 4px; }
+  .cal img { width: 100%; border-radius: 12px; border: 2px solid var(--line); background: var(--soft); aspect-ratio: 16 / 9; object-fit: contain; display: block; }
+  .cal .go { font-size: 17px; padding: 12px 18px; width: 100%; justify-content: center; }
+  .cal .go:disabled { opacity: .5; }
+  .cal .msg { margin-top: 10px; border-radius: 12px; padding: 10px 12px; font-size: 14px; display: none; }
+  .cal .msg.ok { display: block; background: var(--green-l); color: var(--green-d); }
+  .cal .msg.warn { display: block; background: var(--amber-l); color: var(--amber-d); }
+  .cal .msg.fail { display: block; background: var(--red-l); color: var(--red-d); }
+  @media (max-width: 560px) { .cal .pics { grid-template-columns: 1fr; } }
   @media (max-width: 560px) { .ev > summary { grid-template-columns: 54px 1fr; } .ev .what { grid-column: 1 / -1; } }
 </style>
 </head>
@@ -104,7 +116,24 @@
     <button data-game="teach" class="on">Teach the Robot</button>
     <button data-game="recall">Picture Recall</button>
     <button data-game="turns">Take Turns</button>
+    <button data-game="blank">Calibrate blank</button>
   </div>
+  <div id="blank-view" style="display:none">
+    <div class="cal">
+      <ol>
+        <li>Take every block off the grid (the bank can stay).</li>
+        <li>Make sure all 4 corner tags are in view, and keep hands away.</li>
+        <li>Tap the button. The camera restarts for a few seconds afterwards.</li>
+      </ol>
+      <div class="pics">
+        <figure><figcaption>Camera now</figcaption><img id="cal-live" alt="What the camera sees now"></figure>
+        <figure><figcaption id="cal-ref-t">Saved empty board</figcaption><img id="cal-ref" alt="The saved empty board"></figure>
+      </div>
+      <button class="btn primary go" id="cal-go">Calibrate the empty board</button>
+      <div class="msg" id="cal-msg"></div>
+    </div>
+  </div>
+  <div id="game-view">
   <div class="bar">
     <select id="session"></select>
     <button class="btn" id="follow">Follow newest</button>
@@ -114,6 +143,7 @@
   <div class="steps" id="steps"></div>
   <h2>Every event</h2>
   <div class="events" id="events"></div>
+  </div>
   <h2>Robot vision helper output</h2>
   <div class="log" id="eyes-log">(nothing yet)</div>
 </div>
@@ -241,8 +271,31 @@ async function loadTrace() {
   loadTrace.key = key;
   renderSteps(d.events); renderEvents(d.events);
 }
+// ---------- calibrate blank
+let calRef = null;
+async function loadBlank() {
+  const c = await get("/api/buddy/calibrate/blank"), msg = $("cal-msg");
+  $("cal-go").disabled = c.busy || !c.camera;
+  $("cal-go").textContent = c.busy ? "Working..." : c.camera ? "Calibrate the empty board" : "Turn on the table first";
+  const [cls, text] = c.error ? ["fail", c.error] : c.busy ? ["warn", c.step] : c.step ? ["ok", c.step] : ["", ""];
+  msg.className = `msg ${cls}`; msg.textContent = text;
+  $("cal-ref-t").textContent = c.lock_created ? `Saved empty board · ${c.lock_created.replace("T", " ")}` : "Saved empty board (none yet)";
+  if (c.reference_mtime !== calRef) { calRef = c.reference_mtime; $("cal-ref").src = c.reference_mtime ? `/api/buddy/calibrate/blank.png?t=${c.reference_mtime}` : ""; }
+  if (c.camera) $("cal-live").src = `/buddy/camera.jpg?t=${Date.now()}`;
+}
+$("cal-go").onclick = async () => {
+  $("cal-go").disabled = true;
+  const r = await fetch("/api/buddy/calibrate/blank", { method: "POST" });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); toast(e.error || "Could not start"); }
+  loadBlank().catch(() => {});
+};
+function showView() {
+  $("blank-view").style.display = game === "blank" ? "block" : "none";
+  $("game-view").style.display = game === "blank" ? "none" : "block";
+}
+
 async function tick() {
-  try { await loadStatus(); await loadSessions(); await loadTrace(); $("live").classList.remove("off"); $("live-t").textContent = "live"; }
+  try { await loadStatus(); if (game === "blank") await loadBlank(); else { await loadSessions(); await loadTrace(); } $("live").classList.remove("off"); $("live-t").textContent = "live"; }
   catch (e) { $("live").classList.add("off"); $("live-t").textContent = "app not reachable"; }
   setTimeout(tick, 1500);
 }
@@ -252,8 +305,8 @@ $("tabs").onclick = (e) => {
   const b = e.target.closest("button"); if (!b) return;
   game = b.dataset.game; follow = true; open.clear(); loadTrace.key = "";
   document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("on", x === b));
-  history.replaceState(null, "", `?game=${game}`); tick.now?.();
-  loadSessions().then(loadTrace).catch(() => {});
+  history.replaceState(null, "", `?game=${game}`); showView();
+  (game === "blank" ? loadBlank() : loadSessions().then(loadTrace)).catch(() => {});
 };
 $("session").onchange = () => { session = $("session").value; follow = false; loadTrace.key = ""; $("follow").classList.remove("primary"); loadTrace(); };
 $("follow").onclick = () => { follow = true; loadTrace.key = ""; $("follow").classList.add("primary"); loadSessions().then(loadTrace); };
@@ -263,6 +316,7 @@ $("copy").onclick = async () => {
 };
 document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("on", x.dataset.game === game));
 $("follow").classList.add("primary");
+showView();
 tick();
 </script>
 </body>
