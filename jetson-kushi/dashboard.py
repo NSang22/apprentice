@@ -248,6 +248,12 @@ def int_list(text: str) -> list[int]:
 # (buddy.table.main_checkout, shared with Buddy's robot-vision helper).
 TABLE_REPO = main_checkout()
 FRAME_PORT = 8771          # perception.publish's local frame server, which robot.api reads
+LOG_DIR = Path.home() / ".cache" / "apprentice-dashboard"   # one <service>.log per service
+
+
+def note(msg: str) -> None:
+    """A line in the dashboard's own log (stdout, ~/.cache/apprentice-dashboard.log via dashboard.sh)."""
+    print(f"[dashboard] {time.strftime('%H:%M:%S')} {msg}", flush=True)
 REST_WAIT_S = 90.0         # how long the arm may take to set itself down before stop gives up
 
 
@@ -274,6 +280,12 @@ class Service:
         with self.lock:
             self.seq += 1
             self.log.append((self.seq, line))
+            try:  # also on disk, so a service's last words survive the dashboard
+                LOG_DIR.mkdir(parents=True, exist_ok=True)
+                with open(LOG_DIR / f"{self.name}.log", "a", encoding="utf-8") as f:
+                    f.write(f"{time.strftime('%H:%M:%S')} {line}\n")
+            except OSError:
+                pass
 
     def start(self, opts: dict) -> None:
         if self.running():
@@ -573,7 +585,8 @@ def table_status():
 
 
 @app.post("/api/table/on")
-def table_on():
+def table_on(request: Request):
+    note(f"table on requested from {request.client.host if request.client else 'unknown'}")
     try:
         power.on()
     except ValueError as e:
@@ -582,7 +595,8 @@ def table_on():
 
 
 @app.post("/api/table/off")
-def table_off():
+def table_off(request: Request):
+    note(f"table off requested from {request.client.host if request.client else 'unknown'}")
     try:
         power.off()
     except ValueError as e:
@@ -591,11 +605,12 @@ def table_off():
 
 
 @app.post("/api/server/stop")
-def server_stop():
+def server_stop(request: Request):
     """Shut the whole app down. The lifespan exit stops every service, so the arm rests first."""
     if SERVICES["robot"].external():
         return JSONResponse({"ok": False, "error": "The arm was started outside the app; stop it from a terminal first."},
                             status_code=409)
+    note(f"shut down requested from {request.client.host if request.client else 'unknown'} (Shut down app)")
     threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGINT)).start()
     return {"ok": True}
 
@@ -840,9 +855,11 @@ async def lifespan(_app):
     threading.Thread(target=hub.watch, daemon=True).start()
     tasks = [asyncio.create_task(tap.run()) for tap in TAPS.values()]
     tasks.append(asyncio.create_task(buddy_table_task()))
+    note("started")
     try:
         yield
     finally:
+        note("shutting down: stopping services (the arm rests first)")
         for task in tasks:
             task.cancel()
         for svc in reversed(list(SERVICES.values())):  # the arm rests before its camera goes away
