@@ -205,6 +205,7 @@ class BuddySession:
             if self.phase != "choice" or kind not in ("hint", "fix") or self.grade is None:
                 return
             self.helped, self.attempt = kind, 2
+            self.phase = "helping"  # before any arm job starts: the job stops itself once the phase moves on
             g = self.grade
             arm = self.source == "table" and self.pip.reachable()
             self.arm_used = arm
@@ -228,7 +229,6 @@ class BuddySession:
                 if arm:
                     self.pip.remove(self.removing, should_stop=lambda: self.phase != "helping")
                 self.until = self.clock() + PRACTICE_REMOVE_S * len(self.removing)
-            self.phase = "helping"
 
     def next(self) -> None:
         with self.lock:
