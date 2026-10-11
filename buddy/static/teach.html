@@ -391,7 +391,8 @@ function renderReview() {
   $("rv-footer").dataset.k = key;
   $("rv-footer").innerHTML = ph === "review" ? `<button class="btn" id="rv-save">Save my lesson</button>`
     : ph === "saved" ? `<div class="row"><button class="btn ghost" id="rv-later" style="flex:1">Later</button><button class="btn" id="rv-build" style="flex:2">Build it, Pip!</button></div>`
-    : `<div class="row"><button class="btn ghost" id="rv-later" style="flex:1">Back</button><button class="btn" id="rv-again" style="flex:2">Teach it again</button></div>`;
+    : `<div class="row"><button class="btn ghost" id="rv-later" style="flex:1">Back</button><button class="btn" id="rv-again" style="flex:2">Teach it again</button></div>
+       <a href="/buddy/debug?game=teach" style="display:block;text-align:center;margin-top:12px;color:var(--blue-d);font-size:14px">Grown-ups: see what happened</a>`;
   if ($("rv-save")) $("rv-save").onclick = () => {
     const name = $("rv-name").value.trim(); if (!name) { toast("Give your lesson a name!"); $("rv-name").focus(); return; }
     sfx.good(); act("/api/buddy/teach/save", { name });

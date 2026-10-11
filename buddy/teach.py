@@ -60,13 +60,20 @@ STAGES = [
 # Gate checks -> what Pip says. Kind, no blame, and always a way forward.
 PROBLEMS = {
     "one_cube_per_change": "I got confused when more than one block moved at once. Let's teach it again, one block at a time!",
+    "replay_matches_final_frame": "When I built it in my head, one block came out a different color than the one on the board. "
+                                  "Let's teach it again, with each block in the middle of its square!",
+    "starts_empty": "The board needs to start empty. Clear it, and let's try again!",
+    "one_cube_per_color": "I saw two blocks of the same color. Each color can be used once, so I don't mix them up!",
+    "levels_match_stack_height": "I lost count of how tall a tower was. Let's teach it again, one block at a time!",
+    "colors_known": "I couldn't tell the color of one block. Let's try again with the blocks in the middle of their squares!",
+    "has_steps": "I didn't see any blocks! Let's try again. Build something on the grid while I watch.",
     "nothing": "I didn't see any blocks! Let's try again. Build something on the grid while I watch.",
     "too_high": f"Wow, that's tall! In this game, towers can be {MAX_HIGH} blocks high. Let's teach it again!",
     "unknown_color": "I couldn't tell the color of one block. Let's try again with the blocks in the middle of their squares!",
     "not_empty": "The board needs to start empty. Clear it, and let's try again!",
     "one_color": "I saw two blocks of the same color. Each color can be used once, so I don't mix them up!",
 }
-DEFAULT_PROBLEM = "Something got mixed up in my head. Let's teach it again!"
+DEFAULT_PROBLEM = "Something went wrong on my side. A grown-up can see why on the debug page. Let's teach it again!"
 
 
 def kid_problem(reasons: dict[str, str]) -> str:
@@ -263,9 +270,10 @@ def learn(frames: list[dict], lesson_id: str, title: str, source_video: Optional
         top_level = {}
         for c in ex.steps:
             top_level[c.cell] = max(top_level.get(c.cell, -1), c.level)
+        in_play = set(active_colors())  # the robot also knows sky blue and orange: never let those in
         for i, c in enumerate(ex.steps):
             color = final_tops.get(c.cell)
-            if c.level == top_level[c.cell] and color in COLORS:
+            if c.level == top_level[c.cell] and color in in_play:
                 manual[i + 1] = color
     rows = ext.step_rows(ex, manual)
     stage("squint", 1.0)
@@ -308,14 +316,17 @@ def learn_video(video: Path, repo: Path, title: str, video_s: float,
     work = LESSONS_DIR / "_work"
     work.mkdir(parents=True, exist_ok=True)
     out = work / f"{video.stem}.json"
+    # the colors in play and the block size, as scripts/jetson_up.sh runs perception: the extractor's
+    # default is every shared color, which the 4-color calibration refuses (exit code 2)
     cmd = [sys.executable, "-u", "-m", "brain.extractor", "--video", str(video.resolve()), "--out", str(out),
-           "--title", title]
+           "--title", title, "--colors", ",".join(active_colors()), "--block-mm", os.environ.get("BLOCK_MM", "47")]
     proc = subprocess.Popen(cmd, cwd=str(repo), env={**os.environ, "PYTHONPATH": str(repo), "PYTHONUNBUFFERED": "1"},
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     lines: "queue.Queue[str]" = queue.Queue()
     threading.Thread(target=lambda: [lines.put(l.rstrip("\n")) for l in proc.stdout], daemon=True).start()
 
     names = [n for n, _ in STAGES]
+    trace = {"command": " ".join(cmd[1:]), "cwd": str(repo), "lines": []}
     estimate = max(6.0, video_s * EXTRACT_S_PER_VIDEO_S)
     started, current = time.monotonic(), "flummox"
     stage(current, 0.0)
@@ -323,6 +334,7 @@ def learn_video(video: Path, repo: Path, title: str, video_s: float,
         try:
             line = lines.get(timeout=0.3)
             log(line)
+            trace["lines"].append(line)
             for key, name in EXTRACT_MILESTONES:
                 if key in line and names.index(name) > names.index(current):
                     current = name
@@ -332,26 +344,53 @@ def learn_video(video: Path, repo: Path, title: str, video_s: float,
         elapsed = time.monotonic() - started
         if elapsed > EXTRACT_TIMEOUT_S:
             proc.kill()
-            return {"ok": None, "error": f"the video run took over {EXTRACT_TIMEOUT_S:.0f} s"}
+            return {"ok": None, "error": f"the video run took over {EXTRACT_TIMEOUT_S:.0f} s", "trace": trace}
         # between milestones the bar creeps on with time, never past 90% of the current stage
         stage(current, min(0.9, elapsed / estimate))
     code = proc.wait()
     log(f"[teach] extractor exit code {code}")
+    trace.update({"exit_code": code, "seconds": round(time.monotonic() - started, 1)})
     extract_files = sorted((work / "extract").glob(f"{video.stem}*.json"), key=lambda p: p.stat().st_mtime)
     details = json.loads(extract_files[-1].read_text(encoding="utf-8")) if extract_files else {}
     reasons = (details.get("gate") or {}).get("reasons") or {}
+    trace["report"] = report(details) if details else None
     if code == 0 and out.is_file():
         lesson = Lesson.from_dict(json.loads(out.read_text(encoding="utf-8")))
         if any(s.level >= MAX_HIGH for s in lesson.steps):
-            return {"ok": False, "problem": PROBLEMS["too_high"], "reasons": {"too_high": f"max {MAX_HIGH} high"}}
+            return {"ok": False, "problem": PROBLEMS["too_high"], "reasons": {"too_high": f"max {MAX_HIGH} high"}, "trace": trace}
         if not lesson.steps:
-            return {"ok": False, "problem": PROBLEMS["nothing"], "reasons": {"nothing": "no steps"}}
-        return {"ok": True, "lesson": lesson, "steps": [s.to_dict() for s in lesson.steps], "via": "video"}
+            return {"ok": False, "problem": PROBLEMS["nothing"], "reasons": {"nothing": "no steps"}, "trace": trace}
+        return {"ok": True, "lesson": lesson, "steps": [s.to_dict() for s in lesson.steps], "via": "video", "trace": trace}
     if code == 1:   # a lesson, but the gate refused it
-        return {"ok": False, "problem": kid_problem(reasons), "reasons": reasons, "via": "video"}
+        return {"ok": False, "problem": kid_problem(reasons), "reasons": reasons, "via": "video", "trace": trace}
     if code == 3:   # a step whose color no source could name
-        return {"ok": False, "problem": PROBLEMS["unknown_color"], "reasons": {"unknown_color": "draft only"}, "via": "video"}
-    return {"ok": None, "error": f"extractor exit code {code}"}
+        return {"ok": False, "problem": PROBLEMS["unknown_color"], "reasons": {"unknown_color": "draft only"},
+                "via": "video", "trace": trace}
+    last = next((l for l in reversed(trace["lines"]) if l.startswith("[extract]") and "run time" not in l), "")
+    return {"ok": None, "error": f"extractor exit code {code}: {last}", "trace": trace}
+
+
+def active_colors() -> list[str]:
+    """The colors in play (robot ACTIVE_COLORS, shared spelling): what perception is calibrated for."""
+    try:
+        from perception.robot_bridge import default_active_colors
+        return default_active_colors()
+    except Exception:
+        return ["red", "purple", "yellow", "teal"]
+
+
+def report(details: dict) -> dict:
+    """The extractor's own record (lessons/extract/<id>.json), cut to what the debug page shows."""
+    gate = details.get("gate") or {}
+    return {
+        "steps": [{k: r.get(k) for k in ("step", "cell", "level", "color", "color_source", "camera_color",
+                                          "robot_memory_color", "camera_reads")} for r in details.get("steps") or []],
+        "gate": {"passed": gate.get("passed"), "reasons": gate.get("reasons"), "notes": gate.get("notes"),
+                 "checks": gate.get("checks")},
+        "frames": details.get("frames"), "skipped_boards": details.get("skipped_boards"),
+        "corrections": details.get("removed") or details.get("corrections"), "transients": details.get("transients"),
+        "unusable": details.get("unusable"), "gemini": details.get("gemini"),
+    }
 
 
 def learn_taps(taps: list[dict], lesson_id: str, title: str) -> dict:

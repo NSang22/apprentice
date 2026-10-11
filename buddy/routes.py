@@ -326,3 +326,63 @@ def teach_ready():
 @router.post("/api/buddy/teach/quit")
 def teach_quit():
     return _teach(teach.quit)
+
+
+# ---------------------------------------------------------------- debug page
+
+SESSION_PREFIX = {"recall": "b-", "turns": "t-", "teach": "teach-"}
+
+
+def _session_files(kind: str) -> list:
+    from buddy.session import SESSIONS_DIR
+    prefix = SESSION_PREFIX.get(kind, "teach-")
+    files = SESSIONS_DIR.glob(f"{prefix}*.jsonl") if SESSIONS_DIR.is_dir() else []
+    return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+@router.get("/buddy/debug")
+def debug_page():
+    return FileResponse(STATIC / "debug.html", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/buddy/sessions")
+def debug_sessions(game: str = "teach"):
+    """The newest sessions of one game, for the debug page's picker."""
+    import json as _json
+    out = []
+    for f in _session_files(game)[:30]:
+        first = f.open(encoding="utf-8").readline()
+        try:
+            t = _json.loads(first)["t"]
+        except (ValueError, KeyError):
+            t = f.stat().st_mtime
+        out.append({"id": f.stem, "t": t, "bytes": f.stat().st_size})
+    return {"sessions": out}
+
+
+@router.get("/api/buddy/trace")
+def debug_trace(game: str = "teach", session: str = ""):
+    """Every event of one session (the newest when none is named), oldest first: what was asked,
+    what each step did, how long it took, and why it ended the way it did."""
+    import json as _json
+    files = _session_files(game)
+    f = next((x for x in files if x.stem == session), files[0] if files else None)
+    if f is None:
+        return {"session": None, "events": []}
+    events = []
+    for line in f.open(encoding="utf-8"):
+        try:
+            events.append(_json.loads(line))
+        except ValueError:
+            continue
+    return {"session": f.stem, "events": events}
+
+
+@router.get("/api/buddy/status")
+def debug_status():
+    """Camera, arm, the robot's eyes and Gemini, for the debug page's status strip."""
+    eyes = game.eyes
+    return {"table": game.table.status(), "pip": {"busy": game.pip.busy, "step": game.pip.step, "error": game.pip.error},
+            "eyes": {"ready": bool(eyes.info.get("ready")), "gemini": eyes.info.get("gemini"), "error": eyes.error,
+                     "log": eyes.log[-40:]},
+            "phases": {"recall": game.phase, "turns": turns.phase, "teach": teach.phase}}

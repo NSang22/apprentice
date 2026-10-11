@@ -156,17 +156,51 @@ class TeachSession:
         with self.lock:
             self.stage = {"name": name, "label": dict(teach.STAGES)[name], "progress": round((i + frac) / len(names), 3)}
 
+    def _trace(self, step: str, title: str, status: str, summary: str, seconds: Optional[float] = None,
+               details=None) -> None:
+        """One step of turning the recording into a lesson, for the debug page (/buddy/debug).
+        status: ok, warn (worked, with a caveat), fail, or skip."""
+        self._log("trace", {"step": step, "title": title, "status": status, "summary": summary,
+                            "seconds": None if seconds is None else round(seconds, 2), "details": details})
+
     def _learn(self, frames: list[dict], recorder, taps: list[dict], audio=None) -> None:
         heard: dict = {}
+        video = sound = None
+        t_all = time.monotonic()
         try:
             self._set_stage("rewind", 0.0)
+            if self.source == "practice":
+                self._trace("record", "Recording (practice)", "ok" if taps else "warn",
+                            f"{len(taps)} taps on the phone", details={"taps": taps})
+            else:
+                secs = frames and (frames[-1].get("t", 0) - frames[0].get("t", 0)) or 0
+                self._trace("record", "Recording", "ok" if frames else "fail",
+                            f"{secs:.0f} s, {len(frames)} camera boards from perception", seconds=secs)
+            t = time.monotonic()
             silent = recorder.stop() if recorder else None
+            if recorder:
+                self._trace("video", "Video", "ok" if silent else "fail",
+                            f"{recorder.frames} frames at {teach.VIDEO_FPS:g} fps, {teach.VIDEO_WIDTH} px wide"
+                            if silent else f"no video: {recorder.error or 'no frames from the frame server'}",
+                            time.monotonic() - t, {"file": str(silent) if silent else None, "error": recorder.error,
+                                                    "bytes": silent.stat().st_size if silent else 0})
+            t = time.monotonic()
             sound = audio.stop() if audio else None
+            if audio:
+                self._trace("audio", "Microphone", "ok" if sound else "warn",
+                            f"{sound.stat().st_size // 1024} KB of sound" if sound else f"no sound: {audio.error or 'silent'}",
+                            time.monotonic() - t, {"file": str(sound) if sound else None, "device": audio.device,
+                                                    "error": audio.error})
             video = silent
             if silent and sound:  # one WebM with the narration, for playback and the record
+                t = time.monotonic()
                 joined = silent.with_name(silent.name.replace("_silent", ""))
-                if teach.mux(silent, sound, joined):
-                    video = joined
+                ok = teach.mux(silent, sound, joined)
+                video = joined if ok else silent
+                self._trace("join", "Video + sound", "ok" if ok else "warn",
+                            "joined into one WebM" if ok else "could not join; the video has no sound",
+                            time.monotonic() - t, {"file": str(video)})
+            listener, t_listen = None, time.monotonic()
             if self.source == "table" and sound:
                 # Gemini transcribes the narration while the extractor works on the video
                 def listen():
@@ -174,8 +208,6 @@ class TeachSession:
                 listener = threading.Thread(target=listen, daemon=True)
                 listener.start()
                 self._set_stage("listen", 0.5)
-            else:
-                listener = None
             source_video = str(video.relative_to(teach.REPO_ROOT)).replace("\\", "/") if video else None
             title = "My lesson"
             result = {"ok": None}
@@ -183,41 +215,76 @@ class TeachSession:
                 # the team's extractor on the video itself (fast 5 Hz sampling, robot colour memory,
                 # Gemini for any color nobody could name), run in the main checkout
                 video_s = recorder.frames / teach.VIDEO_FPS if recorder else 0.0
+                t = time.monotonic()
                 result = teach.learn_video(video, self.eyes.repo, title, video_s, stage=self._set_stage,
-                                           log=lambda line: self._log("extractor", {"line": line}))
-                if result.get("ok") is None:
-                    self._log("video_fallback", {"error": result.get("error")})
+                                           log=lambda line: None)
+                tr = result.get("trace") or {}
+                code = tr.get("exit_code")
+                status = "ok" if result.get("ok") else "warn" if result.get("ok") is False else "fail"
+                summary = (f"{len(result['steps'])} steps" if result.get("ok") else
+                           f"refused: {', '.join(result.get('reasons') or {}) or result.get('problem')}" if result.get("ok") is False
+                           else result.get("error", "no answer"))
+                self._trace("extractor", "Extractor on the video", status, f"exit code {code}: {summary}",
+                            time.monotonic() - t, {"command": tr.get("command"), "cwd": tr.get("cwd"),
+                                                    "output": tr.get("lines"), "exit_code": code})
+                rep = tr.get("report")
+                if rep:
+                    gate = rep.get("gate") or {}
+                    self._trace("gate", "Gate checks", "ok" if gate.get("passed") else "fail",
+                                "all checks passed" if gate.get("passed") else
+                                "; ".join(f"{k}: {v}" for k, v in (gate.get("reasons") or {}).items()),
+                                details=rep)
             if self.source == "table" and result.get("ok") is None:
                 # no answer from the video: learn from perception's live frames, with the robot's
                 # own eyes naming each cell's top block
+                t = time.monotonic()
                 tops = None
                 res = self.eyes.scan()
                 if res.get("ok"):
                     tops = {b["cell"]: b["color"] for b in res["blocks"] if b.get("cell")}
+                self._trace("eyes", "Robot's eyes on the final board", "ok" if res.get("ok") else "warn",
+                            ", ".join(f"{c} {col}" for c, col in (tops or {}).items()) or res.get("error", "nothing on the grid"),
+                            time.monotonic() - t, res)
+                t = time.monotonic()
                 result = teach.learn(frames, self.session_id, title, source_video, tops, stage=self._set_stage)
+                self._trace("fallback", "Extractor on the live camera boards", "ok" if result["ok"] else "fail",
+                            f"{len(result['steps'])} steps" if result["ok"] else
+                            "; ".join(f"{k}: {v}" for k, v in (result.get("reasons") or {}).items()),
+                            time.monotonic() - t, {"frames": len(frames), "tops_from_eyes": tops,
+                                                    "reasons": result.get("reasons"), "steps": result.get("steps")})
             elif self.source == "practice":
                 for name, _ in teach.STAGES[:4]:
                     self._set_stage(name, 1.0)
                 result = teach.learn_taps(taps, self.session_id, title)
             if listener is not None:
                 listener.join(timeout=60)
+                ok = heard.get("ok")
+                self._trace("narration", "Gemini: what you said", "ok" if ok else "fail",
+                            (f"\"{heard.get('transcript', '')[:120]}\"" if ok else heard.get("error", "no answer")),
+                            heard.get("seconds") or (time.monotonic() - t_listen),
+                            {k: heard.get(k) for k in ("transcript", "placements", "model", "error")})
             if result.get("ok") and heard.get("ok"):   # speech fills step narration; the grid decides
                 check = teach.check_narration(result["lesson"].steps, heard.get("placements", []))
                 result["steps"] = [s.to_dict() for s in result["lesson"].steps]
                 heard.update(check)
+                self._trace("speech_vs_grid", "Speech vs what the camera saw", "ok" if not check["notes"] else "warn",
+                            f"{check['matched']} placements matched" + (f", {len(check['notes'])} disagree" if check["notes"] else ""),
+                            details=check)
             for name, _ in teach.STAGES:  # walk the rest of the bar, so it always reaches the end
                 if [n for n, _ in teach.STAGES].index(name) >= [n for n, _ in teach.STAGES].index(self.stage["name"] or "rewind"):
                     self._set_stage(name, 1.0)
         except Exception as e:  # never strand the child on a loading screen
+            import traceback
             result = {"ok": False, "problem": teach.DEFAULT_PROBLEM, "reasons": {"error": f"{type(e).__name__}: {e}"}}
+            self._trace("crash", "Crash", "fail", f"{type(e).__name__}: {e}", details=traceback.format_exc())
         with self.lock:
-            self.video_path = video if "video" in locals() else None
-            self.audio_path = sound if "sound" in locals() else None
+            self.video_path = video
+            self.audio_path = sound
             self.heard = {k: heard.get(k) for k in ("ok", "transcript", "notes", "matched", "error")} if heard else {}
-            self._log("narration", self.heard)
-            self._log("learned", {"ok": result["ok"], "via": result.get("via", "frames" if self.source == "table" else "taps"),
-                                  "steps": result.get("steps"), "reasons": result.get("reasons"),
-                                  "frames": len(frames), "video": str(self.video_path) if self.video_path else None})
+            self._trace("result", "Result", "ok" if result["ok"] else "fail",
+                        f"learned {len(result['steps'])} steps" if result["ok"] else f"Pip said: {result['problem']}",
+                        time.monotonic() - t_all, {"via": result.get("via", "frames" if self.source == "table" else "taps"),
+                                                   "steps": result.get("steps"), "reasons": result.get("reasons")})
             if result["ok"]:
                 self.lesson, self.steps = result["lesson"], result["steps"]
                 self.phase, self.mood = "review", "cheer"

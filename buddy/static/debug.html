@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>Debug · Apprentice Buddy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --green: #58cc02; --green-d: #58a700; --green-l: #e6f9d6;
+    --blue: #1cb0f6; --blue-d: #1899d6; --blue-l: #ddf4ff;
+    --amber: #ff9600; --amber-d: #d97c00; --amber-l: #fff2df;
+    --red: #ff4b4b; --red-d: #ea2b2b; --red-l: #ffe5e5;
+    --ink: #3c3c3c; --dim: #777; --faint: #afafaf; --line: #e5e5e5; --soft: #f7f7f7;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --c-red: #ff4b4b; --c-yellow: #ffc800; --c-teal: #14c4a8; --c-purple: #a560e8; --c-orange: #ff9600; --c-skyblue: #1cb0f6; --c-unknown: #bbb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--soft); color: var(--ink); font-family: "Nunito", system-ui, sans-serif; font-weight: 700; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 12px 16px 60px; }
+  header { display: flex; align-items: center; gap: 10px; position: sticky; top: 0; background: var(--soft); padding: 8px 0 10px; z-index: 5; }
+  header h1 { font-size: 22px; font-weight: 900; margin: 0; flex: 1; }
+  .back { width: 40px; height: 40px; border-radius: 12px; border: 2px solid var(--line); background: #fff; display: flex; align-items: center;
+          justify-content: center; color: var(--dim); box-shadow: 0 3px 0 var(--line); text-decoration: none; }
+  .btn { font: inherit; font-weight: 800; font-size: 14px; border-radius: 12px; padding: 8px 14px; cursor: pointer; border: 2px solid var(--line);
+         background: #fff; color: var(--ink); box-shadow: 0 3px 0 var(--line); display: inline-flex; align-items: center; gap: 6px; }
+  .btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--line); }
+  .btn.primary { background: var(--blue); border-color: var(--blue-d); color: #fff; box-shadow: 0 3px 0 var(--blue-d); }
+  .live { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); }
+  .live i { width: 9px; height: 9px; border-radius: 50%; background: var(--green); animation: pulse 1.6s infinite; }
+  .live.off i { background: var(--faint); animation: none; }
+  @keyframes pulse { 50% { opacity: .35 } }
+
+  .status { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 4px 0 14px; }
+  .chip { background: #fff; border: 2px solid var(--line); border-radius: 14px; padding: 9px 12px; }
+  .chip small { display: block; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; font-weight: 800; }
+  .chip b { display: flex; align-items: center; gap: 6px; font-size: 15px; margin-top: 2px; }
+  .chip b::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex: none; }
+  .chip.ok b::before { background: var(--green); } .chip.warn b::before { background: var(--amber); } .chip.fail b::before { background: var(--red); }
+  .chip .why { font-size: 12px; color: var(--red-d); margin-top: 3px; font-weight: 700; word-break: break-word; }
+
+  .tabs { display: flex; background: #fff; border: 2px solid var(--line); border-radius: 14px; padding: 4px; gap: 4px; margin-bottom: 10px; }
+  .tabs button { flex: 1; font: inherit; font-weight: 800; font-size: 14px; border: 0; border-radius: 10px; padding: 9px 6px; background: none; color: var(--dim); cursor: pointer; }
+  .tabs button.on { background: var(--blue-l); color: var(--blue-d); }
+  .bar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  select { font: inherit; font-weight: 800; font-size: 14px; border: 2px solid var(--line); border-radius: 12px; padding: 8px 10px; background: #fff; color: var(--ink); flex: 1; min-width: 200px; }
+
+  h2 { font-size: 14px; font-weight: 900; color: var(--dim); text-transform: uppercase; letter-spacing: .07em; margin: 20px 0 8px; }
+  .empty { background: #fff; border: 2px dashed var(--line); border-radius: 16px; padding: 22px; text-align: center; color: var(--dim); }
+
+  .steps { position: relative; }
+  .step { background: #fff; border: 2px solid var(--line); border-radius: 16px; margin-bottom: 10px; overflow: hidden; }
+  .step > summary { list-style: none; display: grid; grid-template-columns: 30px 1fr auto; gap: 10px; align-items: center; padding: 12px 14px; cursor: pointer; }
+  .step > summary::-webkit-details-marker { display: none; }
+  .ico { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 15px; font-weight: 900; }
+  .ok .ico { background: var(--green); } .warn .ico { background: var(--amber); } .fail .ico { background: var(--red); } .skip .ico { background: var(--faint); }
+  .step.fail { border-color: #ffc4c4; } .step.warn { border-color: #ffd9a8; }
+  .t1 { font-size: 16px; font-weight: 900; }
+  .t2 { font-size: 13px; color: var(--dim); margin-top: 2px; word-break: break-word; }
+  .fail .t2 { color: var(--red-d); } .warn .t2 { color: var(--amber-d); }
+  .dur { font-family: var(--mono); font-size: 12px; color: var(--dim); background: var(--soft); border-radius: 8px; padding: 3px 7px; white-space: nowrap; }
+  .body { border-top: 2px solid var(--line); padding: 12px 14px; background: #fcfcfc; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 13px; margin-bottom: 8px; }
+  .kv span { color: var(--dim); } .kv code { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+  .log { font-family: var(--mono); font-size: 12px; line-height: 1.5; background: #1f2430; color: #d7dde8; border-radius: 12px; padding: 10px 12px;
+         max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 6px 0; }
+  .log .err { color: #ff9c9c; } .log .hi { color: #9fe0ff; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0 10px; background: #fff; border-radius: 10px; overflow: hidden; }
+  th { text-align: left; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 6px 8px; border-bottom: 2px solid var(--line); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 4px; background: var(--c); vertical-align: -1px; margin-right: 5px; }
+  .pass { color: var(--green-d); font-weight: 900; } .nopass { color: var(--red-d); font-weight: 900; }
+  .label { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; font-weight: 800; margin: 10px 0 2px; }
+  .quote { font-size: 15px; background: var(--blue-l); color: #135f82; border-radius: 12px; padding: 10px 12px; }
+
+  .events { background: #fff; border: 2px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .ev { border-bottom: 1px solid var(--line); }
+  .ev:last-child { border-bottom: 0; }
+  .ev > summary { list-style: none; display: grid; grid-template-columns: 64px 118px 1fr; gap: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; align-items: baseline; }
+  .ev > summary::-webkit-details-marker { display: none; }
+  .ev .time { font-family: var(--mono); color: var(--faint); font-size: 12px; }
+  .ev .kind { font-family: var(--mono); font-size: 12px; color: var(--blue-d); font-weight: 700; }
+  .ev .what { color: var(--ink); word-break: break-word; }
+  .ev.bad .kind { color: var(--red-d); }
+  .ev pre { margin: 0; padding: 8px 12px 12px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word; background: #fcfcfc; color: #555; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 9px 14px; border-radius: 12px; font-size: 14px; display: none; }
+  @media (max-width: 560px) { .ev > summary { grid-template-columns: 54px 1fr; } .ev .what { grid-column: 1 / -1; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="back" href="/buddy" aria-label="Back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></a>
+    <h1>Debug</h1>
+    <span class="live" id="live"><i></i><span id="live-t">live</span></span>
+    <button class="btn" id="copy">Copy</button>
+  </header>
+
+  <div class="status" id="status"></div>
+
+  <div class="tabs" id="tabs">
+    <button data-game="teach" class="on">Teach the Robot</button>
+    <button data-game="recall">Picture Recall</button>
+    <button data-game="turns">Take Turns</button>
+  </div>
+  <div class="bar">
+    <select id="session"></select>
+    <button class="btn" id="follow">Follow newest</button>
+  </div>
+
+  <div id="steps-h"><h2>What Pip did, step by step</h2></div>
+  <div class="steps" id="steps"></div>
+  <h2>Every event</h2>
+  <div class="events" id="events"></div>
+  <h2>Robot vision helper output</h2>
+  <div class="log" id="eyes-log">(nothing yet)</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let game = new URLSearchParams(location.search).get("game") || "teach", session = "", follow = true, last = null, open = new Set();
+const ICON = { ok: "✓", warn: "!", fail: "✕", skip: "–" };
+
+async function get(p) { const r = await fetch(p, { cache: "no-store" }); if (!r.ok) throw new Error(r.status); return r.json(); }
+function toast(m) { const t = $("toast"); t.textContent = m; t.style.display = "block"; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = "none", 2000); }
+const sw = (c) => `<span class="sw" style="--c:var(--c-${esc(c)}, #bbb)"></span>${esc(c)}`;
+const dur = (s) => s == null ? "" : s < 1 ? `${Math.round(s * 1000)} ms` : `${s.toFixed(1)} s`;
+
+// ---------- status strip
+function chip(label, state, value, why) {
+  return `<div class="chip ${state}"><small>${label}</small><b>${esc(value)}</b>${why ? `<div class="why">${esc(why)}</div>` : ""}</div>`;
+}
+async function loadStatus() {
+  const s = await get("/api/buddy/status"), t = s.table, e = s.eyes;
+  const cam = t.connected && t.fresh;
+  const gem = e.gemini == null ? ["", "unknown"] : e.gemini ? ["ok", "key found"] : ["fail", "no key"];
+  const gemErr = (e.log || []).slice().reverse().find((l) => /429|Gemini|gemini/.test(l) && /error|HTTP|Unavailable/i.test(l));
+  $("status").innerHTML = [
+    chip("Camera", cam ? "ok" : "fail", cam ? "seeing the board" : "off", cam ? "" : "Turn on the table (⚙ on the home screen)"),
+    chip("Pip's arm", s.pip.error ? "warn" : s.pip.busy ? "warn" : "ok", s.pip.busy ? `busy: ${s.pip.step}` : "ready", s.pip.error ? `last error: ${s.pip.error}` : ""),
+    chip("Robot's eyes", e.ready ? "ok" : e.error ? "fail" : "", e.ready ? "ready" : e.error ? "not working" : "starts with a table game", e.error || ""),
+    chip("Gemini", gemErr ? "warn" : gem[0], gem[1], gemErr ? gemErr.slice(0, 120) : ""),
+  ].join("");
+  $("eyes-log").textContent = (e.log || []).length ? e.log.join("\n") : "(nothing yet)";
+}
+
+// ---------- one step card (Teach the Robot's trace)
+function stepBody(d) {
+  const x = d.details;
+  if (x == null) return "";
+  let h = "";
+  if (d.step === "extractor") {
+    h += `<div class="kv"><span>command</span><code>python ${esc(x.command)}</code><span>runs in</span><code>${esc(x.cwd)}</code><span>exit code</span><code>${esc(x.exit_code)}</code></div>`;
+    h += `<div class="label">Everything it printed</div><div class="log">${(x.output || []).map((l) => `<span class="${/error|refus|no calibration|WARNING|fail/i.test(l) ? "err" : /\[extract\]/.test(l) ? "hi" : ""}">${esc(l)}</span>`).join("\n") || "(nothing)"}</div>`;
+    return h;
+  }
+  if (d.step === "gate") {
+    const g = x.gate || {};
+    if ((g.checks || []).length) h += `<div class="label">Gate checks</div><table><tr><th>check</th><th>result</th><th>why</th></tr>${g.checks.map((c) =>
+      `<tr><td><code>${esc(c.name)}</code></td><td class="${c.passed ? "pass" : "nopass"}">${c.passed ? "passed" : "failed"}</td><td>${esc((g.reasons || {})[c.name] || ((g.notes || {})[c.name] || []).join("; "))}</td></tr>`).join("")}</table>`;
+    if ((x.steps || []).length) h += `<div class="label">Steps the extractor found</div><table><tr><th>#</th><th>cell</th><th>level</th><th>color</th><th>decided by</th><th>camera</th><th>robot memory</th></tr>${x.steps.map((r) =>
+      `<tr><td>${r.step}</td><td>${esc(r.cell)}</td><td>${r.level}</td><td>${sw(r.color)}</td><td>${esc(r.color_source)}</td><td>${esc(r.camera_color)}</td><td>${esc(r.robot_memory_color ?? "-")}</td></tr>`).join("")}</table>`;
+    const rest = { frames: x.frames, corrections: x.corrections, transients: x.transients, skipped_boards: x.skipped_boards, unusable: x.unusable, gemini: x.gemini };
+    h += `<div class="label">More from the extractor's report</div><div class="log">${esc(JSON.stringify(rest, null, 2))}</div>`;
+    return h;
+  }
+  if (d.step === "narration" && x.transcript) {
+    h += `<div class="label">Transcript</div><div class="quote">"${esc(x.transcript)}"</div>`;
+    if ((x.placements || []).length) h += `<div class="label">Placements it heard</div><table><tr><th>time</th><th>said</th><th>color</th><th>cell</th></tr>${x.placements.map((p) =>
+      `<tr><td>${esc(p.t)}</td><td>${esc(p.text)}</td><td>${sw(p.color)}</td><td>${esc(p.cell ?? "-")}</td></tr>`).join("")}</table>`;
+    return h + `<div class="kv"><span>model</span><code>${esc(x.model)}</code></div>`;
+  }
+  if (d.step === "result" && (x.steps || []).length) {
+    h += `<table><tr><th>#</th><th>color</th><th>cell</th><th>level</th><th>narration</th></tr>${x.steps.map((s, i) =>
+      `<tr><td>${i + 1}</td><td>${sw(s.color)}</td><td>${esc(s.cell)}</td><td>${s.level}</td><td>${esc(s.narration ?? "")}</td></tr>`).join("")}</table>`;
+    return h + `<div class="kv"><span>learned from</span><code>${esc(x.via)}</code></div>`;
+  }
+  if (typeof x === "string") return `<div class="log">${esc(x)}</div>`;
+  return `<div class="log">${esc(JSON.stringify(x, null, 2))}</div>`;
+}
+
+function renderSteps(events) {
+  const traces = events.filter((e) => e.kind === "trace");
+  $("steps-h").style.display = game === "teach" ? "block" : "none";
+  if (game !== "teach") { $("steps").innerHTML = ""; return; }
+  if (!traces.length) { $("steps").innerHTML = `<div class="empty">No recording processed in this session yet. Teach Pip something, then come back.</div>`; return; }
+  $("steps").innerHTML = traces.map((e, i) => {
+    const d = e.data, key = `${e.session}:${i}`;
+    return `<details class="step ${esc(d.status)}" data-key="${key}" ${open.has(key) || (d.status === "fail" && !open.size) ? "open" : ""}>
+      <summary><span class="ico">${ICON[d.status] || "•"}</span><div><div class="t1">${esc(d.title)}</div><div class="t2">${esc(d.summary)}</div></div><span class="dur">${dur(d.seconds)}</span></summary>
+      ${d.details != null ? `<div class="body">${stepBody(d)}</div>` : ""}</details>`;
+  }).join("");
+}
+
+// ---------- every event, readable
+function what(e) {
+  const d = e.data || {};
+  switch (e.kind) {
+    case "trace": return `${d.title}: ${d.summary}`;
+    case "session_start": return `started ${d.game || ""} (${d.source || ""})${d.profile ? ", player " + d.profile : ""}`;
+    case "session_end": return `ended: ${d.outcome || d.phase || ""}`;
+    case "round": return `round ${d.round}: ${d.right ?? ""}${d.total ? "/" + d.total : ""} right, ${d.stars ?? "-"} stars${d.mistakes != null ? `, ${d.mistakes} slips` : ""}`;
+    case "turn": return `${d.who} ${d.cell ? `${d.color} on ${d.cell}` : ""} ${d.result ?? (d.landed === false ? "missed" : d.landed ? "landed" : "")} ${d.error ? "error: " + d.error : ""}`;
+    case "scan": return `scan by ${d.source}: ${d.agree ? "robot and camera agree" : "differ on " + Object.keys(d.diffs || {}).join(", ")}${d.naming ? ", colors from " + d.naming : ""}`;
+    case "bank_check": return `bank: Gemini saw [${(d.colors || []).join(", ")}], needed [${[].concat(d.need || []).join(", ")}]${d.error ? " error: " + d.error : ""}`;
+    case "placed": return `step ${d.step}: ${d.color} on ${d.cell}${d.level ? " (on top)" : ""}: ${d.landed ? "landed" : "missed"}`;
+    case "place_error": return `step ${d.step}: robot said "${d.error}"`;
+    case "help": return `asked for ${d.kind}${d.arm ? " (arm)" : ""}`;
+    case "saved": return `saved "${d.title}" (${d.steps} steps)`;
+    case "extractor": return d.line;
+    default: return JSON.stringify(d).slice(0, 160);
+  }
+}
+function renderEvents(events) {
+  if (!events.length) { $("events").innerHTML = `<div class="empty" style="border:0">No events.</div>`; return; }
+  const t0 = events[0].t;
+  $("events").innerHTML = events.map((e) => {
+    const bad = /error|fail|crash/.test(e.kind) || (e.data && (e.data.status === "fail" || e.data.error));
+    return `<details class="ev ${bad ? "bad" : ""}"><summary><span class="time">+${(e.t - t0).toFixed(1)}s</span><span class="kind">${esc(e.kind)}</span><span class="what">${esc(what(e))}</span></summary><pre>${esc(JSON.stringify(e.data, null, 2))}</pre></details>`;
+  }).join("");
+}
+
+// ---------- sessions and refresh
+async function loadSessions() {
+  const s = await get(`/api/buddy/sessions?game=${game}`);
+  const sel = $("session");
+  sel.innerHTML = s.sessions.length ? s.sessions.map((x) => `<option value="${esc(x.id)}">${new Date(x.t * 1000).toLocaleString()} · ${esc(x.id)}</option>`).join("")
+                                    : `<option value="">No sessions yet</option>`;
+  if (follow || !s.sessions.some((x) => x.id === session)) session = s.sessions[0]?.id || "";
+  sel.value = session;
+}
+async function loadTrace() {
+  const d = await get(`/api/buddy/trace?game=${game}&session=${encodeURIComponent(session)}`);
+  const key = JSON.stringify(d.events.length) + d.session + (d.events.at(-1)?.t || "");
+  last = d;
+  if (loadTrace.key === key) return;
+  loadTrace.key = key;
+  renderSteps(d.events); renderEvents(d.events);
+}
+async function tick() {
+  try { await loadStatus(); await loadSessions(); await loadTrace(); $("live").classList.remove("off"); $("live-t").textContent = "live"; }
+  catch (e) { $("live").classList.add("off"); $("live-t").textContent = "app not reachable"; }
+  setTimeout(tick, 1500);
+}
+
+document.addEventListener("toggle", (e) => { const k = e.target.dataset?.key; if (k) e.target.open ? open.add(k) : open.delete(k); }, true);
+$("tabs").onclick = (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  game = b.dataset.game; follow = true; open.clear(); loadTrace.key = "";
+  document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("on", x === b));
+  history.replaceState(null, "", `?game=${game}`); tick.now?.();
+  loadSessions().then(loadTrace).catch(() => {});
+};
+$("session").onchange = () => { session = $("session").value; follow = false; loadTrace.key = ""; $("follow").classList.remove("primary"); loadTrace(); };
+$("follow").onclick = () => { follow = true; loadTrace.key = ""; $("follow").classList.add("primary"); loadSessions().then(loadTrace); };
+$("copy").onclick = async () => {
+  try { await navigator.clipboard.writeText(JSON.stringify(last, null, 2)); toast("Session copied"); }
+  catch (e) { toast("Copy not allowed here"); }
+};
+document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("on", x.dataset.game === game));
+$("follow").classList.add("primary");
+tick();
+</script>
+</body>
+</html>

@@ -164,6 +164,11 @@ def narration(path: str) -> dict:
 
 
 def main() -> None:
+    # The games use only the colors in play (robot ACTIVE_COLORS). The robot's namer also knows its
+    # extra colors (sky blue, orange) and once named a teal block "light blue", which then disagreed
+    # with the camera; in this helper process only, it chooses among the colors in play.
+    from robot.perception.config import ACTIVE_COLORS
+    naming.NAMEABLE = list(ACTIVE_COLORS)
     localizer = SheetLocalizer()
     say({"ready": True, "cell_map": cell_map(), "gemini": gemini_namer.available()})
     for line in sys.stdin:

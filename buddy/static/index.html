@@ -201,8 +201,9 @@
   .power-row b.on { color: var(--green-d); } .power-row b.off { color: #afafaf; } .power-row b.outside { color: var(--orange-d); }
   #power .note { min-height: 18px; }
   .side { font-size: 12px; font-weight: 800; color: #afafaf; text-transform: uppercase; letter-spacing: .08em; margin: -6px 0; }
-  #dbgBtn { position: fixed; right: 12px; bottom: 12px; z-index: 20; border: 2px solid var(--line); background: #fff; color: #777;
-            font: 800 12px/1 inherit; font-family: inherit; padding: 9px 12px; border-radius: 12px; opacity: .8; }
+  #dbgBtn { position: fixed; right: 12px; bottom: 76px; z-index: 20; border: 2px solid var(--line); background: #fff; color: #777;
+            font-family: inherit; font-weight: 800; font-size: 13px; line-height: 1; padding: 9px 12px; border-radius: 12px;
+            box-shadow: 0 3px 0 var(--line); cursor: pointer; }
   #dbg { position: fixed; inset: auto 0 0 0; height: 70vh; z-index: 19; background: #1f2430; color: #d7dde8; display: none;
          flex-direction: column; border-radius: 16px 16px 0 0; }
   #dbg.on { display: flex; }
@@ -373,6 +374,7 @@
     <button class="btn orange" id="pw-off">Turn off table</button>
   </div>
   <button class="btn ghost" id="pw-stop" style="color:var(--red-d)">Shut down app</button>
+  <a class="btn ghost" href="/buddy/debug" style="margin-top:12px;text-decoration:none">Open debug page</a>
   <p class="note" style="margin-top:10px">Turning on wakes the arm, and it moves: clear the area first. Turning off sets the arm
     down at its rest spot, then releases it. The 12 V plug is always the hard stop.</p>
 </div></div>
@@ -841,7 +843,7 @@ async function dbgPoll() {
   } catch (e) { $("dbgOut").textContent = "debug failed: " + e.message; }
   setTimeout(dbgPoll, 1000);
 }
-$("dbgBtn").onclick = () => { dbgOn = true; $("dbg").classList.add("on"); dbgPoll(); };
+$("dbgBtn").onclick = () => { location.href = "/buddy/debug"; };   // the full debug page
 $("dbgClose").onclick = () => { dbgOn = false; $("dbg").classList.remove("on"); };
 $("dbgCopy").onclick = () => { try { navigator.clipboard.writeText($("dbgOut").textContent); toast("Copied"); } catch (e) { toast("Select the text to copy"); } };
 
