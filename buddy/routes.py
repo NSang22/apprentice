@@ -24,6 +24,9 @@ Take Turns (buddy/turns_session.py), same table, camera and arm; one game runs a
     POST /api/buddy/turns/next
     POST /api/buddy/turns/quit
 
+Teach the Robot (buddy/teach_session.py): GET /buddy/teach, GET /api/buddy/teach/state, POST
+/api/buddy/teach/{start, tap, undo, done, save, build, ready, quit}.
+
 The dashboard runs table_task() for the camera board (perception ws :8765).
 """
 
@@ -37,6 +40,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from buddy.session import BuddySession
+from buddy.teach_session import TeachSession
 from buddy.turns_session import TurnsSession
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -44,6 +48,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 router = APIRouter()
 game = BuddySession()
 turns = TurnsSession(table=game.table, eyes=game.eyes, pip=game.pip, profile=game.profile)
+teach = TeachSession(table=game.table, eyes=game.eyes, pip=game.pip, profile=game.profile)
 
 
 def table_task():
@@ -106,6 +111,7 @@ def settings(body: SettingsBody):
 def start(body: StartBody):
     try:
         turns.quit()  # one game at a time: there is one table
+        teach.quit()
         game.start(body.game)
     except ValueError as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
@@ -164,6 +170,7 @@ def turns_state():
 def turns_start():
     try:
         game.quit()  # one game at a time: there is one table
+        teach.quit()
         turns.start()
     except ValueError as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
@@ -198,3 +205,80 @@ def turns_next():
 def turns_quit():
     turns.quit()
     return turns.state()
+
+
+# ---------------------------------------------------------------- Teach the Robot
+
+class TapBody(BaseModel):
+    cell: str
+    color: str
+
+
+class SaveBody(BaseModel):
+    name: str = ""
+
+
+class BuildBody(BaseModel):
+    lesson_id: Optional[str] = None
+
+
+def _teach(fn):
+    try:
+        fn()
+    except (ValueError, FileNotFoundError) as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    return teach.state()
+
+
+@router.get("/buddy/teach")
+def teach_page():
+    return FileResponse(STATIC / "teach.html", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/buddy/teach/state")
+def teach_state():
+    return teach.state()
+
+
+@router.post("/api/buddy/teach/start")
+def teach_start():
+    game.quit()  # one game at a time: there is one table
+    turns.quit()
+    return _teach(teach.start_teaching)
+
+
+@router.post("/api/buddy/teach/tap")
+def teach_tap(body: TapBody):
+    return _teach(lambda: teach.tap(body.cell, body.color))
+
+
+@router.post("/api/buddy/teach/undo")
+def teach_undo():
+    return _teach(teach.undo)
+
+
+@router.post("/api/buddy/teach/done")
+def teach_done():
+    return _teach(teach.done_teaching)
+
+
+@router.post("/api/buddy/teach/save")
+def teach_save(body: SaveBody):
+    return _teach(lambda: teach.save(body.name))
+
+
+@router.post("/api/buddy/teach/build")
+def teach_build(body: BuildBody):
+    game.quit()
+    turns.quit()
+    return _teach(lambda: teach.build(body.lesson_id))
+
+
+@router.post("/api/buddy/teach/ready")
+def teach_ready():
+    return _teach(teach.ready)
+
+
+@router.post("/api/buddy/teach/quit")
+def teach_quit():
+    return _teach(teach.quit)

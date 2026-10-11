@@ -115,6 +115,16 @@ class TableBoard:
         self.latest: Optional[dict] = None   # raw board of the last frame
         self.stable: Optional[dict] = None   # last board the stabilizer emitted
         self.stable_t = 0.0
+        self.recording: Optional[list[dict]] = None   # Teach the Robot: every GridState while recording
+
+    def record_start(self) -> None:
+        with self.lock:
+            self.recording = []
+
+    def record_stop(self) -> list[dict]:
+        with self.lock:
+            frames, self.recording = self.recording or [], None
+            return frames
 
     async def run(self) -> None:
         while True:
@@ -130,10 +140,13 @@ class TableBoard:
 
     def _feed(self, msg) -> None:
         try:
-            gs = GridState.from_dict(json.loads(msg))
+            raw = json.loads(msg)
+            gs = GridState.from_dict(raw)
         except Exception:
             return
         with self.lock:
+            if self.recording is not None:
+                self.recording.append(raw)
             self.last_t = time.time()
             self.hands_clear, self.latest = gs.hands_clear, gs.board
             board = self.stabilizer.feed(gs)
@@ -301,14 +314,15 @@ class Pip:
             self.step = "homing"
         self._run(job)
 
-    def place(self, cell: str, color: str, should_stop: Callable[[], bool] = lambda: False) -> None:
-        """Take Turns: pick a block of `color` from the supply below the grid and put it on `cell`."""
+    def place(self, cell: str, color: str, should_stop: Callable[[], bool] = lambda: False, level: int = 0) -> None:
+        """Pick a block of `color` from the supply beside the grid and put it on `cell` at `level`
+        (Take Turns: always 0; Teach the Robot rebuilds: 1 stacks on the block already there)."""
         def job():
             if not self._wait_hands(should_stop):
                 self.error = "hands"
                 return
             self.step = "placing"
-            reply = self.client.place(color, self.to_robot_cell(cell), 0)
+            reply = self.client.place(color, self.to_robot_cell(cell), level)
             if not reply.get("ok"):
                 self.error = reply.get("error", "place failed")
                 return
