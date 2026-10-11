@@ -46,3 +46,4 @@ build/
 Thumbs.db
 .vscode/
 .idea/
+data/buddy/

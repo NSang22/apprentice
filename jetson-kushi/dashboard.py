@@ -54,6 +54,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 from websockets.asyncio.client import connect  # noqa: E402
 
+from buddy.routes import router as buddy_router  # noqa: E402
 from robot import web_control  # noqa: E402
 from robot.control_shared import ARM_SHEET_CALIB, PLACEMENT_CORR, file_age_str  # noqa: E402
 from robot.perception import config as cam_config  # noqa: E402
@@ -635,6 +636,10 @@ def calibrate_page():
 @app.get("/ui")
 def ui_redirect():
     return RedirectResponse("/ui/")
+
+
+# Apprentice Buddy, the children's game app (buddy/): /buddy and /api/buddy/*.
+app.include_router(buddy_router)
 
 
 app.mount("/ui", StaticFiles(directory=str(REPO_ROOT / "ui"), html=True), name="ui")
