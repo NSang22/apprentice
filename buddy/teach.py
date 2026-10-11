@@ -190,10 +190,15 @@ def check_narration(steps: list, placements: list[dict]) -> dict:
     """Spoken placements vs the steps the camera saw. The grid decides (AGENTS.md rule 2): this
     only fills each matching step's narration and lists where speech and grid disagree."""
     notes, matched = [], 0
+    in_play = set(active_colors())
+    # People call the teal block "light blue" (heard in a real recording): when sky blue is not in
+    # play, a spoken sky blue means teal.
+    said_as = {"skyblue": "teal"} if "skyblue" not in in_play and "teal" in in_play else {}
     for p in placements:
         if not isinstance(p, dict) or p.get("action", "place") != "place":
             continue
-        cell, color, text = p.get("cell"), p.get("color"), str(p.get("text") or "").strip()
+        cell, text = p.get("cell"), str(p.get("text") or "").strip()
+        color = said_as.get(p.get("color"), p.get("color"))
         if cell not in {s.cell for s in steps}:
             if cell:
                 notes.append(f"I heard \"{text or color + ' on ' + cell}\", but I didn't see a block on {cell}.")
