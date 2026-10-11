@@ -13,7 +13,8 @@ const CELLS = COLUMNS.flatMap((c) => ROWS.map((r) => c + r));
 // 1 unit = one cell (57.15 mm). Cubes are 48 mm foam.
 const CUBE = 48 / 57.15;
 const LIFT = 0.004;                       // cubes sit just above the paper (no z-fighting)
-const CUBE_HEX = { red: 0xd9423f, blue: 0x2f6ed8, yellow: 0xf3c22f, green: 0x2f9d5c };
+// Playskool silicone blocks; setColors() swaps in the measured colors from perception/calib/colors.json.
+const CUBE_HEX = { red: 0xe2383f, orange: 0xf5862a, yellow: 0xf6c933, teal: 0x16a59b, skyblue: 0x62bdea, purple: 0x8a5cc7 };
 const UNKNOWN_HEX = 0x7a808a;
 const AMBER = 0xf5b041;
 const OK_GREEN = 0x4ade80;
@@ -325,7 +326,7 @@ export function createView3D(container) {
   // ------------------------------------------------------------ dynamic content
 
   const cubes = new Map();     // "A1:0" -> { mesh, color, born, dying }
-  let side = null, ghost = null, column = null, arrow = null, glows = [];
+  let side = null, ghost = null, column = null, arrow = null, lift = null, glows = [];
   let phase = "nodata", spin = 0, spinGoal = 0, pulses = [], burst = null;
   let active = false, raf = 0, last = 0;
 
@@ -334,9 +335,25 @@ export function createView3D(container) {
     return new THREE.Vector3(x, LIFT + CUBE / 2 + level * CUBE, z);
   }
 
+  const unknownTex = canvasTexture(128, 128, (g, w, h) => {
+    g.fillStyle = "rgba(20,24,30,0.85)";
+    g.beginPath(); g.arc(w / 2, h / 2, w / 2 - 4, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#fff";
+    g.font = "800 92px Segoe UI, system-ui, sans-serif";
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText("?", w / 2, h / 2 + 6);
+  });
+
   function makeCube(color) {
     const mat = new THREE.MeshStandardMaterial({ color: CUBE_HEX[color] ?? UNKNOWN_HEX, roughness: 0.92, metalness: 0, transparent: true });
     const mesh = new THREE.Mesh(cubeGeo, mat);
+    if (!(color in CUBE_HEX)) {   // unknown: gray block with a "?" that always faces the camera
+      const mark = new THREE.Sprite(new THREE.SpriteMaterial({ map: unknownTex, depthTest: false }));
+      mark.scale.set(0.55, 0.55, 1);
+      mark.position.y = CUBE * 0.95;
+      mark.renderOrder = 11;
+      mesh.add(mark);
+    }
     mesh.castShadow = mesh.receiveShadow = true;
     const ao = new THREE.Mesh(aoGeo, new THREE.MeshBasicMaterial({ map: aoTex, transparent: true, depthWrite: false }));
     ao.rotation.x = -Math.PI / 2;
@@ -378,9 +395,24 @@ export function createView3D(container) {
   }
 
   function clearHints() {
-    for (const o of [ghost, column, arrow, ...glows]) if (o) disposeObj(o);
-    ghost = column = arrow = null;
+    for (const o of [ghost, column, arrow, lift, ...glows]) if (o) disposeObj(o);
+    ghost = column = arrow = lift = null;
     glows = [];
+  }
+
+  // EXTRA: an arrow rising straight up off the block ("take it off"), never toward another cell.
+  function makeLift(pos) {
+    const group = new THREE.Group();
+    const mat = new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0.95, depthTest: false });
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.7, 16), mat);
+    shaft.position.y = 0.35;
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.24, 0.42, 20), mat.clone());
+    head.position.y = 0.9;
+    for (const m of [shaft, head]) { m.renderOrder = 10; group.add(m); }
+    group.position.set(pos.x, pos.y + CUBE * 0.6, pos.z);
+    group.userData.base = group.position.y;
+    board.add(group);
+    return group;
   }
 
   function makeGhost(color, pos, strong) {
@@ -446,7 +478,7 @@ export function createView3D(container) {
     return m;
   }
 
-  // view: { s, phase, side, faultVisible, arrow: [from, to] | null, activity }
+  // view: { s, phase, side, faultVisible, arrow: [from, to] | null, lift: cell | null, unsure: cell | null, activity }
   function update(view) {
     const s = view.s;
     if (view.side !== side) {
@@ -461,8 +493,9 @@ export function createView3D(container) {
     clearHints();
     if (!s) { setCubes({}); arm.aim(null, 1); return; }
 
-    // Ready shows the finished structure turning slowly; complete shows what was built.
-    setCubes(phase === "ready" && s.finalBoard ? s.finalBoard : s.board);
+    // Always the live board (SessionState.board), in every phase; the ready screen's thumbnail
+    // shows the goal. Ready and complete turn the table slowly.
+    setCubes(s.board);
     spinGoal = phase === "ready" || phase === "complete" ? 1 : 0;
 
     let armTarget = null, armOpen = 1;
@@ -475,6 +508,7 @@ export function createView3D(container) {
         [ghost, column] = makeGhost(color, cellPos(cell, level), s.mode === "human" && s.hintLevel >= 2);
       }
       if (view.faultVisible && s.faultCell) glows.push(makeGlow(s.faultCell));
+      if (view.lift) lift = makeLift(cellPos(view.lift, Math.max(0, s.board[view.lift].length - 1)));
       if (view.arrow) {
         const [from, to] = view.arrow;
         const fromLevel = Math.max(0, s.board[from].length - 1);
@@ -581,6 +615,11 @@ export function createView3D(container) {
     }
     for (const g of glows) g.material.opacity = 0.5 + 0.25 * (0.5 + 0.5 * Math.sin(t * 2.4));
     if (arrow) arrow.userData.tex.offset.x -= dt * 1.4;
+    if (lift) {   // rise and fade, again and again: "lift it off"
+      const f = (t * 0.8) % 1;
+      lift.position.y = lift.userData.base + 0.6 * f;
+      lift.children.forEach((m) => { m.material.opacity = 0.95 * (1 - f * f); });
+    }
 
     pulses = pulses.filter((p) => {
       const f = (now - p.born) / 800;
@@ -615,5 +654,16 @@ export function createView3D(container) {
     if (on) { resize(); raf = requestAnimationFrame(frame); } else cancelAnimationFrame(raf);
   }
 
-  return { update, setActive, pass };
+  // Measured block colors ({ red: "#d8342f", ... }). Cubes already on the board recolor at once.
+  function setColors(hexByColor) {
+    for (const [color, hex] of Object.entries(hexByColor)) {
+      if (!(color in CUBE_HEX) || !/^#[0-9a-f]{6}$/i.test(hex)) continue;
+      CUBE_HEX[color] = parseInt(hex.slice(1), 16);
+    }
+    for (const cube of cubes.values()) {
+      if (cube.color in CUBE_HEX) cube.mesh.material.color.setHex(CUBE_HEX[cube.color]);
+    }
+  }
+
+  return { update, setActive, pass, setColors };
 }
