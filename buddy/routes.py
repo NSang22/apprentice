@@ -3,11 +3,15 @@
     GET  /buddy                  the phone app (buddy/static/index.html)
     GET  /api/buddy/state        everything the screen needs; the phone polls it
     POST /api/buddy/profile      {name, avatar}
+    POST /api/buddy/settings     {difficulty, build_s, source}
     POST /api/buddy/start        {game}
     POST /api/buddy/cell         {cell, color|null}   practice mode: the phone is the board
-    POST /api/buddy/check        grade the board
+    POST /api/buddy/choose       {kind: "hint"|"fix"}
+    POST /api/buddy/rescan       scan the table again
     POST /api/buddy/next         next round (or the summary)
-    POST /api/buddy/quit         back to the path screen
+    POST /api/buddy/quit         back to the game picker
+
+The dashboard runs table_task() for the camera board (perception ws :8765).
 """
 
 from __future__ import annotations
@@ -27,9 +31,20 @@ router = APIRouter()
 game = BuddySession()
 
 
+def table_task():
+    """Coroutine for the dashboard's event loop: keeps the camera board up to date."""
+    return game.table.run()
+
+
 class ProfileBody(BaseModel):
     name: str = ""
     avatar: str = "teal"
+
+
+class SettingsBody(BaseModel):
+    difficulty: Optional[str] = None
+    build_s: Optional[int] = None
+    source: Optional[str] = None
 
 
 class StartBody(BaseModel):
@@ -39,6 +54,10 @@ class StartBody(BaseModel):
 class CellBody(BaseModel):
     cell: str
     color: Optional[str] = None
+
+
+class ChooseBody(BaseModel):
+    kind: str
 
 
 @router.get("/buddy")
@@ -57,6 +76,12 @@ def profile(body: ProfileBody):
     return game.state()
 
 
+@router.post("/api/buddy/settings")
+def settings(body: SettingsBody):
+    game.set_settings(body.difficulty, body.build_s, body.source)
+    return game.state()
+
+
 @router.post("/api/buddy/start")
 def start(body: StartBody):
     try:
@@ -72,9 +97,15 @@ def cell(body: CellBody):
     return game.state()
 
 
-@router.post("/api/buddy/check")
-def check():
-    game.check()
+@router.post("/api/buddy/choose")
+def choose(body: ChooseBody):
+    game.choose(body.kind)
+    return game.state()
+
+
+@router.post("/api/buddy/rescan")
+def rescan():
+    game.rescan()
     return game.state()
 
 

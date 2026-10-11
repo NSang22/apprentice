@@ -54,7 +54,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 from websockets.asyncio.client import connect  # noqa: E402
 
-from buddy.routes import router as buddy_router  # noqa: E402
+from buddy.routes import router as buddy_router, table_task as buddy_table_task  # noqa: E402
 from robot import web_control  # noqa: E402
 from robot.control_shared import ARM_SHEET_CALIB, PLACEMENT_CORR, file_age_str  # noqa: E402
 from robot.perception import config as cam_config  # noqa: E402
@@ -651,6 +651,7 @@ app.mount("/videos", StaticFiles(directory=str(REPO_ROOT / "videos"), check_dir=
 async def lifespan(_app):
     threading.Thread(target=hub.watch, daemon=True).start()
     tasks = [asyncio.create_task(tap.run()) for tap in TAPS.values()]
+    tasks.append(asyncio.create_task(buddy_table_task()))
     try:
         yield
     finally:

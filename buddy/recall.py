@@ -18,22 +18,15 @@ from shared.config import CELLS, UNKNOWN
 MAX_PER_COLOR = 2
 
 
-@dataclass(frozen=True)
-class Level:
-    blocks: int
-    show_s: float
+# One lesson: 1, 2, 3, then 4 blocks, then new 4-block patterns.
+BLOCKS_PER_ROUND = [1, 2, 3, 4, 4, 4, 4, 4]
 
-
-# Each level is a little harder than the last: one more block, or the same blocks for less time.
-LEVELS = [
-    Level(2, 6.0), Level(3, 6.0), Level(3, 4.5), Level(4, 6.0), Level(4, 4.5),
-    Level(5, 6.0), Level(5, 5.0), Level(6, 7.0), Level(6, 5.5), Level(7, 7.0),
-]
-
-
-def level(n: int) -> Level:
-    """Level n, counted from 1. Past the last level the last one repeats."""
-    return LEVELS[max(0, min(n, len(LEVELS)) - 1)]
+# How long the pattern shows, by difficulty (the grown-up picks it before the lesson).
+LOOK_S = {"easy": 7.0, "medium": 5.0, "hard": 3.0}
+# How long the child has to build, picked for the child's age.
+BUILD_S = (10, 15, 20, 30)
+# After a hint or a fix: time to finish the pattern.
+RETRY_S = 20
 
 
 def make_pattern(blocks: int, colors: list[str], rng: random.Random) -> dict[str, str]:
@@ -121,21 +114,47 @@ def block_count(board: dict[str, list[str]]) -> int:
     return sum(1 for stack in board.values() if stack)
 
 
-def xp_for(g: Grade, level_n: int, hints: int = 0) -> int:
-    """5 per right block, a perfect bonus that grows with the level, never below 1 for trying."""
-    xp = 5 * g.right + (5 + 2 * level_n if g.perfect else 0) - 3 * hints
-    return max(1, xp)
+def stars_for(g: Grade, helped: bool) -> int:
+    """3 stars right first time, 2 right after a hint or fix, 1 for trying."""
+    if g.perfect:
+        return 2 if helped else 3
+    return 1
 
 
-def mood_line(g: Grade, name: Optional[str] = None) -> tuple[str, str]:
+def xp_for(g: Grade, stars: int) -> int:
+    return 5 * stars + g.right
+
+
+def hint_cell(target: dict[str, str], g: Grade) -> Optional[str]:
+    """The one square Pip points at: a missing block first (where to put one), then a wrong
+    color, then a block that does not belong."""
+    for kind in (MISSING, WRONG_COLOR, EXTRA):
+        for cell in sorted(g.cells):
+            if g.cells[cell] == kind:
+                return cell
+    return None
+
+
+def fix_cells(g: Grade) -> list[str]:
+    """Blocks Pip takes off: wrong colors and blocks that do not belong."""
+    return sorted(c for c, v in g.cells.items() if v in (WRONG_COLOR, EXTRA))
+
+
+def hint_line(target: dict[str, str], g: Grade, cell: str) -> str:
+    if g.cells[cell] == MISSING:
+        return f"This square needs a {target[cell]} block!"
+    if g.cells[cell] == WRONG_COLOR:
+        return f"This one should be {target[cell]}!"
+    return "This block doesn't belong here!"
+
+
+def mood_line(g: Grade, name: Optional[str] = None, helped: bool = False) -> tuple[str, str]:
     """(mood, what the buddy says). Short, kind, never blaming."""
     who = f", {name}" if name else ""
     if g.perfect:
-        return "cheer", f"Amazing{who}! You remembered all {g.total}!"
+        return "cheer", (f"You fixed it{who}! Great job!" if helped else f"Amazing{who}! You remembered it all!")
+    if helped:
+        return "encourage", "Good try! Here's how it looked. Let's do the next one!"
     if g.errors.get("mirror"):
-        return "think", "So close! One block went to the other side. Left and right are tricky!"
-    if g.right >= g.total - 1:
-        return "think", f"Almost{who}! {g.right} of {g.total} right. Let's try another one!"
-    if g.right:
-        return "encourage", f"Good try! You got {g.right} right. Look closely next time!"
-    return "encourage", "That one was tricky! Let's try again together."
+        return "think", "So close! A block went to the other side. Want some help?"
+    return "think", "Not quite! Want a hint, or should I take off the wrong blocks?"

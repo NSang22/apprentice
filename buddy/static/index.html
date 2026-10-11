@@ -12,9 +12,9 @@
   :root {
     --green: #58cc02; --green-d: #58a700; --green-l: #d7ffb8;
     --blue: #1cb0f6; --blue-d: #1899d6; --blue-l: #ddf4ff;
-    --yellow: #ffc800; --yellow-d: #e5a400;
-    --red: #ff4b4b; --red-d: #ea2b2b; --red-l: #ffdfe0;
-    --orange: #ff9600; --orange-l: #fff0d9;
+    --yellow: #ffc800; --yellow-d: #e5a400; --yellow-l: #fff5cc;
+    --red: #ff4b4b; --red-d: #ea2b2b;
+    --orange: #ff9600; --orange-d: #d97c00; --orange-l: #fff0d9;
     --ink: #3c3c3c; --dim: #777; --line: #e5e5e5; --soft: #f7f7f7; --bg: #ffffff;
     --c-red: #ff4b4b; --c-red-d: #d63434;
     --c-yellow: #ffc800; --c-yellow-d: #d9a400;
@@ -22,6 +22,7 @@
     --c-purple: #a560e8; --c-purple-d: #7d3fc0;
     --c-orange: #ff9600; --c-orange-d: #d97c00;
     --c-skyblue: #1cb0f6; --c-skyblue-d: #1590ca;
+    --c-unknown: #bbb; --c-unknown-d: #999;
     --pip: #14c4a8; --pip-d: #0e9a84;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -32,30 +33,28 @@
   .screen { display: none; flex: 1; flex-direction: column; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); }
   .screen.on { display: flex; }
 
-  /* buttons: chunky, with a solid bottom edge, pressed = pushed down */
   .btn { font: inherit; font-weight: 800; font-size: 17px; letter-spacing: .06em; text-transform: uppercase; border: 0;
          border-radius: 16px; padding: 15px 20px; width: 100%; color: #fff; background: var(--green);
-         box-shadow: 0 4px 0 var(--green-d); cursor: pointer; transition: transform .05s, box-shadow .05s; }
+         box-shadow: 0 4px 0 var(--green-d); cursor: pointer; transition: transform .05s, box-shadow .05s;
+         display: flex; align-items: center; justify-content: center; gap: 8px; }
   .btn:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 var(--green-d); }
   .btn:disabled { background: var(--line); color: #afafaf; box-shadow: 0 4px 0 #d0d0d0; }
   .btn.blue { background: var(--blue); box-shadow: 0 4px 0 var(--blue-d); }
-  .btn.red { background: var(--red); box-shadow: 0 4px 0 var(--red-d); }
-  .btn.orange { background: var(--orange); box-shadow: 0 4px 0 #d97c00; }
+  .btn.orange { background: var(--orange); box-shadow: 0 4px 0 var(--orange-d); }
   .btn.ghost { background: #fff; color: var(--blue); border: 2px solid var(--line); box-shadow: 0 4px 0 var(--line); }
+  .btn svg { width: 24px; height: 24px; }
   .icon-btn { background: none; border: 0; padding: 6px; cursor: pointer; color: #afafaf; }
 
-  /* top bar */
-  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0 10px;
-            border-bottom: 2px solid var(--line); margin: 0 -16px 0; padding-left: 16px; padding-right: 16px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 16px 10px;
+            border-bottom: 2px solid var(--line); margin: 0 -16px; }
   .stat { display: flex; align-items: center; gap: 5px; font-weight: 900; font-size: 16px; }
   .stat svg { width: 26px; height: 26px; }
-  .stat.flame { color: var(--orange); } .stat.gem { color: var(--blue); } .stat.heart { color: var(--red); }
+  .stat.flame { color: var(--orange); } .stat.gem { color: var(--blue); } .stat.star { color: var(--yellow-d); }
   .mini-pip { width: 36px; height: 36px; }
 
-  /* mascot */
   .pip-wrap { display: flex; align-items: flex-end; gap: 10px; margin: 14px 0 8px; }
   .pip { width: 110px; height: 120px; flex: none; animation: bob 2.6s ease-in-out infinite; }
-  .pip.small { width: 76px; height: 84px; }
+  .pip.small { width: 72px; height: 80px; }
   .pip .body { fill: var(--pip); } .pip .body-d { fill: var(--pip-d); }
   .pip .eye { transform-box: fill-box; transform-origin: center; animation: blink 4.2s infinite; }
   .pip .mouth { display: none; } .pip .arm-up { display: none; }
@@ -72,34 +71,32 @@
   @keyframes tilt { 0%,100% { transform: rotate(-4deg) } 50% { transform: rotate(4deg) } }
   @keyframes blink { 0%, 92%, 100% { transform: scaleY(1) } 95% { transform: scaleY(.1) } }
   @keyframes glow { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
-  .bubble { position: relative; background: #fff; border: 2px solid var(--line); border-radius: 18px; padding: 12px 14px;
-            font-size: 17px; line-height: 1.3; flex: 1; margin-bottom: 26px; }
-  .bubble::before { content: ""; position: absolute; left: -11px; bottom: 18px; width: 18px; height: 18px; background: #fff;
+  .bubble { position: relative; background: #fff; border: 2px solid var(--line); border-radius: 18px; padding: 11px 14px;
+            font-size: 17px; line-height: 1.3; flex: 1; margin-bottom: 22px; min-height: 48px; }
+  .bubble::before { content: ""; position: absolute; left: -11px; bottom: 16px; width: 18px; height: 18px; background: #fff;
                     border-left: 2px solid var(--line); border-bottom: 2px solid var(--line); transform: rotate(45deg); }
 
-  /* home: unit banner + winding path */
   .unit { background: var(--green); color: #fff; border-radius: 16px; padding: 14px 16px; box-shadow: 0 4px 0 var(--green-d); margin: 6px 0 22px; }
   .unit small { display: block; opacity: .85; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; font-weight: 800; }
   .unit b { font-size: 21px; font-weight: 900; }
-  .path { display: flex; flex-direction: column; align-items: center; gap: 22px; padding-bottom: 90px; }
+  .path { display: flex; flex-direction: column; align-items: center; gap: 26px; padding: 30px 0 90px; }
   .node-row { display: flex; flex-direction: column; align-items: center; position: relative; }
-  .node { width: 76px; height: 70px; border-radius: 50%; border: 0; display: flex; align-items: center; justify-content: center;
+  .node { width: 80px; height: 74px; border-radius: 50%; border: 0; display: flex; align-items: center; justify-content: center;
           background: var(--green); box-shadow: 0 7px 0 var(--green-d); cursor: pointer; position: relative; transition: transform .05s; }
   .node:active { transform: translateY(5px); box-shadow: 0 2px 0 var(--green-d); }
-  .node svg { width: 36px; height: 36px; }
-  .node.locked { background: var(--line); box-shadow: 0 7px 0 #cfcfcf; cursor: default; }
-  .node.locked:active { transform: none; box-shadow: 0 7px 0 #cfcfcf; }
-  .node-label { margin-top: 12px; font-size: 14px; font-weight: 800; color: var(--ink); text-align: center; }
+  .node svg { width: 38px; height: 38px; }
+  .node.soon { background: #e9e9e9; box-shadow: 0 7px 0 #d2d2d2; }
+  .node.soon:active { box-shadow: 0 2px 0 #d2d2d2; }
+  .node-label { margin-top: 12px; font-size: 15px; font-weight: 800; text-align: center; }
   .node-label span { display: block; font-size: 12px; color: var(--dim); font-weight: 700; }
-  .node.locked + .node-label { color: #afafaf; }
-  .start-tag { position: absolute; top: -44px; background: #fff; color: var(--green); border: 2px solid var(--line); border-radius: 12px;
-               padding: 6px 12px; font-weight: 900; font-size: 15px; letter-spacing: .06em; animation: float 1.4s ease-in-out infinite; white-space: nowrap; }
-  .start-tag::after { content: ""; position: absolute; left: 50%; bottom: -8px; width: 12px; height: 12px; background: #fff;
-                      border-right: 2px solid var(--line); border-bottom: 2px solid var(--line); transform: translateX(-50%) rotate(45deg); }
+  .node.soon + .node-label { color: #9a9a9a; }
+  .play-tag { position: absolute; top: -44px; background: #fff; color: var(--green); border: 2px solid var(--line); border-radius: 12px;
+              padding: 6px 12px; font-weight: 900; font-size: 15px; letter-spacing: .06em; animation: float 1.4s ease-in-out infinite; white-space: nowrap; }
+  .play-tag::after { content: ""; position: absolute; left: 50%; bottom: -8px; width: 12px; height: 12px; background: #fff;
+                     border-right: 2px solid var(--line); border-bottom: 2px solid var(--line); transform: translateX(-50%) rotate(45deg); }
   @keyframes float { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-5px) } }
   .ring { position: absolute; inset: -9px; border-radius: 50%; border: 5px solid var(--green-l); pointer-events: none; }
 
-  /* bottom tabs */
   .tabs { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 2px solid var(--line); display: flex;
           justify-content: center; gap: 40px; padding: 8px 0 calc(8px + env(safe-area-inset-bottom)); z-index: 3; }
   .tab { background: none; border: 2px solid transparent; border-radius: 14px; padding: 6px 16px; display: flex; flex-direction: column;
@@ -107,64 +104,79 @@
   .tab svg { width: 30px; height: 30px; }
   .tab.on { color: var(--blue); border-color: #84d8ff; background: var(--blue-l); }
 
-  /* game */
   .game-top { display: flex; align-items: center; gap: 12px; padding: 4px 0 6px; }
   .bar { flex: 1; height: 16px; background: var(--line); border-radius: 99px; overflow: hidden; }
-  .bar i { display: block; height: 100%; width: 0; background: var(--green); border-radius: 99px; transition: width .4s;
-           box-shadow: inset 0 -4px 0 rgba(0,0,0,.08); position: relative; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--green); border-radius: 99px; transition: width .4s; position: relative; }
   .bar i::after { content: ""; position: absolute; left: 10px; right: 10px; top: 3px; height: 4px; border-radius: 9px; background: rgba(255,255,255,.35); }
-  .prompt { font-size: 24px; font-weight: 900; margin: 10px 0 2px; line-height: 1.2; }
+  .prompt { font-size: 25px; font-weight: 900; margin: 8px 0 0; line-height: 1.2; }
   .sub { color: var(--dim); font-size: 15px; font-weight: 700; }
-  .stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 8px 0; }
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: min(84vw, 340px); padding: 12px;
+  .stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 6px 0; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: min(80vw, 330px); padding: 12px;
           background: var(--soft); border: 2px solid var(--line); border-radius: 22px; position: relative; }
   .cell { aspect-ratio: 1; border-radius: 16px; background: #fff; border: 2px solid var(--line); box-shadow: 0 4px 0 var(--line);
-          position: relative; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform .08s; }
+          position: relative; display: flex; align-items: center; justify-content: center; }
+  .cell.tappable { cursor: pointer; }
   .cell.tappable:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--line); }
+  .cell.glow { border-color: var(--yellow); box-shadow: 0 0 0 5px var(--yellow-l), 0 4px 0 var(--yellow-d); animation: pulse 1s ease-in-out infinite; z-index: 1; }
+  @keyframes pulse { 0%,100% { transform: scale(1) } 50% { transform: scale(1.07) } }
   .blk { position: absolute; inset: 7%; border-radius: 13px; background: var(--c); box-shadow: 0 6px 0 var(--cd), inset 0 -6px 0 rgba(0,0,0,.08);
          animation: pop .22s cubic-bezier(.3,1.6,.6,1); }
   .blk::after { content: ""; position: absolute; left: 14%; top: 12%; width: 34%; height: 18%; border-radius: 9px; background: rgba(255,255,255,.4); }
-  .blk.ghost { background: transparent; box-shadow: none; border: 4px dashed var(--c); animation: none; opacity: .8; }
+  .blk.ghost { background: transparent; box-shadow: none; border: 4px dashed var(--c); animation: none; opacity: .85; }
   .blk.ghost::after { display: none; }
+  .blk.fading { opacity: .35; }
   @keyframes pop { from { transform: scale(.4) } to { transform: scale(1) } }
   .badge { position: absolute; right: -7px; top: -7px; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center;
            justify-content: center; color: #fff; z-index: 2; border: 3px solid #fff; }
   .badge svg { width: 14px; height: 14px; }
   .badge.ok { background: var(--green); } .badge.no { background: var(--red); }
   .cover { position: absolute; inset: 0; border-radius: 20px; background: repeating-linear-gradient(45deg, #eef7ff 0 14px, #e3f2ff 14px 28px);
-           display: none; align-items: center; justify-content: center; flex-direction: column; gap: 6px; color: var(--blue); font-weight: 900; font-size: 18px; }
-  .countdown { width: 72px; height: 72px; position: relative; }
-  .countdown svg { width: 100%; height: 100%; transform: rotate(-90deg); }
-  .countdown b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 900; color: var(--blue); }
+           display: none; align-items: center; justify-content: center; flex-direction: column; gap: 6px; color: var(--blue); font-weight: 900; font-size: 19px; z-index: 3; }
+  .timer { width: 76px; height: 76px; position: relative; }
+  .timer svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .timer b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 27px; font-weight: 900; color: var(--tc, var(--blue)); }
   .palette { display: flex; gap: 12px; justify-content: center; }
   .chip { width: 56px; height: 56px; border-radius: 16px; border: 3px solid transparent; background: #fff; padding: 5px; cursor: pointer;
           box-shadow: 0 4px 0 var(--line); outline: 2px solid var(--line); transition: transform .08s; }
   .chip i { display: block; width: 100%; height: 100%; border-radius: 10px; background: var(--c); box-shadow: inset 0 -5px 0 var(--cd); }
   .chip.on { outline: 3px solid var(--blue); background: var(--blue-l); transform: translateY(-3px); box-shadow: 0 7px 0 #84d8ff; }
-  .footer { padding-top: 10px; }
+  .hands { font-size: 64px; animation: hop .8s ease-in-out infinite; line-height: 1; }
+  .footer { padding-top: 10px; min-height: 70px; }
 
-  /* result sheet */
+  /* bottom sheets: result, choice, setup */
   .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; transform: translateY(105%); transition: transform .28s cubic-bezier(.2,.9,.3,1.1);
-           padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+           padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); background: #fff; }
   .sheet.on { transform: translateY(0); }
   .sheet .inner { max-width: 448px; margin: 0 auto; }
   .sheet.good { background: var(--green-l); } .sheet.good h3 { color: var(--green-d); }
-  .sheet.meh { background: var(--orange-l); } .sheet.meh h3 { color: #d97c00; }
+  .sheet.meh { background: var(--orange-l); } .sheet.meh h3 { color: var(--orange-d); }
+  .sheet.plain { border-top: 2px solid var(--line); border-radius: 22px 22px 0 0; box-shadow: 0 -10px 30px rgba(0,0,0,.08); }
   .sheet h3 { margin: 0 0 4px; font-size: 24px; font-weight: 900; display: flex; align-items: center; gap: 10px; }
-  .sheet h3 .seal { width: 36px; height: 36px; border-radius: 50%; background: #fff; display: flex; align-items: center; justify-content: center; }
-  .sheet p { margin: 0 0 14px; font-size: 16px; color: var(--ink); }
-  .xp-pop { display: inline-flex; align-items: center; gap: 4px; color: var(--yellow-d); font-weight: 900; margin-left: auto; font-size: 18px; animation: rise .6s ease-out; }
-  @keyframes rise { from { transform: translateY(12px); opacity: 0 } to { transform: none; opacity: 1 } }
+  .sheet p { margin: 0 0 14px; font-size: 16px; }
+  .seal { width: 36px; height: 36px; border-radius: 50%; background: #fff; display: flex; align-items: center; justify-content: center; }
+  .stars { display: inline-flex; gap: 2px; margin-left: auto; }
+  .stars svg { width: 26px; height: 26px; }
+  .xp { color: var(--blue); font-weight: 900; font-size: 16px; display: inline-flex; align-items: center; gap: 3px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 4; display: none; }
+  .scrim.on { display: block; }
+  .field { margin: 14px 0; }
+  .field label { display: block; font-size: 14px; color: var(--dim); font-weight: 800; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+  .seg { display: flex; gap: 8px; }
+  .seg button { flex: 1; font: inherit; font-weight: 800; font-size: 15px; padding: 10px 4px; border-radius: 14px; border: 2px solid var(--line);
+                background: #fff; color: var(--ink); box-shadow: 0 3px 0 var(--line); cursor: pointer; line-height: 1.15; }
+  .seg button small { display: block; font-size: 12px; color: var(--dim); font-weight: 700; }
+  .seg button.on { border-color: #84d8ff; background: var(--blue-l); color: var(--blue-d); box-shadow: 0 3px 0 #84d8ff; }
+  .status-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #ccc; margin-right: 4px; vertical-align: middle; }
+  .status-dot.ok { background: var(--green); }
 
-  /* summary */
   .done-title { text-align: center; font-size: 30px; font-weight: 900; color: var(--yellow-d); margin: 10px 0 4px; }
   .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 18px 0; }
   .card { border-radius: 16px; border: 2px solid var(--c); overflow: hidden; text-align: center; }
   .card small { display: block; background: var(--c); color: #fff; font-size: 11px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; padding: 5px 2px; }
-  .card b { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 22px; font-weight: 900; color: var(--c); padding: 12px 2px; }
+  .card b { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 21px; font-weight: 900; color: var(--c); padding: 12px 2px; }
   .card b svg { width: 20px; height: 20px; }
 
-  /* progress tab */
   .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 14px 0; }
   .stat-card { border: 2px solid var(--line); border-radius: 16px; padding: 12px; display: flex; gap: 10px; align-items: center; }
   .stat-card svg { width: 30px; height: 30px; flex: none; }
@@ -173,7 +185,6 @@
   h2 { font-size: 22px; font-weight: 900; margin: 14px 0 4px; }
   .note { font-size: 13px; color: var(--dim); line-height: 1.4; }
 
-  /* onboarding */
   .avatars { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0 18px; }
   .av { border: 2px solid var(--line); border-radius: 16px; background: #fff; padding: 6px 2px 2px; cursor: pointer; box-shadow: 0 4px 0 var(--line); }
   .av.on { border-color: #84d8ff; background: var(--blue-l); box-shadow: 0 4px 0 #84d8ff; }
@@ -189,7 +200,7 @@
 <body>
 <div class="app">
 
-  <!-- ===== onboarding ===== -->
+  <!-- ===== first run ===== -->
   <section class="screen" id="s-hello">
     <div class="pip-wrap" style="margin-top:28px">
       <svg class="pip" data-mood="cheer"><use href="#pip"/></svg>
@@ -203,19 +214,19 @@
     <div class="footer"><button class="btn" id="hello-go">Let's go!</button></div>
   </section>
 
-  <!-- ===== home: the path ===== -->
+  <!-- ===== home: pick a game ===== -->
   <section class="screen" id="s-home">
     <div class="topbar">
-      <svg class="mini-pip pip-color"><use href="#pip-head"/></svg>
+      <svg class="mini-pip"><use href="#pip-head"/></svg>
       <div class="stat flame"><svg><use href="#i-flame"/></svg><span id="h-streak">0</span></div>
       <div class="stat gem"><svg><use href="#i-gem"/></svg><span id="h-xp">0</span></div>
-      <div class="stat heart"><svg><use href="#i-heart"/></svg><span>3</span></div>
+      <div class="stat star"><svg><use href="#i-star-fill"/></svg><span id="h-stars">0</span></div>
     </div>
     <div class="pip-wrap">
-      <svg class="pip small" id="home-pip" data-mood="happy"><use href="#pip"/></svg>
+      <svg class="pip small" data-mood="happy"><use href="#pip"/></svg>
       <div class="bubble" id="home-say">Ready to play?</div>
     </div>
-    <div class="unit"><small>Unit 1</small><b>Memory Garden</b></div>
+    <div class="unit"><small>Pick a game</small><b>Memory Garden</b></div>
     <div class="path" id="path"></div>
   </section>
 
@@ -225,8 +236,8 @@
     <div class="sub" id="p-name"></div>
     <div class="stats" id="p-stats"></div>
     <h2>What we measure</h2>
-    <p class="note">Every round records how many blocks were remembered, how long building took, and what kind of slip
-      happened (a wrong color, a wrong spot, or a left-right mix-up). Memory span is the biggest pattern built perfectly.
+    <p class="note">Every round records how many blocks were remembered, whether a hint or a fix was needed, and what kind of slip
+      happened (a wrong color, a wrong spot, or a left-right mix-up). Memory is the biggest pattern built right on the first try.
       Everything stays on this device.</p>
     <div style="height:90px"></div>
   </section>
@@ -234,55 +245,77 @@
   <!-- ===== game ===== -->
   <section class="screen" id="s-game">
     <div class="game-top">
-      <button class="icon-btn" id="quit" aria-label="Quit"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>
+      <button class="icon-btn" id="quit" aria-label="Stop"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>
       <div class="bar"><i id="g-bar"></i></div>
-      <div class="stat heart"><svg><use href="#i-heart"/></svg><span id="g-hearts">3</span></div>
+      <div class="stat star"><svg><use href="#i-star-fill"/></svg><span id="g-stars">0</span></div>
     </div>
-    <div class="prompt" id="g-prompt">Remember this!</div>
+    <div class="prompt" id="g-prompt"></div>
     <div class="sub" id="g-sub"></div>
     <div class="stage">
       <div class="pip-wrap" style="margin:0;width:100%">
         <svg class="pip small" id="g-pip" data-mood="look"><use href="#pip"/></svg>
         <div class="bubble" id="g-say"></div>
       </div>
-      <div class="grid" id="grid"><div class="cover" id="cover"><svg width="34" height="34"><use href="#i-eye"/></svg>Hidden!</div></div>
-      <div class="countdown" id="countdown"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17" fill="none" stroke="#e5e5e5" stroke-width="5"/>
-        <circle id="cd-ring" cx="20" cy="20" r="17" fill="none" stroke="#1cb0f6" stroke-width="5" stroke-linecap="round" stroke-dasharray="106.8" stroke-dashoffset="0"/></svg><b id="cd-num">5</b></div>
+      <div class="hands" id="hands">🙌</div>
+      <div class="grid" id="grid"></div>
+      <div class="timer" id="timer"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17" fill="none" stroke="#e5e5e5" stroke-width="5"/>
+        <circle id="t-ring" cx="20" cy="20" r="17" fill="none" stroke="#1cb0f6" stroke-width="5" stroke-linecap="round" stroke-dasharray="106.8" stroke-dashoffset="0"/></svg><b id="t-num"></b></div>
       <div class="palette" id="palette"></div>
     </div>
-    <div class="footer" id="g-footer"><button class="btn" id="check" disabled>Check</button></div>
+    <div class="footer" id="g-footer"></div>
   </section>
 
   <!-- ===== lesson complete ===== -->
   <section class="screen" id="s-over">
     <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center">
       <svg class="pip" id="over-pip" data-mood="cheer" style="width:150px;height:164px"><use href="#pip"/></svg>
-      <div class="done-title" id="over-title">Lesson complete!</div>
+      <div class="done-title">Lesson complete!</div>
       <div class="sub" id="over-say" style="text-align:center"></div>
       <div class="cards" style="width:100%">
-        <div class="card" style="--c:var(--yellow-d)"><small>Total XP</small><b><svg><use href="#i-gem"/></svg><span id="o-xp">0</span></b></div>
+        <div class="card" style="--c:var(--yellow-d)"><small>Stars</small><b><svg><use href="#i-star-fill"/></svg><span id="o-stars">0</span></b></div>
         <div class="card" style="--c:var(--blue)"><small>Memory</small><b><span id="o-span">0</span></b></div>
-        <div class="card" style="--c:var(--green)"><small>Accuracy</small><b><span id="o-acc">0%</span></b></div>
+        <div class="card" style="--c:var(--green)"><small>First try</small><b><span id="o-first">0</span></b></div>
       </div>
     </div>
     <div class="footer"><button class="btn" id="over-go">Continue</button></div>
   </section>
 
   <nav class="tabs" id="tabs">
-    <button class="tab on" data-tab="home"><svg><use href="#i-home"/></svg>Learn</button>
+    <button class="tab on" data-tab="home"><svg><use href="#i-home"/></svg>Play</button>
     <button class="tab" data-tab="progress"><svg><use href="#i-chart"/></svg>Progress</button>
   </nav>
 </div>
 
-<div class="sheet" id="sheet"><div class="inner">
-  <h3><span class="seal" id="sheet-seal"></span><span id="sheet-title">Amazing!</span><span class="xp-pop" id="sheet-xp"></span></h3>
-  <p id="sheet-say"></p>
+<!-- result: right / round over -->
+<div class="sheet" id="result"><div class="inner">
+  <h3><span class="seal" id="r-seal"></span><span id="r-title"></span><span class="stars" id="r-stars"></span></h3>
+  <p><span id="r-say"></span> <span class="xp" id="r-xp"></span></p>
   <button class="btn" id="next">Continue</button>
 </div></div>
+
+<!-- choice: hint or fix -->
+<div class="sheet meh" id="choice"><div class="inner">
+  <h3><span class="seal"><svg width="20" height="20" style="color:var(--orange)"><use href="#i-x"/></svg></span>Not quite!</h3>
+  <p id="c-say">Want a hint, or should Pip take off the wrong blocks?</p>
+  <div class="two">
+    <button class="btn blue" data-choose="hint"><svg><use href="#i-bulb"/></svg>Hint</button>
+    <button class="btn orange" data-choose="fix"><svg><use href="#i-wrench"/></svg>Fix</button>
+  </div>
+</div></div>
+
+<!-- setup before a game -->
+<div class="scrim" id="scrim"></div>
+<div class="sheet plain" id="setup"><div class="inner">
+  <h3 id="su-title">Picture Recall</h3>
+  <div class="field"><label>How long to look</label><div class="seg" id="su-diff"></div></div>
+  <div class="field"><label>Time to build</label><div class="seg" id="su-build"></div></div>
+  <div class="field"><label>Play on</label><div class="seg" id="su-source"></div></div>
+  <button class="btn" id="su-go">Start</button>
+</div></div>
+
 <div class="toast" id="toast"></div>
 <canvas id="confetti"></canvas>
 
-<!-- ===== artwork ===== -->
 <svg width="0" height="0" style="position:absolute">
   <defs>
     <symbol id="pip" viewBox="0 0 120 132">
@@ -324,25 +357,29 @@
     </symbol>
     <symbol id="i-flame" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2c1 3.5 5 5.6 5 10.5A5.5 5.5 0 0 1 6.5 15c0-2.2 1.2-3.8 2.5-5 .1 1.8.9 2.9 2 3.3-.6-3.4.2-7 1-11.3z"/><path fill="#ffc800" d="M12 13c.6 1.5 2.4 2.4 2.4 4.4a2.4 2.4 0 0 1-4.8 0c0-1.3.8-2 1.4-2.6.1.7.5 1 .9 1.2-.2-1.2 0-2 .1-3z"/></symbol>
     <symbol id="i-gem" viewBox="0 0 24 24"><path fill="currentColor" d="M7 3h10l4 6-9 12L3 9z"/><path fill="#fff" opacity=".45" d="M7 3l2 6H3zM12 9h6l-6 12z"/></symbol>
-    <symbol id="i-heart" viewBox="0 0 24 24"><path fill="currentColor" d="M12 21s-8-5.3-8-11.2A4.6 4.6 0 0 1 12 7a4.6 4.6 0 0 1 8 2.8C20 15.7 12 21 12 21z"/><ellipse cx="8.5" cy="9.5" rx="1.8" ry="1.2" fill="#fff" opacity=".5"/></symbol>
+    <symbol id="i-star-fill" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5L2.5 9.4l6.6-.9z"/></symbol>
     <symbol id="i-star" viewBox="0 0 24 24"><path fill="#fff" d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5L2.5 9.4l6.6-.9z"/></symbol>
-    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="3" fill="#afafaf"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10" fill="none" stroke="#afafaf" stroke-width="2.6"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></symbol>
     <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2.4"/><circle cx="12" cy="12" r="3" fill="currentColor"/><path d="M4 20L20 4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
     <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z" fill="currentColor"/></symbol>
     <symbol id="i-chart" viewBox="0 0 24 24"><rect x="4" y="12" width="4" height="8" rx="1.5" fill="currentColor"/><rect x="10" y="7" width="4" height="13" rx="1.5" fill="currentColor"/><rect x="16" y="3" width="4" height="17" rx="1.5" fill="currentColor"/></symbol>
     <symbol id="i-brain" viewBox="0 0 24 24"><path fill="#fff" d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 1 5 3 3 0 0 0 4 4 2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm6 0a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2 3 3 0 0 0 4-4 3 3 0 0 0 1-5 3 3 0 0 0-2-5 3 3 0 0 0-3-3z"/></symbol>
+    <symbol id="i-turns" viewBox="0 0 24 24"><path d="M4 9a6 6 0 0 1 10.5-4l1.5-1.5V8h-4.5l1.6-1.6A4 4 0 0 0 6 9z" fill="#fff"/><path d="M20 15a6 6 0 0 1-10.5 4L8 20.5V16h4.5l-1.6 1.6A4 4 0 0 0 18 15z" fill="#fff"/></symbol>
+    <symbol id="i-teach" viewBox="0 0 24 24"><path d="M12 3L1 8l11 5 9-4.1V15h2V8z" fill="#fff"/><path d="M5 12v4c0 1.7 3.1 3 7 3s7-1.3 7-3v-4l-7 3.2z" fill="#fff"/></symbol>
+    <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" fill="currentColor"/><rect x="8.5" y="18.5" width="7" height="2.5" rx="1.2" fill="currentColor"/></symbol>
+    <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M21 6.5l-3.5 3.5-3-.5-.5-3L17.5 3A5.5 5.5 0 0 0 11 9.8L3.3 17.5a2.1 2.1 0 0 0 3 3L14 12.8A5.5 5.5 0 0 0 21 6.5z" fill="currentColor"/></symbol>
   </defs>
 </svg>
 
 <script>
 const $ = (id) => document.getElementById(id);
 const PIP = { teal: ["#14c4a8", "#0e9a84"], purple: ["#a560e8", "#7d3fc0"], red: ["#ff4b4b", "#d63434"], yellow: ["#ffc800", "#d9a400"] };
-const ROWS = ["1", "2", "3"], COLS = ["A", "B", "C"];   // child's view: row 3 nearest (bottom), A on the left
-let S = null, tab = "home", chosen = null, avatarPick = "teal", lastPhase = null, deadline = 0, busy = false, lastSheet = null;
+const ROWS = ["1", "2", "3"], COLS = ["A", "B", "C"];
+const GAME_ICON = { recall: "i-brain", turns: "i-turns", teach: "i-teach" };
+let S = null, tab = "home", chosen = null, avatarPick = "teal", lastPhase = null, deadline = 0, busy = false, lastSheet = null, setupOpen = false;
 
-// ---------- sound + haptics (made in the browser, no files)
+// ---------- sound + haptics
 let ac = null;
 function tone(freqs, dur = 0.12, type = "sine", gap = 0.09, vol = 0.18) {
   try {
@@ -354,11 +391,14 @@ function tone(freqs, dur = 0.12, type = "sine", gap = 0.09, vol = 0.18) {
     });
   } catch (e) {}
 }
+const buzz = (p) => navigator.vibrate && navigator.vibrate(p);
 const sfx = {
   tap: () => tone([660], 0.06, "triangle", 0, 0.12),
-  good: () => { tone([660, 880, 1320], 0.16, "triangle"); navigator.vibrate && navigator.vibrate([30, 40, 30]); },
-  meh: () => { tone([392, 330], 0.18, "triangle", 0.14); navigator.vibrate && navigator.vibrate(60); },
+  good: () => { tone([660, 880, 1320], 0.16, "triangle"); buzz([30, 40, 30]); },
+  meh: () => { tone([392, 330], 0.18, "triangle", 0.14); buzz(60); },
   win: () => tone([523, 659, 784, 1047, 1319], 0.2, "triangle", 0.11),
+  tick: () => tone([880], 0.05, "square", 0, 0.05),
+  up: () => tone([523, 784], 0.12, "triangle", 0.1),
 };
 
 // ---------- api
@@ -368,137 +408,181 @@ async function api(path, body) {
   if (!r.ok) throw new Error(d.error || "Something went wrong");
   return d;
 }
-function toast(m) { const t = $("toast"); t.textContent = m; t.style.display = "block"; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = "none", 2600); }
+function toast(m) { const t = $("toast"); t.textContent = m; t.style.display = "block"; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = "none", 3200); }
 async function act(path, body) {
-  if (busy) return; busy = true;
-  try { S = await api(path, body || {}); render(); } catch (e) { toast(e.message); } finally { busy = false; }
+  if (busy) return false; busy = true;
+  try { S = await api(path, body || {}); render(); return true; } catch (e) { toast(e.message); return false; } finally { busy = false; }
 }
 
-// ---------- rendering helpers
+// ---------- helpers
 function setPip(color) {
   const [c, d] = PIP[color] || PIP.teal;
   document.documentElement.style.setProperty("--pip", c);
   document.documentElement.style.setProperty("--pip-d", d);
 }
-function blockHtml(color, ghost) { return `<div class="blk ${ghost ? "ghost" : ""}" style="--c:var(--c-${color});--cd:var(--c-${color}-d)"></div>`; }
-function badge(ok) { return `<div class="badge ${ok ? "ok" : "no"}"><svg><use href="#i-${ok ? "check" : "x"}"/></svg></div>`; }
+const blockHtml = (color, cls = "") => `<div class="blk ${cls}" style="--c:var(--c-${color});--cd:var(--c-${color}-d)"></div>`;
+const badge = (ok) => `<div class="badge ${ok ? "ok" : "no"}"><svg><use href="#i-${ok ? "check" : "x"}"/></svg></div>`;
+const starRow = (n) => [0, 1, 2].map((i) => `<svg style="color:${i < n ? "var(--yellow)" : "#e5e5e5"}"><use href="#i-star-fill"/></svg>`).join("");
 function show(screen) {
   document.querySelectorAll(".screen").forEach((s) => s.classList.toggle("on", s.id === "s-" + screen));
   $("tabs").style.display = screen === "home" || screen === "progress" ? "flex" : "none";
 }
 
+// ---------- grid
 function renderGrid() {
-  const g = $("grid"), ph = S.phase, pat = S.pattern || {}, board = S.board, grade = S.grade;
+  const g = $("grid"), ph = S.phase, pat = S.pattern || {}, board = S.board || {}, grade = S.grade;
+  const practice = S.settings.source === "practice";
+  const covered = (ph === "build" && !practice && S.attempt === 1) || ph === "scan";
   let html = "";
   for (const r of ROWS) for (const c of COLS) {
     const cell = c + r, built = (board[cell] || [])[0];
-    let inner = "";
+    let inner = "", cls = "";
     if (ph === "show") inner = pat[cell] ? blockHtml(pat[cell]) : "";
-    else if (ph === "build") inner = built ? blockHtml(built) : "";
     else if (ph === "result" && grade) {
       const res = grade.cells[cell];
       if (res === "right") inner = blockHtml(built) + badge(true);
-      else if (res === "missing") inner = blockHtml(pat[cell], true);
-      else if (res === "wrong_color") inner = blockHtml(built) + badge(false);
-      else if (res === "extra") inner = blockHtml(built) + badge(false);
+      else if (res === "missing") inner = blockHtml(pat[cell], "ghost");
+      else if (res) inner = blockHtml(built) + badge(false);
+    } else {
+      inner = built ? blockHtml(built, S.removing.includes(cell) && ph === "helping" ? "fading" : "") : "";
+      if (S.removing.includes(cell) && built) inner += badge(false);
     }
-    const tappable = ph === "build" && S.source === "tap";
-    html += `<div class="cell ${tappable ? "tappable" : ""}" data-cell="${cell}">${inner}</div>`;
+    if (S.hint === cell && (ph === "helping" || ph === "build")) cls = "glow";
+    const tappable = ph === "build" && practice;
+    html += `<div class="cell ${cls} ${tappable ? "tappable" : ""}" data-cell="${cell}">${inner}</div>`;
   }
-  const cover = ph === "build" && S.source === "camera";
-  if (g.dataset.k === html + cover) return;   // unchanged: don't replay the pop animation on every poll
-  g.dataset.k = html + cover;
-  g.innerHTML = html + `<div class="cover" id="cover"><svg width="34" height="34"><use href="#i-eye"/></svg>Hidden!</div>`;
-  $("cover").style.display = cover ? "flex" : "none";
+  const label = ph === "scan" ? "Scanning..." : "Hidden!";
+  const key = html + covered + label;
+  if (g.dataset.k === key) return;        // unchanged: don't replay the pop animation every poll
+  g.dataset.k = key;
+  g.innerHTML = html + `<div class="cover" style="display:${covered ? "flex" : "none"}"><svg width="34" height="34"><use href="#i-eye"/></svg>${label}</div>`;
 }
 
 function renderPalette() {
   const p = $("palette");
-  if (S.phase !== "build" || S.source !== "tap") { p.style.display = "none"; return; }
+  if (S.phase !== "build" || S.settings.source !== "practice") { p.style.display = "none"; return; }
   p.style.display = "flex";
   if (!chosen || !S.colors.includes(chosen)) chosen = S.colors[0];
   if (p.dataset.k === chosen + S.colors) return;
   p.dataset.k = chosen + S.colors;
-  p.innerHTML =S.colors.map((c) => `<button class="chip ${c === chosen ? "on" : ""}" data-color="${c}" aria-label="${c}"><i style="--c:var(--c-${c});--cd:var(--c-${c}-d)"></i></button>`).join("");
+  p.innerHTML = S.colors.map((c) => `<button class="chip ${c === chosen ? "on" : ""}" data-color="${c}" aria-label="${c}"><i style="--c:var(--c-${c});--cd:var(--c-${c}-d)"></i></button>`).join("");
 }
 
+// ---------- screens
 function renderHome() {
-  const p = S.profile;
-  $("h-streak").textContent = p.streak; $("h-xp").textContent = p.xp;
-  const name = p.name || "friend";
-  $("home-say").textContent = p.lessons ? `Welcome back, ${name}! Your best memory is ${p.best_span} blocks. Can you beat it?`
-                                        : `Hi ${name}! Tap the green circle to start your first game.`;
-  const offsets = [0, 52, 0, -52];
-  $("path").innerHTML = S.games.map((g, i) => `
-    <div class="node-row" style="transform:translateX(${offsets[i % 4]}px)">
-      ${g.ready && i === 0 ? '<div class="start-tag">START</div><div class="ring"></div>' : ""}
-      <button class="node ${g.ready ? "" : "locked"}" data-game="${g.id}" aria-label="${g.title}">
-        <svg><use href="#i-${g.ready ? (g.id === "recall" ? "brain" : "star") : "lock"}"/></svg></button>
+  const p = S.profile, name = p.name || "friend";
+  $("h-streak").textContent = p.streak; $("h-xp").textContent = p.xp; $("h-stars").textContent = p.stars;
+  $("home-say").textContent = p.lessons ? `Welcome back, ${name}! Your best memory is ${p.best_span} blocks. Pick a game!`
+                                        : `Hi ${name}! Pick a game to play.`;
+  const offsets = [0, 56, -56];
+  const html = S.games.map((g, i) => `
+    <div class="node-row" style="transform:translateX(${offsets[i % 3]}px)">
+      ${g.ready ? '<div class="play-tag">PLAY</div><div class="ring"></div>' : ""}
+      <button class="node ${g.ready ? "" : "soon"}" data-game="${g.id}" aria-label="${g.title}"><svg><use href="#${GAME_ICON[g.id] || "i-star"}"/></svg></button>
       <div class="node-label">${g.title}<span>${g.ready ? g.desc : "Coming soon"}</span></div>
     </div>`).join("");
+  if ($("path").dataset.k !== html) { $("path").dataset.k = html; $("path").innerHTML = html; }
 }
 
 function renderProgress() {
   const p = S.profile;
   $("p-name").textContent = p.name ? `${p.name}'s learning` : "";
+  const circle = (c, ic) => `<svg><circle cx="15" cy="15" r="15" fill="${c}"/><use href="#${ic}" x="5" y="5" width="20" height="20"/></svg>`;
   const items = [
-    ["i-flame", "var(--orange)", p.streak, "day streak"],
-    ["i-gem", "var(--blue)", p.xp, "total XP"],
-    ["i-brain", "var(--green)", p.best_span, "best memory (blocks)"],
-    ["i-star", "var(--yellow-d)", p.lessons, "lessons done"],
+    [`<svg style="color:var(--orange)"><use href="#i-flame"/></svg>`, p.streak, "day streak"],
+    [`<svg style="color:var(--yellow-d)"><use href="#i-star-fill"/></svg>`, p.stars, "stars earned"],
+    [circle("var(--green)", "i-brain"), p.best_span, "best memory (blocks)"],
+    [`<svg style="color:var(--blue)"><use href="#i-gem"/></svg>`, p.lessons, "lessons done"],
   ];
-  $("p-stats").innerHTML = items.map(([ic, c, v, l]) => `<div class="stat-card"><svg style="color:${c}"><use href="#${ic}"/></svg><div><b>${v}</b><span>${l}</span></div></div>`).join("")
-    .replace(/<use href="#i-brain"\/>/, '<circle cx="12" cy="12" r="12" fill="var(--green)"/><use href="#i-brain" x="3" y="3" width="18" height="18"/>')
-    .replace(/<use href="#i-star"\/>/, '<circle cx="12" cy="12" r="12" fill="var(--yellow-d)"/><use href="#i-star" x="3" y="3" width="18" height="18"/>');
+  $("p-stats").innerHTML = items.map(([ic, v, l]) => `<div class="stat-card">${ic}<div><b>${v}</b><span>${l}</span></div></div>`).join("");
 }
 
+const PROMPTS = {
+  clear: ["Clear the board", "Take all the blocks off"],
+  show: ["Remember this!", ""],
+  build: ["Build it!", ""],
+  scan: ["Hands up!", "Pip is looking at your board"],
+  choice: ["Not quite!", ""],
+  helping: ["Pip is helping", ""],
+  result: ["", ""],
+};
+
 function renderGame() {
-  const ph = S.phase;
-  $("g-hearts").textContent = S.hearts;
-  $("g-bar").style.width = `${Math.min(100, ((S.round - (ph === "result" ? 0 : 1)) / S.rounds) * 100)}%`;
+  const ph = S.phase, practice = S.settings.source === "practice";
+  $("g-stars").textContent = S.stars.reduce((a, b) => a + b, 0);
+  const done = S.round - (ph === "result" ? 0 : 1);
+  $("g-bar").style.width = `${Math.max(0, Math.min(100, (done / S.rounds) * 100))}%`;
   $("g-pip").dataset.mood = S.mood; $("g-say").textContent = S.say;
-  if (ph === "show") { $("g-prompt").textContent = "Remember this!"; $("g-sub").textContent = `Level ${S.level} · ${S.pattern_size} blocks`; }
-  if (ph === "build") { $("g-prompt").textContent = "Now build it!"; $("g-sub").textContent = S.source === "tap" ? "Pick a color, then tap a square" : "Build it on the table"; }
-  if (ph === "result") { $("g-prompt").textContent = S.grade.perfect ? "You did it!" : "Let's see..."; $("g-sub").textContent = ""; }
-  $("countdown").style.display = ph === "show" ? "block" : "none";
+  let [prompt, sub] = PROMPTS[ph] || ["", ""];
+  if (ph === "show") sub = `Round ${S.round} of ${S.rounds} · ${S.pattern_size} block${S.pattern_size > 1 ? "s" : ""}`;
+  if (ph === "build") { prompt = S.attempt === 2 ? "Fix it!" : "Build it!"; sub = practice ? "Pick a color, then tap a square" : "Build it on the table"; }
+  if (ph === "helping") sub = S.pip.step === "hands" ? "Hands away from the board, please!" : S.helped === "hint" ? "Look at the glowing square" : "Taking off the wrong blocks";
+  if (ph === "result") prompt = S.grade && S.grade.perfect ? "You did it!" : "Here's the answer";
+  $("g-prompt").textContent = prompt; $("g-sub").textContent = sub;
+  $("hands").style.display = ph === "scan" ? "block" : "none";
+  $("timer").style.display = ph === "show" || ph === "build" ? "block" : "none";
+  $("timer").style.setProperty("--tc", ph === "show" ? "var(--blue)" : "var(--orange)");
+  $("t-ring").setAttribute("stroke", ph === "show" ? "#1cb0f6" : "#ff9600");
   renderGrid(); renderPalette();
-  const placed = Object.values(S.board).filter((s) => s.length).length;
-  $("check").disabled = !(ph === "build" && placed > 0);
-  $("g-footer").style.visibility = ph === "build" ? "visible" : "hidden";
-  // result sheet
-  const sh = $("sheet"), key = ph === "result" ? `${S.round}` : null;
+  $("g-footer").innerHTML = ph === "scan" && S.scan_stuck ? `<button class="btn blue" id="rescan">Scan again</button>` : "";
+  if ($("rescan")) $("rescan").onclick = () => act("/api/buddy/rescan");
+
+  // sheets
+  $("choice").classList.toggle("on", ph === "choice");
+  if (ph === "choice") $("c-say").textContent = S.say;
+  const key = ph === "result" ? `r${S.round}` : ph === "choice" ? `c${S.round}` : null;
   if (ph === "result") {
     const good = S.grade.perfect;
-    sh.className = `sheet on ${good ? "good" : "meh"}`;
-    $("sheet-title").textContent = good ? ["Amazing!", "Perfect!", "Super memory!", "Wow!"][S.round % 4] : (S.grade.right >= S.grade.total - 1 ? "Almost!" : "Nice try!");
-    $("sheet-seal").innerHTML = `<svg width="20" height="20" style="color:${good ? "var(--green)" : "var(--orange)"}"><use href="#i-${good ? "check" : "x"}"/></svg>`;
-    $("sheet-say").textContent = S.say;
-    $("sheet-xp").innerHTML = `+${S.gained} <svg width="18" height="18" style="color:var(--blue)"><use href="#i-gem"/></svg>`;
+    $("result").className = `sheet on ${good ? "good" : "meh"}`;
+    $("r-title").textContent = good ? (S.attempt === 1 ? ["Amazing!", "Perfect!", "Super memory!", "Wow!"][S.round % 4] : "You fixed it!") : "Nice try!";
+    $("r-seal").innerHTML = `<svg width="20" height="20" style="color:${good ? "var(--green)" : "var(--orange)"}"><use href="#i-${good ? "check" : "x"}"/></svg>`;
+    $("r-stars").innerHTML = starRow(S.round_stars);
+    $("r-say").textContent = S.say;
+    $("r-xp").innerHTML = `+${S.gained} <svg width="16" height="16"><use href="#i-gem"/></svg>`;
     $("next").className = `btn ${good ? "" : "orange"}`;
-    if (lastSheet !== key) { good ? sfx.good() : sfx.meh(); if (good && S.combo >= 2) confetti(60); }
-  } else sh.className = "sheet";
+    if (lastSheet !== key) { good ? sfx.good() : sfx.meh(); if (good && S.round_stars === 3) confetti(70); }
+  } else $("result").className = "sheet";
+  if (ph === "choice" && lastSheet !== key) sfx.meh();
+  if (ph === "scan" && lastPhase === "build") sfx.up();
   lastSheet = key;
 }
 
 function renderOver() {
   const s = S.summary || {};
   $("over-pip").dataset.mood = S.mood; $("over-say").textContent = S.say;
-  $("over-title").textContent = s.perfect_rounds >= Math.ceil((s.rounds || 1) / 2) ? "Lesson complete!" : "Good practice!";
-  $("o-xp").textContent = s.xp ?? 0;
+  $("o-stars").textContent = `${s.stars ?? 0}/${s.max_stars ?? 0}`;
   $("o-span").textContent = s.memory_span ? `${s.memory_span} blocks` : "0";
-  $("o-acc").textContent = `${Math.round((s.accuracy || 0) * 100)}%`;
+  $("o-first").textContent = `${s.first_try ?? 0}/${s.rounds ?? 0}`;
+}
+
+function renderSetup() {
+  const st = S.settings;
+  const seg = (id, items, cur, key) => { $(id).innerHTML = items.map(([v, t, s]) => `<button class="${v == cur ? "on" : ""}" data-set="${key}" data-val="${v}">${t}${s ? `<small>${s}</small>` : ""}</button>`).join(""); };
+  seg("su-diff", [["easy", "Easy", `${st.look_s.easy}s`], ["medium", "Medium", `${st.look_s.medium}s`], ["hard", "Hard", `${st.look_s.hard}s`]], st.difficulty, "difficulty");
+  seg("su-build", st.build_options.map((b) => [b, `${b}s`, ""]), st.build_s, "build_s");
+  const cam = S.table.connected && S.table.fresh;
+  seg("su-source", [["table", "Table", `<span class="status-dot ${cam ? "ok" : ""}"></span>${cam ? "camera on" : "camera off"}`], ["practice", "Practice", "tap the phone"]], st.source, "source");
+}
+function openSetup(open) {
+  setupOpen = open;
+  $("setup").classList.toggle("on", open); $("scrim").classList.toggle("on", open);
+  if (open) renderSetup();
 }
 
 function render() {
   if (!S) return;
   setPip(S.profile.avatar);
-  if (!S.profile.name && S.phase === "home" && !render.skipHello) { renderHello(); show("hello"); lastPhase = "hello"; return; }
+  if (!S.profile.name && S.phase === "home") { renderHello(); show("hello"); lastPhase = "hello"; return; }
   const ph = S.phase;
-  if (ph === "home") { tab === "progress" ? (renderProgress(), show("progress")) : (renderHome(), show("home")); }
-  else if (ph === "over") { renderOver(); show("over"); if (lastPhase !== "over") { sfx.win(); confetti(140); } }
-  else { renderGame(); show("game"); }
-  if (ph === "show" && (lastPhase !== "show" || !deadline)) deadline = performance.now() + S.show_left * 1000;
-  if (ph !== "show") deadline = 0;
+  if (ph === "home") { tab === "progress" ? (renderProgress(), show("progress")) : (renderHome(), show("home")); if (setupOpen) renderSetup(); }
+  else if (ph === "over") { renderOver(); show("over"); if (lastPhase !== "over") { sfx.win(); confetti(150); } }
+  else { if (setupOpen) openSetup(false); renderGame(); show("game"); }
+  if (ph !== "result") $("result").className = "sheet";
+  if (ph !== "choice") $("choice").classList.remove("on");
+  const timed = ph === "show" || ph === "build";
+  if (timed && (lastPhase !== ph || !deadline || renderGame.att !== S.attempt)) deadline = performance.now() + S.time_left * 1000;
+  if (!timed) deadline = 0;
+  renderGame.att = S.attempt;
   lastPhase = ph;
 }
 
@@ -507,17 +591,20 @@ function renderHello() {
   setPip(avatarPick);
 }
 
-// countdown ring, smooth between polls
+// smooth timer between polls
+let lastSec = null;
 function frame() {
-  if (S && S.phase === "show" && deadline) {
-    const left = Math.max(0, (deadline - performance.now()) / 1000), frac = left / S.show_s;
-    $("cd-ring").style.strokeDashoffset = `${106.8 * (1 - frac)}`;
-    $("cd-num").textContent = Math.ceil(left);
+  if (S && deadline && (S.phase === "show" || S.phase === "build")) {
+    const left = Math.max(0, (deadline - performance.now()) / 1000), frac = S.time_total ? left / S.time_total : 0;
+    $("t-ring").style.strokeDashoffset = `${106.8 * (1 - frac)}`;
+    const sec = Math.ceil(left);
+    $("t-num").textContent = sec;
+    if (S.phase === "build" && sec !== lastSec && sec <= 3 && sec > 0) sfx.tick();
+    lastSec = sec;
   }
   requestAnimationFrame(frame);
 }
 
-// ---------- confetti
 function confetti(n) {
   const cv = $("confetti"), ctx = cv.getContext("2d"), W = cv.width = innerWidth, H = cv.height = innerHeight;
   const cols = ["#58cc02", "#1cb0f6", "#ffc800", "#ff4b4b", "#a560e8", "#ff9600"];
@@ -533,27 +620,30 @@ function confetti(n) {
 
 // ---------- events
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-cell],[data-color],[data-game],[data-av],[data-tab]");
+  const t = e.target.closest("[data-cell],[data-color],[data-game],[data-av],[data-tab],[data-set],[data-choose]");
   if (!t) return;
-  if (t.dataset.cell && S.phase === "build" && S.source === "tap") {
-    const cur = (S.board[t.dataset.cell] || [])[0];
-    sfx.tap();
-    const color = cur === chosen ? null : chosen;
-    S.board[t.dataset.cell] = color ? [color] : []; renderGame();     // instant, server confirms
+  if (t.dataset.cell && S.phase === "build" && S.settings.source === "practice") {
+    const cur = (S.board[t.dataset.cell] || [])[0], color = cur === chosen ? null : chosen;
+    sfx.tap(); S.board[t.dataset.cell] = color ? [color] : []; renderGame();
     act("/api/buddy/cell", { cell: t.dataset.cell, color });
   } else if (t.dataset.color) { chosen = t.dataset.color; sfx.tap(); renderPalette(); }
   else if (t.dataset.game) {
     const g = S.games.find((x) => x.id === t.dataset.game);
+    sfx.tap();
     if (!g.ready) { toast(`${g.title} is coming soon!`); return; }
-    sfx.tap(); act("/api/buddy/start", { game: g.id });
-  } else if (t.dataset.av) { avatarPick = t.dataset.av; sfx.tap(); renderHello(); }
-  else if (t.dataset.tab) {
-    tab = t.dataset.tab; document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("on", b === t)); render();
-  }
+    $("su-title").textContent = g.title; openSetup(true);
+  } else if (t.dataset.set) {
+    sfx.tap();
+    const v = t.dataset.set === "build_s" ? Number(t.dataset.val) : t.dataset.val;
+    act("/api/buddy/settings", { [t.dataset.set]: v });
+  } else if (t.dataset.choose) { sfx.tap(); act("/api/buddy/choose", { kind: t.dataset.choose }); }
+  else if (t.dataset.av) { avatarPick = t.dataset.av; sfx.tap(); renderHello(); }
+  else if (t.dataset.tab) { tab = t.dataset.tab; document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("on", b === t)); render(); }
 });
-$("check").onclick = () => act("/api/buddy/check");
+$("scrim").onclick = () => openSetup(false);
+$("su-go").onclick = async () => { sfx.tap(); if (await act("/api/buddy/start", { game: "recall" })) openSetup(false); };
 $("next").onclick = () => { sfx.tap(); act("/api/buddy/next"); };
-$("quit").onclick = () => { if (confirm("Stop this lesson?")) act("/api/buddy/quit"); };
+$("quit").onclick = () => { if (confirm("Stop this game?")) act("/api/buddy/quit"); };
 $("over-go").onclick = () => act("/api/buddy/quit");
 $("hello-go").onclick = async () => {
   const name = $("name").value.trim();
@@ -561,10 +651,9 @@ $("hello-go").onclick = async () => {
   sfx.good(); await act("/api/buddy/profile", { name, avatar: avatarPick });
 };
 
-// ---------- poll
 async function poll() {
   try { if (!busy) { S = await api("/api/buddy/state"); render(); } } catch (e) {}
-  setTimeout(poll, S && S.phase === "show" ? 250 : 800);
+  setTimeout(poll, S && ["show", "build", "scan", "helping"].includes(S.phase) ? 300 : 800);
 }
 poll(); frame();
 </script>
