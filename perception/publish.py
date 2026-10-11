@@ -1,28 +1,30 @@
 """Publish live camera perception as GridState JSON at about 10 Hz.
 
 Examples:
-  python -m perception.calibrate --camera 1           # once per lighting setup: measures the blocks
-  python -m perception.publish --camera 1 --debug
+  python -m perception.calibrate --camera 1           # once per setup: grid lock, empty board, block colors
+  python -m perception.publish --camera 1 --debug     # E in the window re-takes the empty board
   python -m perception.publish --video videos/demo.mp4
-  python -m perception.publish --images "robot/samples/overhead_*.png" --debug
-  python -m perception.publish --list-cameras        # which index/backend is the real webcam?
+  python -m perception.publish --list-cameras         # which index/backend is the real webcam?
 
-Blocks are found and named with the calibration in perception/calib/colors.json (see
-perception/colors.py): colorful, non-highlight pixels inside the grid are labeled by their
-nearest reference color in CIELAB, so two touching blocks of different colors split apart,
-and each blob is named by the nearest reference to its median Lab ("unknown" past the cutoff).
-Without a calibration file nominal colors are used and the start-up banner says so.
+The grid is locked once (perception/grid_lock.py): with the board empty and all 4 AprilTags in
+view, the homography and the empty board are saved, and from then on blocks covering tags never
+lose the grid. Blocks and hands are found by what changed since the empty board
+(perception/change.py), so a block lying on a tag is still seen from its visible top face.
+Block colors come from perception/calib/colors.json (perception/colors.py).
 
-Per-cell confidence is the minimum of three scores in [0, 1] for the block's blob:
-  area    1.0 when the blob covers the footprint calibration measured for one block (as a
-          fraction of the cell's projected area, with headroom), falling off outside that
-          range, so two merged blocks or a sliver score low
+Per-cell confidence is the minimum of three scores in [0, 1] for the block's region:
+  area    1.0 when the region covers the calibrated block footprint (with headroom)
   margin  1.0 when the second-nearest reference color is at least MARGIN_FULL delta E farther
-          than the nearest, 0.0 when the blob is equally close to two colors (teal vs skyblue)
-  fill    fill ratio (blob area / min-area rectangle) rescaled so >= 0.5 maps to 1.0
-A block whose centre sits less than EDGE_MARGIN_MM inside its cell gets at most 0.5, so a
-block straddling two cells never passes MIN_CONFIDENCE. --debug labels every block with its
-cell, color, and confidence, and prints the scores.
+          than the nearest, 0.0 when the block is equally close to two colors (teal vs skyblue)
+  fill    region area / its min-area rectangle, rescaled so >= 0.5 maps to 1.0
+A block whose centre sits less than EDGE_MARGIN_MM inside its cell gets at most 0.5, so a block
+straddling two cells never passes MIN_CONFIDENCE.
+
+hands_clear is false for a hand or an unknown object on the sheet, two blocks in one cell, or a
+grid that is not locked (or moved). A tag hidden by a block is never a hand.
+
+On Linux the camera's exposure and white balance are locked at start-up (--exposure, --wb; see
+perception/camera_controls.py).
 """
 
 from __future__ import annotations
@@ -33,233 +35,25 @@ import glob
 import json
 import tempfile
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from typing import Iterator, Optional
 
 import cv2
 import numpy as np
 from websockets.asyncio.server import ServerConnection, broadcast, serve
 
-from perception.cells import cell_center_mm, edge_margin_mm, grid_geometry, mm_to_cell, tag_corner_cells
-from perception.colors import CALIB_PATH, Calibration, classify, foreground, label_pixels, load_calibration, to_lab
+from perception import camera_controls
+from perception.cells import cell_center_mm, grid_geometry, tag_corner_cells
+from perception.change import Block, sheet_to_image
+from perception.colors import CALIB_PATH, load_calibration
+from perception.perceive import FrameResult, Perceiver
 from robot.perception.sheet import SheetLocalizer, SheetPose
-from shared.config import CELLS, COLORS, GRID_WS_PORT, MIN_CONFIDENCE, UNKNOWN
-from shared.schemas import GridState, empty_board
+from shared.config import GRID_WS_PORT, MIN_CONFIDENCE, UNKNOWN
 
 HZ = 10.0
-MIN_TAGS = 3
-MIN_CUBE_AREA_PX = 1200
-HAND_AREA_FRACTION = 0.08
-SPLIT_OF_BLOCK = 0.5       # a color region this fraction of a block's smallest footprint counts as its own block
-HAND_OF_MAX_AREA = 2.5     # a colorful blob this many times a block's largest footprint is a hand or arm
-
-# Confidence scoring (see module docstring).
-FILL_FULL = 0.5            # fill ratio at or above this scores 1.0
-EDGE_MARGIN_MM = 8.0       # block centre must sit this far inside its cell
-STRADDLE_CONFIDENCE = 0.5  # confidence cap for a block too close to a cell boundary
-MORPH_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
-
-
-def fill_score(fill_ratio: float) -> float:
-    return max(0.0, min(1.0, fill_ratio / FILL_FULL))
-
-
-def area_score(area_px: float, expected: tuple[float, float]) -> float:
-    lo, hi = expected
-    if area_px < lo:
-        return max(0.0, area_px / lo)
-    if area_px > hi:
-        return hi / area_px
-    return 1.0
-
-
-def cell_area_px(pose: SheetPose, x_mm: float, y_mm: float) -> float:
-    """Pixel area of one cell-sized square on the table, centred at sheet (x_mm, y_mm)."""
-    h = grid_geometry()[2] / 2.0
-    square = [(x_mm - h, y_mm - h), (x_mm + h, y_mm - h), (x_mm + h, y_mm + h), (x_mm - h, y_mm + h)]
-    return float(cv2.contourArea(pose.to_image(square).astype(np.float32)))
-
-
-def expected_area_px(pose: SheetPose, x_mm: float, y_mm: float, calib: Calibration) -> tuple[float, float]:
-    """(min, max) pixel area for one block centred at sheet (x_mm, y_mm): the calibrated
-    footprint fractions times this spot's projected cell area."""
-    cell_px = cell_area_px(pose, x_mm, y_mm)
-    return calib.area_frac[0] * cell_px, calib.area_frac[2] * cell_px
-
-
-@dataclass
-class CubeDetection:
-    color: str
-    center_px: tuple[float, float]
-    contour: np.ndarray
-    score: float              # min of the component scores (before the cell-edge rule)
-    area_px: float = 0.0
-    fill_ratio: float = 0.0
-    lab: tuple[float, float, float] = (0.0, 0.0, 0.0)  # median Lab of the blob
-    d_nearest: float = 0.0    # delta E to the nearest reference color
-    d_second: float = 0.0     # ... and to the second nearest
-    fill_score: float = 0.0
-    margin_score: float = 0.0
-    area_score: float = 1.0   # set once the sheet pose gives an expected area
-    cell: Optional[str] = None
-    edge_mm: float = 0.0
-
-
-def detect_all_cubes(
-    frame_bgr: np.ndarray,
-    roi_mask: np.ndarray,
-    calib: Calibration,
-    min_area_px: int = MIN_CUBE_AREA_PX,
-    min_block_px: Optional[float] = None,
-) -> tuple[list[CubeDetection], np.ndarray]:
-    """Every block-sized colorful blob in the roi, named by its nearest reference color.
-
-    Blobs come from the color-agnostic foreground first. A blob is split by pixel color only
-    when two or more colors each cover at least SPLIT_OF_BLOCK of the smallest block footprint
-    (min_block_px; touching blocks). Smaller patches of another color (a shaded side, an edge)
-    stay part of the block. Pixels far from every color split off only as a whole block."""
-    if min_block_px is None:
-        min_block_px = 4.0 * min_area_px
-    lab = to_lab(frame_bgr)
-    fg = foreground(lab, roi_mask, calib.fg_chroma)
-    fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, MORPH_KERNEL)  # fills highlight holes and raised letters
-    fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, MORPH_KERNEL)   # drops specks
-    labels = label_pixels(lab, fg, calib.refs)
-    n, components = cv2.connectedComponents(fg)
-    detections: list[CubeDetection] = []
-    for i in range(1, n):
-        component = components == i
-        if np.count_nonzero(component) < min_area_px:
-            continue
-        counts = np.bincount(labels[component].astype(np.int64) + 1, minlength=len(COLORS) + 2)[1:]
-        need = [SPLIT_OF_BLOCK * min_block_px] * len(COLORS) + [min_block_px]  # last: far from every color
-        major = [k for k, c in enumerate(counts) if c >= need[k]]
-        if len(major) <= 1:
-            parts = [component.astype(np.uint8) * 255]
-        else:
-            parts = [cv2.morphologyEx(((labels == k) & component).astype(np.uint8) * 255, cv2.MORPH_OPEN, MORPH_KERNEL)
-                     for k in major]
-        for part in parts:
-            detections += _blobs(part, lab, fg, calib, min_area_px)
-    return detections, fg
-
-
-def _blobs(mask: np.ndarray, lab: np.ndarray, fg: np.ndarray, calib: Calibration, min_area_px: int) -> list[CubeDetection]:
-    out = []
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        moments = cv2.moments(contour)
-        if area < min_area_px or moments["m00"] == 0:
-            continue
-        blob = np.zeros(mask.shape, np.uint8)
-        cv2.drawContours(blob, [contour], -1, 255, thickness=cv2.FILLED)
-        pixels = lab[(blob > 0) & (fg > 0)]
-        median = tuple(float(v) for v in np.median(pixels, axis=0)) if len(pixels) else (0.0, 0.0, 0.0)
-        color, margin, d1, d2 = classify(median, calib.refs)
-        (_, _), (width, height), _ = cv2.minAreaRect(contour)
-        fill = float(min(1.0, area / max(width * height, 1.0)))
-        d = CubeDetection(
-            color=color,
-            center_px=(moments["m10"] / moments["m00"], moments["m01"] / moments["m00"]),
-            contour=contour.reshape(-1, 2),
-            score=0.0,
-            area_px=float(area),
-            fill_ratio=fill,
-            lab=median,
-            d_nearest=d1,
-            d_second=d2,
-            fill_score=fill_score(fill),
-            margin_score=margin,
-        )
-        d.score = min(d.fill_score, d.margin_score)
-        out.append(d)
-    return out
-
-
-def grid_roi_mask(pose: SheetPose, shape: tuple[int, ...]) -> np.ndarray:
-    x0, y0, cell_mm = grid_geometry()
-    size = 3 * cell_mm
-    polygon = pose.to_image([(x0, y0), (x0 + size, y0), (x0 + size, y0 + size), (x0, y0 + size)])
-    mask = np.zeros(shape[:2], np.uint8)
-    cv2.fillPoly(mask, [polygon.astype(np.int32)], 255)
-    return mask
-
-
-def large_non_cube_blob(frame_bgr: np.ndarray, grid_mask: np.ndarray, cube_mask: np.ndarray) -> bool:
-    """Conservatively flag a large saturated or dark object over the grid."""
-    hsv = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2HSV)
-    foreground_px = np.where(((hsv[:, :, 1] > 45) | (hsv[:, :, 2] < 105)), 255, 0).astype(np.uint8)
-    foreground_px &= grid_mask
-    foreground_px[cv2.dilate(cube_mask, np.ones((21, 21), np.uint8)) > 0] = 0
-    foreground_px = cv2.morphologyEx(foreground_px, cv2.MORPH_OPEN, np.ones((15, 15), np.uint8))
-    contours, _ = cv2.findContours(foreground_px, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    grid_area = max(float(cv2.countNonZero(grid_mask)), 1.0)
-    return any(cv2.contourArea(c) / grid_area >= HAND_AREA_FRACTION for c in contours)
-
-
-def build_grid_state(
-    frame_bgr: np.ndarray,
-    localizer: SheetLocalizer,
-    last_pose: SheetPose | None,
-    frame_id: int,
-    timestamp: float | None = None,
-    calib: Optional[Calibration] = None,
-) -> tuple[GridState, SheetPose | None, list[CubeDetection]]:
-    calib = calib or load_calibration()
-    found_tags = localizer.detect_tags(frame_bgr)
-    current_pose = localizer.locate(frame_bgr) if len(found_tags) >= MIN_TAGS else None
-    pose = current_pose or last_pose
-    board = empty_board()
-    confidence = {cell: 0.0 for cell in CELLS}
-    detections: list[CubeDetection] = []
-    hands_clear = current_pose is not None
-
-    if pose is not None:
-        roi = grid_roi_mask(pose, frame_bgr.shape)
-        min_block_px = calib.area_frac[0] * cv2.countNonZero(roi) / 9.0
-        blobs, cube_mask = detect_all_cubes(frame_bgr, roi, calib, min_block_px=min_block_px)
-        mid_height = calib.side_mm / 2.0
-        for detection in blobs:
-            x_mm, y_mm = (float(v) for v in pose.to_sheet([detection.center_px], mid_height)[0])
-            lo, hi = expected_area_px(pose, x_mm, y_mm, calib)
-            if detection.area_px > HAND_OF_MAX_AREA * hi:
-                hands_clear = False  # far bigger than any block: a hand, a sleeve, or the arm
-                continue
-            detection.cell = mm_to_cell(x_mm, y_mm)
-            detection.edge_mm = edge_margin_mm(x_mm, y_mm)
-            detection.area_score = area_score(detection.area_px, (lo, hi))
-            detection.score = min(detection.area_score, detection.margin_score, detection.fill_score)
-            detections.append(detection)
-        for detection in sorted(detections, key=lambda d: d.score, reverse=True):
-            cell = detection.cell
-            if cell is None:
-                continue
-            conf = detection.score
-            if detection.edge_mm < EDGE_MARGIN_MM:
-                conf = min(conf, STRADDLE_CONFIDENCE)  # may straddle two cells: never a pass
-            if board[cell]:
-                hands_clear = False
-                confidence[cell] = min(confidence[cell], conf)
-                continue
-            board[cell] = [detection.color]
-            confidence[cell] = conf
-        if current_pose is not None:
-            hands_clear = hands_clear and not large_non_cube_blob(frame_bgr, roi, cube_mask)
-            for cell in CELLS:
-                if not board[cell]:
-                    confidence[cell] = 1.0
-
-    state = GridState(
-        t=time.time() if timestamp is None else timestamp,
-        board=board,
-        arm_clear=True,
-        hands_clear=hands_clear,
-        confidence=confidence,
-        frame_id=frame_id,
-    )
-    return state, pose, detections
+MIN_TAGS = 3     # --list-cameras: a camera that sees this many tags is pointed at the sheet
+BAND_H = 46      # status band height, px
+GOOD, BAD, HAND_BGR, CHANGE_BGR = (80, 220, 80), (60, 60, 255), (255, 0, 255), (255, 255, 0)
 
 
 def _bgr(hex_color: str) -> tuple[int, int, int]:
@@ -271,58 +65,82 @@ def _text(img: np.ndarray, text: str, org: tuple[int, int], scale: float = 0.7, 
     cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2, cv2.LINE_AA)
 
 
-def block_label(detection: CubeDetection, state: GridState) -> str:
+def block_label(block: Block, confidence: dict[str, float]) -> str:
     """"B2 teal 0.93", with a "?" when the published confidence is below MIN_CONFIDENCE, so the
     Jetson window says what the brain will see (the brain treats that cell as unknown)."""
-    if detection.cell is None:
-        return f"off-grid {detection.color}"
-    conf = state.confidence.get(detection.cell, 0.0)
-    unsure = "?" if conf < MIN_CONFIDENCE or detection.color == UNKNOWN else ""
-    return f"{detection.cell} {detection.color}{unsure} {conf:.2f}"
+    if block.cell is None:
+        return f"off-grid {block.color}"
+    conf = confidence.get(block.cell, 0.0)
+    unsure = "?" if conf < MIN_CONFIDENCE or block.color == UNKNOWN else ""
+    return f"{block.cell} {block.color}{unsure} {conf:.2f}"
 
 
-def annotate(frame: np.ndarray, pose: SheetPose | None, detections: list[CubeDetection], state: GridState,
-             calib: Optional[Calibration] = None) -> np.ndarray:
+def _polyline(img: np.ndarray, contour_sheet_px: np.ndarray, H: np.ndarray, color, thickness: int) -> np.ndarray:
+    pts = sheet_to_image(contour_sheet_px.reshape(-1, 2), H).astype(np.int32)
+    cv2.polylines(img, [pts], True, color, thickness, cv2.LINE_AA)
+    return pts
+
+
+def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note: str = "") -> np.ndarray:
+    """Camera frame with the grid, changed regions (cyan), blocks labeled "cell color confidence"
+    in their color, hands and unknown objects in magenta. Status sits in its own band on top,
+    the hands line and notes in a band at the bottom, so messages never overlap the picture."""
     out = frame.copy()
-    if pose is None:
-        _text(out, "GRID NOT FOUND", (30, 55), 1.3, (0, 0, 255))
-        return out
-    x0, y0, size = grid_geometry()
-    for i in range(4):
-        vertical = pose.to_image([(x0 + i * size, y0), (x0 + i * size, y0 + 3 * size)])
-        horizontal = pose.to_image([(x0, y0 + i * size), (x0 + 3 * size, y0 + i * size)])
-        cv2.line(out, tuple(vertical[0].astype(int)), tuple(vertical[1].astype(int)), (0, 255, 0), 2)
-        cv2.line(out, tuple(horizontal[0].astype(int)), tuple(horizontal[1].astype(int)), (0, 255, 0), 2)
-    for cell in CELLS:
-        cx, cy = cell_center_mm(cell)
-        corner = pose.to_image([(cx - 0.42 * size, cy - 0.30 * size)])[0].astype(int)
-        _text(out, cell, tuple(corner), 0.6, (200, 200, 200))
-    refs = (calib or load_calibration()).refs
-    for detection in detections:
-        hex_color = refs[detection.color].hex if detection.color in refs else "#808080"
-        cv2.drawContours(out, [detection.contour.reshape(-1, 1, 2)], -1, _bgr(hex_color), 3)
-        cx, cy = (int(v) for v in detection.center_px)
-        cv2.drawMarker(out, (cx, cy), (255, 255, 255), cv2.MARKER_CROSS, 22, 2)
-        _text(out, block_label(detection, state), (cx - 60, cy - 18), 0.8)
-    _text(out, f"hands_clear={state.hands_clear} frame={state.frame_id}", (30, 35), 0.8)
+    lock = perceiver.lock
+    if lock is not None and result.grid != "not_locked":
+        pose = lock.pose()
+        x0, y0, size = grid_geometry()
+        for i in range(4):
+            for a, b in (((x0 + i * size, y0), (x0 + i * size, y0 + 3 * size)),
+                         ((x0, y0 + i * size), (x0 + 3 * size, y0 + i * size))):
+                p, q = pose.to_image([a, b]).astype(int)
+                cv2.line(out, tuple(p), tuple(q), (0, 200, 0), 2)
+        for cell, (cx, cy) in ((c, cell_center_mm(c)) for c in ("A1", "B1", "C1", "A2", "B2", "C2", "A3", "B3", "C3")):
+            p = pose.to_image([(cx - 0.42 * size, cy - 0.30 * size)])[0].astype(int)
+            _text(out, cell, tuple(p), 0.55, (200, 200, 200))
+    a = result.analysis
+    if a is not None and lock is not None:
+        contours, _ = cv2.findContours(a.mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in contours:
+            _polyline(out, c, lock.H, CHANGE_BGR, 1)
+        refs = perceiver.calib.refs
+        for b in a.blocks:
+            pts = _polyline(out, b.contour, lock.H, _bgr(refs[b.color].hex) if b.color in refs else (128, 128, 128), 3)
+            x, y = pts.mean(axis=0).astype(int)
+            _text(out, block_label(b, result.state.confidence), (x - 70, y), 0.8)
+        for r in a.others:
+            pts = _polyline(out, r.contour, lock.H, HAND_BGR, 4)
+            x, y = pts.mean(axis=0).astype(int)
+            _text(out, r.kind, (x - 30, y), 0.9, HAND_BGR)
+    h, w = out.shape[:2]
+    cv2.rectangle(out, (0, 0), (w, BAND_H), (20, 20, 20), -1)
+    cv2.putText(out, result.status, (14, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.9, GOOD if result.ok else BAD, 2, cv2.LINE_AA)
+    cv2.rectangle(out, (0, h - BAND_H), (w, h), (20, 20, 20), -1)
+    bottom = f"hands_clear={result.state.hands_clear}" + (f" ({result.reason})" if result.reason else "")
+    bottom += f"   frame {result.state.frame_id}   E: re-take empty board   Q: quit"
+    cv2.putText(out, bottom + (f"   {note}" if note else ""), (14, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.65,
+                (230, 230, 230), 1, cv2.LINE_AA)
     return out
 
 
-def debug_lines(detections: list[CubeDetection], state: GridState) -> list[str]:
-    """One line per block: label, the three component scores, and the color distances."""
-    lines = []
-    for d in sorted(detections, key=lambda d: (d.cell or "~", d.color)):
-        lines.append(
-            f"{block_label(d, state):<22} area={d.area_score:.2f} ({d.area_px:.0f}px) "
-            f"margin={d.margin_score:.2f} (dE {d.d_nearest:.1f} vs {d.d_second:.1f}) "
-            f"fill={d.fill_score:.2f} ({d.fill_ratio:.2f}) edge={d.edge_mm:.1f}mm"
-        )
+def debug_lines(result: FrameResult) -> list[str]:
+    """The status, then one line per block (label, the three scores, color distances) and per hand."""
+    lines = [result.status + (f"; hands_clear false: {result.reason}" if result.reason else "")]
+    a = result.analysis
+    if a is None:
+        return lines
+    for b in sorted(a.blocks, key=lambda b: (b.cell or "~", b.color)):
+        lines.append(f"{block_label(b, result.state.confidence):<22} area={b.area_score:.2f} ({b.area_mm2:.0f} mm2) "
+                     f"margin={b.margin_score:.2f} (dE {b.d_nearest:.1f} vs {b.d_second:.1f}) "
+                     f"fill={b.fill_score:.2f} ({b.fill_ratio:.2f}) edge={b.edge_mm:.1f}mm")
+    for r in a.others:
+        lines.append(f"{r.kind:<22} {r.area_mm2:.0f} mm2: {r.why}")
     return lines
 
 
 def tag_self_check(pose: Optional[SheetPose] = None, frame_shape: Optional[tuple[int, ...]] = None) -> list[str]:
     """Start-up check of the cell naming: which tag sits at which cell corner (from the sheet
-    spec), and, once the sheet is in view, where those corner cells are on screen."""
+    spec), and, with a grid lock, where those corner cells are on screen."""
     lines = [f"tag {tag} sits at the {cell} corner" for tag, cell in sorted(tag_corner_cells().items())]
     if pose is not None and frame_shape is not None:
         h, w = frame_shape[:2]
@@ -331,6 +149,13 @@ def tag_self_check(pose: Optional[SheetPose] = None, frame_shape: Optional[tuple
             where = f"{'top' if v < h / 2 else 'bottom'}-{'left' if u < w / 2 else 'right'}"
             lines.append(f"{cell} centre on screen at pixel ({u:.0f}, {v:.0f}), {where} of the image")
     return lines
+
+
+def lock_camera(args: argparse.Namespace, frames: Iterator[np.ndarray]) -> None:
+    """Exposure and white balance lock for a live camera (Linux); see perception/camera_controls."""
+    if args.camera is None:
+        return
+    camera_controls.lock_exposure(camera_controls.device(args.camera), args.exposure, args.wb, grab=lambda: next(frames))
 
 
 def image_frames(pattern: str) -> Iterator[np.ndarray]:
@@ -439,51 +264,67 @@ class Publisher:
 
 
 async def run(args: argparse.Namespace) -> None:
-    frames: Iterable[np.ndarray]
+    frames: Iterator[np.ndarray]
     if args.images:
         frames = image_frames(args.images)
     elif args.video:
         frames = capture_frames(args.video, loop=True)
     else:
         frames = capture_frames(args.camera, loop=False, backend=args.backend)
+        lock_camera(args, frames)
     publisher = Publisher()
-    localizer = SheetLocalizer(min_tags=MIN_TAGS)
     calib = load_calibration(args.calib)
     if calib.calibrated:
         print(f"[perception] block colors from {calib.source} ({calib.meta.get('created', 'undated')})", flush=True)
     else:
         print(f"[perception] NOT CALIBRATED: {args.calib} is missing, using nominal block colors. "
               "Run python -m perception.calibrate first.", flush=True)
-    for line in tag_self_check():
+    perceiver = Perceiver(calib, log=lambda m: print(m, flush=True))
+    if perceiver.lock is None:
+        print("[perception] no grid lock yet: clear the board, then press E in the --debug window "
+              "(or run perception.calibrate)", flush=True)
+    else:
+        print(f"[perception] saved grid lock from {perceiver.lock.created}: waiting for 2 tags to confirm it", flush=True)
+    for line in tag_self_check(perceiver.lock.pose() if perceiver.lock else None,
+                               (perceiver.lock.frame_size[1], perceiver.lock.frame_size[0]) if perceiver.lock else None):
         print(f"[perception] self-check: {line}", flush=True)
-    last_pose: SheetPose | None = None
-    checked_screen = False
     period = 1.0 / HZ
+    note = ""
     async with serve(publisher.handler, args.host, args.port):
         print(f"[perception] publishing GridState on ws://{args.host}:{args.port} at {HZ:g} Hz", flush=True)
         last_report: list[str] = []
         for frame_id, frame in enumerate(frames):
             started = time.monotonic()
-            state, last_pose, detections = build_grid_state(frame, localizer, last_pose, frame_id, calib=calib)
-            if last_pose is not None and not checked_screen:
-                checked_screen = True  # once the sheet is in view: where the corner cells are on screen
-                for line in tag_self_check(last_pose, frame.shape)[4:]:
-                    print(f"[perception] self-check: {line}", flush=True)
+            result = perceiver.step(frame, frame_id)
             if args.debug:
-                report = debug_lines(detections, state)
+                report = debug_lines(result)
                 if report != last_report:  # print on change, not 10 times a second
-                    print(f"[perception] frame {frame_id}: {len(detections)} cube(s)", flush=True)
+                    print(f"[perception] frame {frame_id}:", flush=True)
                     for line in report:
                         print("  " + line, flush=True)
                     last_report = report
             # "source" is an extra key GridState.from_dict ignores; brain.server records it as provenance.
-            broadcast(publisher.clients, json.dumps({**state.to_dict(), "source": "perception"}))
+            broadcast(publisher.clients, json.dumps({**result.state.to_dict(), "source": "perception"}))
             if args.debug:
-                cv2.imshow("Apprentice perception", annotate(frame, last_pose, detections, state, calib))
-                if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                cv2.imshow("Apprentice perception", annotate(frame, result, perceiver, note))
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), 27):
                     break
+                if key in (ord("e"), ord("E")):
+                    ok, note = perceiver.capture(frame)
+                    print(f"[perception] {'E: ' + note if ok else 'E failed: ' + note}", flush=True)
             await asyncio.sleep(max(0.0, period - (time.monotonic() - started)))
     cv2.destroyAllWindows()
+
+
+def add_camera_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--backend", choices=sorted(BACKENDS), default=None,
+                        help="capture backend for --camera on Windows (indexes differ per backend)")
+    parser.add_argument("--exposure", default="auto",
+                        help="Linux: 'auto' (step down until the sheet is not clipped, the default), "
+                             "a number (exposure_time_absolute), or 'keep'")
+    parser.add_argument("--wb", type=int, default=None,
+                        help="Linux: white balance temperature in kelvin (default: auto off at its current value)")
 
 
 def main(argv: Optional[list[str]] = None) -> None:
@@ -494,8 +335,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     source.add_argument("--images", metavar="GLOB")
     source.add_argument("--list-cameras", action="store_true",
                         help="probe camera indexes on each backend, report resolution and grid tags seen, and exit")
-    parser.add_argument("--backend", choices=sorted(BACKENDS), default=None,
-                        help="capture backend for --camera (indexes differ per backend)")
+    add_camera_args(parser)
     parser.add_argument("--snapshot-dir", type=Path, default=Path(tempfile.gettempdir()) / "apprentice_cameras",
                         help="where --list-cameras saves one frame per camera")
     parser.add_argument("--host", default="localhost")
