@@ -329,6 +329,60 @@ def speech_colors(steps: list, placements: list[dict]) -> dict[int, str]:
     return out
 
 
+def reconcile(steps: list[dict], truth: dict[str, list[str]], placements: list[dict]) -> tuple[list[dict], list[str]]:
+    """The extractor's steps checked against the final board the vision model read (cell -> colors,
+    bottom to top). The extractor is good at order and timing, and unsure of colors and stacks;
+    the final board is the truth for what is there. Returns (steps, what changed):
+      a step on a block the board has, in another color   takes the board's color (no false duplicates)
+      a step the final board has no block for              is dropped (a ghost, or a stack it lost)
+      a block on the board no step placed                  is added, in the order it was said
+    Steps whose cell the vision model could not see (no blob there) are kept as they are."""
+    changes, out = [], []
+    for st in steps:
+        cell, level = st["cell"], int(st["level"])
+        if cell not in truth:
+            out.append(dict(st))
+            continue
+        stack = truth[cell]
+        if level >= len(stack):
+            changes.append(f"dropped {st['color']} on {cell} level {level}: not on the final board")
+            continue
+        if st["color"] != stack[level]:
+            changes.append(f"{cell} level {level}: {st['color']} -> {stack[level]}")
+            st = {**st, "color": stack[level], "color_source": "vision model"}
+        out.append(dict(st))
+    have = {(st["cell"], int(st["level"])) for st in out}
+    spoken = [p.get("color") for p in placements if isinstance(p, dict) and p.get("action", "place") == "place"]
+    for cell, stack in truth.items():
+        for level, color in enumerate(stack):
+            if (cell, level) in have:
+                continue
+            new = {"cell": cell, "level": level, "color": color, "color_source": "vision model"}
+            # place it after the step whose color was said just before it
+            at = len(out)
+            if color in spoken:
+                before = spoken[:spoken.index(color)]
+                idx = [i for i, st in enumerate(out) if st["color"] in before]
+                at = (max(idx) + 1) if idx else 0
+            below = [i for i, st in enumerate(out) if st["cell"] == cell and int(st["level"]) < level]
+            if below:
+                at = max(at, max(below) + 1)          # never before the block it stands on
+            out.insert(at, new)
+            have.add((cell, level))
+            changes.append(f"added {color} on {cell} level {level}: on the final board, no step placed it")
+    return out, changes
+
+
+def stacks_ok(steps: list[dict]) -> bool:
+    """Replaying the steps stacks properly: each block's level is the number already under it."""
+    height: dict[str, int] = {}
+    for st in steps:
+        if int(st["level"]) != height.get(st["cell"], 0):
+            return False
+        height[st["cell"]] = height.get(st["cell"], 0) + 1
+    return True
+
+
 def merge_ghost(steps: list[dict], reasons: dict, placements: list[dict]) -> Optional[list[dict]]:
     """A 2-high tower leans in the camera's picture (the camera is not straight above), so for one
     block put on a stack, "on this square" and "on the neighbour" can fit the image almost equally:

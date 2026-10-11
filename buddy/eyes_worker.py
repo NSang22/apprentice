@@ -172,6 +172,52 @@ def narration(path: str) -> dict:
             "seconds": round(heard["seconds"] + r["seconds"], 2), "model": f"{heard['model']} + {r['model']}"}
 
 
+BOARD_PROMPT = (
+    "This overhead photo shows toy blocks on a printed sheet. Each block or stack of blocks is outlined "
+    "in magenta and labelled with a white number in a black box. For every number, list the colors of the "
+    f"blocks in it from the bottom (on the sheet) to the top, using only: {', '.join(COLORS)} (skyblue is "
+    "light blue). A single block is a list of one; a block standing on another is a list of two. Judge each "
+    "block's own color, ignoring glare and shadows. Reply with JSON only, like "
+    '{"1": ["red"], "2": ["red", "teal"]}.'
+)
+
+
+def board(path: str) -> dict:
+    """The vision model reads the final board of a recording: every block or stack on the grid,
+    bottom to top. The square comes from the robot's own geometry (blob centre -> cell)."""
+    import cv2
+    cap = cv2.VideoCapture(path)
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if n > 2:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, n - 2)
+    img = None
+    while True:
+        ok, f = cap.read()
+        if not ok:
+            break
+        img = f
+    cap.release()
+    if img is None:
+        return {"ok": False, "error": "could not read the video's last frame"}
+    scene, _, detections = scene_mod.build_scene(img, SheetLocalizer(), naming="off")
+    if scene is None:
+        return {"ok": False, "error": "I can't see the sheet's tags in the last frame"}
+    on_grid = [(d, o) for d, o in zip(detections, scene["objects"]) if mm_to_cell(*o["center_mm"])]
+    if not on_grid:
+        return {"ok": True, "blocks": [], "seconds": 0.0, "model": None}
+    ok, jpg = cv2.imencode(".jpg", vision_namer.numbered_image(img, [d.contour for d, _ in on_grid]),
+                           [cv2.IMWRITE_JPEG_QUALITY, 85])
+    r = openai_vision.ask_json(BOARD_PROMPT, [jpg.tobytes()])
+    answer = r["answer"] if isinstance(r["answer"], dict) else {}
+    blocks = []
+    for i, (_, o) in enumerate(on_grid, 1):
+        stack = answer.get(str(i)) or []
+        stack = [TO_SHARED.get(naming.normalize(c), naming.normalize(c)) for c in stack if isinstance(c, str)]
+        x, y = o["center_mm"]
+        blocks.append({"cell": mm_to_cell(x, y), "center_mm": [x, y], "stack": [c for c in stack if c in COLORS]})
+    return {"ok": True, "blocks": blocks, "seconds": r["seconds"], "model": r["model"]}
+
+
 def main() -> None:
     # Picture Recall and Take Turns make patterns from the colors in play (robot ACTIVE_COLORS) and the
     # camera grades with those, so their scans name only those colors. Teach the Robot takes any block
@@ -183,11 +229,12 @@ def main() -> None:
     say({"ready": True, "cell_map": cell_map(), "model": openai_vision.model() if openai_vision.available() else None})
     for line in sys.stdin:
         cmd, _, arg = line.strip().partition(" ")
-        if cmd not in ("scan", "bank", "narration"):
+        if cmd not in ("scan", "bank", "narration", "board"):
             continue
         naming.NAMEABLE = every if (cmd == "scan" and arg == "all") else in_play
         try:
-            say(scan(localizer) if cmd == "scan" else bank(localizer) if cmd == "bank" else narration(arg))
+            say(scan(localizer) if cmd == "scan" else bank(localizer) if cmd == "bank"
+                else board(arg) if cmd == "board" else narration(arg))
         except Exception as e:
             traceback.print_exc(file=sys.stdout)
             say({"ok": False, "error": f"{type(e).__name__}: {e}"})

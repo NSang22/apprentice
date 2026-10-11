@@ -249,32 +249,45 @@ class TeachSession:
                             time.monotonic() - t, {"command": tr.get("command"), "cwd": tr.get("cwd"),
                                                     "output": tr.get("lines"), "exit_code": code})
                 rep = tr.get("report")
-                if result.get("ok") is False and "unknown_color" in (result.get("reasons") or {}) and listener:
-                    # a step no source could read: what was said names it (the extractor's colors file)
+            if self.source == "table" and video and rep and rep.get("steps") and self.eyes.info.get("model"):
+                # the vision model reads the final board; colors and stacks are checked against it
+                if listener is not None:
                     listener.join(timeout=60)
-                    named = teach.speech_colors((rep or {}).get("steps") or [], heard.get("placements", [])) if heard.get("ok") else {}
-                    steps_by_n = {st["step"]: st for st in (rep or {}).get("steps") or []}
-                    entries = [{"step": n, "cell": steps_by_n[n]["cell"], "color": c} for n, c in named.items() if n in steps_by_n]
-                    if entries:
-                        t = time.monotonic()
-                        again = teach.learn_video(video, self.eyes.repo, title, video_s, stage=self._set_stage,
-                                                  log=lambda line: None, colors_file=entries)
-                        tr2 = again.get("trace") or {}
-                        self._trace("extractor_said", "Extractor again, with colors from what you said",
-                                    "ok" if again.get("ok") else "fail",
-                                    ", ".join(f"step {e['step']} {e['color']}" for e in entries) + ": " +
-                                    (f"{len(again['steps'])} steps" if again.get("ok") else
-                                     ", ".join(again.get("reasons") or {}) or again.get("error", "no answer")),
-                                    time.monotonic() - t, {"colors_file": entries, "output": tr2.get("lines"),
-                                                            "exit_code": tr2.get("exit_code")})
-                        if again.get("ok") is not None:
-                            result, rep = again, tr2.get("report") or rep
-                if rep:
-                    gate = rep.get("gate") or {}
-                    self._trace("gate", "Gate checks", "ok" if gate.get("passed") else "fail",
-                                "all checks passed" if gate.get("passed") else
-                                "; ".join(f"{k}: {v}" for k, v in (gate.get("reasons") or {}).items()),
-                                details=rep)
+                t = time.monotonic()
+                seen_board = self.eyes.board(video)
+                if seen_board.get("ok"):
+                    truth: dict = {}
+                    for blk in seen_board["blocks"]:
+                        if blk["cell"] and len(blk["stack"]) > len(truth.get(blk["cell"], [])):
+                            truth[blk["cell"]] = blk["stack"]
+                    said = heard.get("placements", []) if heard.get("ok") else []
+                    steps0 = [st for st in rep["steps"] if st.get("color") is not None]
+                    fixed, changes = teach.reconcile(steps0, truth, said)
+                    unread = [st for st in fixed if st["color"] not in teach.COLORS]
+                    if unread and said:     # anything still unread: the color said in that place
+                        named = teach.speech_colors(fixed, said)
+                        for n, c in named.items():
+                            fixed[n - 1] = {**fixed[n - 1], "color": c, "color_source": "narration"}
+                            changes.append(f"{fixed[n - 1]['cell']} level {fixed[n - 1]['level']}: unread -> {c} (said)")
+                    good = teach.stacks_ok(fixed) and all(st["color"] in teach.COLORS for st in fixed)
+                    self._trace("board_check", "Checked against the final board (vision model)",
+                                ("ok" if not changes else "warn") if good else "fail",
+                                ("; ".join(changes) or "the extractor's steps match the final board") +
+                                ("" if good else " (still inconsistent)"),
+                                time.monotonic() - t, {"final_board": truth, "before": rep["steps"], "after": fixed,
+                                                        "model": seen_board.get("model")})
+                    if good and (changes or not result.get("ok")):
+                        from shared.schemas import Lesson, Step, empty_board
+                        lesson_steps = [Step(st["color"], st["cell"], int(st["level"]), None, None) for st in fixed]
+                        final = empty_board()
+                        for st in lesson_steps:
+                            final[st.cell].append(st.color)
+                        lesson = Lesson(self.session_id, title, source_video, lesson_steps, final)
+                        result = {"ok": True, "lesson": lesson, "steps": [st.to_dict() for st in lesson_steps],
+                                  "via": "video, checked against the final board"}
+                else:
+                    self._trace("board_check", "Checked against the final board (vision model)", "warn",
+                                seen_board.get("error", "no answer"), time.monotonic() - t)
             if (self.source == "table" and result.get("ok") is False and rep
                     and "one_cube_per_change" in (result.get("reasons") or {})):
                 # one block on a stack read as two (a tower leans in the picture): merge them
