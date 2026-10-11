@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from brain.extractor import (ColorsFileError, build_lesson, extract, gate_lesson, manual_colors, script_frames,
-                             step_rows, write_outputs)
+from brain.extractor import (ColorsFileError, FlatLog, build_lesson, extract, flat_frames, gate_lesson, manual_colors,
+                             script_frames, step_rows, write_outputs)
 from brain.fake_feed import HZ, make_frame, parse_script
 from brain.journal import Journal, read_journal
 from brain.session import COMPLETE, Session
@@ -129,6 +129,27 @@ def test_colors_file_fills_unknown_and_gate_passes(tmp_path):
     assert gate.gate.passed, gate.reasons
     out = write_outputs(ex, rows, lesson, gate, tmp_path / "test-lesson.json", {})
     assert Lesson.from_dict(json.loads(out.lesson_path.read_text())).steps[1].color == "orange"
+
+
+def test_trust_order_manual_then_robot_memory_then_camera():
+    ex = extract(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "B2": ["unknown"]}),
+                            seg({"A1": ["red"], "B2": ["unknown"], "C3": ["yellow"]})]))
+    robot = {"A1": "unknown", "B2": "orange", "C3": "purple"}   # the robot memory read per cell
+    rows = step_rows(ex, {3: "teal"}, lambda frame_id, cell: robot[cell])
+    assert [(r.color, r.source) for r in rows] == [("red", "camera"), ("orange", "robot_memory"), ("teal", "manual")]
+    assert [(r.camera_color, r.robot_color, r.manual_color) for r in rows] == [
+        ("red", "unknown", None), ("unknown", "orange", None), ("yellow", "purple", "teal")]
+
+
+def test_flat_mode_reads_a_tall_cell_as_one_block():
+    segments = [seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "C1": ["unknown", "yellow"]})]  # C1 misread 2-high
+    _, _, lesson, gate = lesson_from(frames_of(segments))
+    assert placed(lesson) == [("red", "A1", 0), ("unknown", "C1", 0), ("yellow", "C1", 1)]   # as before, no --flat
+    log = FlatLog()
+    _, _, lesson, gate = lesson_from(flat_frames(frames_of(segments), log))
+    assert placed(lesson) == [("red", "A1", 0), ("yellow", "C1", 0)]
+    assert gate.gate.passed, gate.reasons
+    assert [(r["cell"], r["perception_said"], r["t_first"]) for r in log.runs] == [("C1", ["unknown", "yellow"], 3.0)]
 
 
 def test_colors_file_with_wrong_cell_is_refused():

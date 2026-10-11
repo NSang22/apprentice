@@ -25,6 +25,16 @@ board back while it runs, and nothing here may change the team's calibration.
 
 For each settled board the 9 cells of that frame are cropped (on_settle), so save_pictures()
 can write one picture per step.
+
+With a robot color memory (--color-memory, robot/perception/color.py's ColorMemory file), each
+settled frame is also named the way the robot names blocks (robot/perception/scene.build_scene):
+segment.detect blobs, then ColorNamer.name with the vision model off. Each blob goes to the cell
+under its centre at half a block's height, as the robot places blobs (pose.to_sheet, then
+perception's mm_to_cell); a cell's read is the name of its one blob, so it does not depend on
+perception's own reading of that cell. It counts only when the namer says it came from memory
+(last_source "memory"); its fallback hue guess, a blob too big for one block, two blobs in one
+cell, or none reads "unknown". The robot's "light blue" is skyblue
+(perception/robot_bridge.ROBOT_NAMES). robot_read(frame_id, cell) hands the reads to the extractor.
 """
 
 from __future__ import annotations
@@ -40,13 +50,15 @@ import cv2
 import numpy as np
 
 from perception.blocks import sheet_roi
-from perception.cells import grid_geometry
+from perception.cells import cell_center_mm, grid_geometry, mm_to_cell
 from perception.colors import CALIB_PATH, load_calibration, parse_colors
 from perception.grid_lock import load_lock
-from perception.perceive import Perceiver
-from perception.robot_bridge import default_active_colors, set_block_mm
+from perception.perceive import FrameResult, Perceiver
+from perception.robot_bridge import ROBOT_NAMES, default_active_colors, set_block_mm
+from robot.perception import color as robot_color
+from robot.perception import naming as robot_naming
 from robot.perception import segment, sheet
-from shared.config import CELLS
+from shared.config import CELLS, UNKNOWN
 from shared.schemas import GridState
 
 HZ = 10.0                     # frames per second of video run through perception (the live feed's rate)
@@ -66,7 +78,8 @@ def _sha256(path: Path) -> str:
 
 class VideoSource:
     def __init__(self, path: Path, colors: Optional[str], block_mm: Optional[float],
-                 calib_dir: Optional[Path] = None, hz: float = HZ, log: Callable[[str], None] = print):
+                 calib_dir: Optional[Path] = None, color_memory: Optional[Path] = None,
+                 hz: float = HZ, log: Callable[[str], None] = print):
         self.path = Path(path)
         self.log = log
         if not self.path.is_file():
@@ -140,7 +153,27 @@ class VideoSource:
         }
         self._frame: Optional[np.ndarray] = None
         self._frame_id = -1
+        self._result: Optional[FrameResult] = None
         self._crops: dict[int, dict[str, np.ndarray]] = {}
+        self._robot_reads: dict[int, dict[str, str]] = {}
+        self._robot_active = robot_naming.ACTIVE_COLORS
+        self.namer = None if color_memory is None else self._robot_namer(Path(color_memory))
+
+    def _robot_namer(self, path: Path) -> Any:
+        if not path.is_file():
+            raise VideoSourceError(f"no color memory file at {path}")
+        memory = robot_color.ColorMemory(path)  # read only: learn() and save() are never called
+        if not memory.colors:
+            raise VideoSourceError(f"{path} has no remembered colors")
+        allowed = [name for name in memory.colors if ROBOT_NAMES.get(name, name) in self.active]
+        # ColorNamer only names robot ACTIVE_COLORS (red, purple, yellow, teal), so orange and light
+        # blue could never be named. Here, in this process only, it may name the colors in play
+        # instead (as robot_bridge sets the block size); close() puts the robot's list back.
+        robot_naming.ACTIVE_COLORS = allowed
+        self.info["color_memory"] = {"path": str(path), "sha256": _sha256(path), "remembered": sorted(memory.colors),
+                                     "allowed": allowed}
+        self.log(f"[extract] robot color memory {path}: naming {', '.join(allowed)}")
+        return robot_naming.ColorNamer(memory=memory, use_model=False, log=lambda m: None)
 
     # ------------------------------------------------------------ frames
 
@@ -176,7 +209,7 @@ class VideoSource:
             result = self.perceiver.step(frame, index, timestamp=t)
             if not result.state.hands_clear:
                 reasons[result.reason or result.status] += 1
-            self._frame, self._frame_id = frame, index
+            self._frame, self._frame_id, self._result = frame, index, result
             if t >= next_progress:
                 self.log(f"[extract] {t:5.1f} s  {result.status}")
                 next_progress += PROGRESS_EVERY_S
@@ -203,17 +236,42 @@ class VideoSource:
     # ------------------------------------------------------------ step pictures
 
     def on_settle(self, settled: Any) -> None:
-        """Crop every cell of the frame that settled a board (the current frame)."""
+        """For the frame that settled a board (the current frame): crop every cell, and with a
+        color memory, name each occupied cell's top block the way the robot does."""
         if settled.frame_id != self._frame_id or self._frame is None or self.perceiver.lock is None:
             return
         self._crops[settled.frame_id] = {cell: self._crop(self._frame, cell) for cell in CELLS}
+        if self.namer is not None:
+            self._robot_reads[settled.frame_id] = self._robot_names(settled.board)
+
+    def _robot_names(self, board: dict[str, list[str]]) -> dict[str, str]:
+        frame, pose = self._frame, self.perceiver.lock.pose()
+        tags = {k: v["corners_mm"] for k, v in self.perceiver.localizer.spec["tags"].items()}
+        blobs = segment.detect(frame, None, pose=pose, tags=tags)  # as robot/perception/scene.build_scene
+        by_cell: dict[str, list[Any]] = {}
+        for b in blobs:  # the robot places a blob by its centre at half a block's height (scene.build_scene)
+            x, y = pose.to_sheet([b.center_px], self.block_mm / 2.0)[0]
+            by_cell.setdefault(mm_to_cell(float(x), float(y)), []).append(b)
+        reads = {}
+        for cell in (c for c in CELLS if board[c]):
+            hits = by_cell.get(cell, [])
+            if len(hits) != 1 or hits[0].score < 0:
+                reads[cell] = UNKNOWN  # no blob, two blobs, or one blob too big for one block
+                continue
+            name = self.namer.name(frame, [hits[0].contour], pose, tags)[0]
+            reads[cell] = ROBOT_NAMES.get(name, name) if self.namer.last_source == "memory" else UNKNOWN
+        return reads
+
+    def robot_read(self, frame_id: int, cell: str) -> Optional[str]:
+        """The robot-memory name of the top block on cell in that settled frame, None if not read."""
+        return self._robot_reads.get(frame_id, {}).get(cell)
 
     def _crop(self, frame: np.ndarray, cell: str) -> np.ndarray:
-        x0, y0, size = grid_geometry()
-        col, row = "ABC".index(cell[0]), int(cell[1]) - 1
-        m = CROP_MARGIN * size
-        a, b = x0 + col * size - m, y0 + row * size - m
-        square = [(a, b), (a + size + 2 * m, b), (a + size + 2 * m, b + size + 2 * m), (a, b + size + 2 * m)]
+        _, _, size = grid_geometry()
+        cx, cy = cell_center_mm(cell)  # perception's cell naming
+        half = (0.5 + CROP_MARGIN) * size
+        a, b = cx - half, cy - half
+        square = [(a, b), (a + 2 * half, b), (a + 2 * half, b + 2 * half), (a, b + 2 * half)]
         pose = self.perceiver.lock.pose()
         pts = np.vstack([pose.to_image(square, 0.0), pose.to_image(square, self.block_mm)])
         h, w = frame.shape[:2]
@@ -236,5 +294,6 @@ class VideoSource:
 
     def close(self) -> None:
         sheet.CAMERA_CACHE = self._robot_cache
+        robot_naming.ACTIVE_COLORS = self._robot_active
         self.cap.release()
         shutil.rmtree(self.tmp, ignore_errors=True)

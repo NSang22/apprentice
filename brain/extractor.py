@@ -16,9 +16,19 @@ A slot whose read changes (unknown to red, red to purple) with no empty board in
 the same cube. A cube that disappears deletes the step that placed it; a cube that moves is a
 removal plus a new step. t_video is when the board with the new cube first appeared.
 
-Colors are never guessed. --colors-file fills or corrects them per step (step numbers as printed
-in the step table): [{"step": 2, "cell": "B2", "color": "orange"}]. choose_color() is the one
-place a step's color is decided, so a color model can plug in there later.
+Colors are never guessed. Three sources, in this order of trust (choose_color(), the one place
+a step's color is decided, so a color model can plug in there later):
+  manual        --colors-file, per step (step numbers as printed in the step table):
+                [{"step": 2, "cell": "B2", "color": "orange"}]
+  robot_memory  --color-memory (--video): the robot's ColorMemory file, blocks named the way the
+                robot names them (brain/video_source.py), same agreement rule as the camera
+  camera        perception's reads in the GridState stream
+The first source with a known color wins; the extract file keeps all three per step.
+
+--flat declares the recording flat, one block per cell, like --block-mm declares the block size:
+every frame's cell read more than one block high becomes one block with its top color (the one
+the camera sees), so hidden lower blocks never become steps. The extract file lists every
+reading it changed. Without --flat nothing is changed.
 
 Output, next to --out (default lessons/<lesson_id>.json):
   lessons/<id>.json             only when every step has a known color; always loads with
@@ -72,18 +82,21 @@ class Cube:
     t_video: float
     frame_id: int                  # frame of the settled board where it first appeared
     reads: list[str] = field(default_factory=list)  # one color read per settled board it sat on
+    settles: list[tuple[int, bool]] = field(default_factory=list)  # (frame id, top of its stack) per board
     baseline: bool = False         # already on the first settled board (not a step)
     t_removed: Optional[float] = None
 
-    def known_reads(self) -> list[str]:
-        return sorted({r for r in self.reads if r != UNKNOWN})
-
     def camera_color(self) -> str:
-        known = self.known_reads()
-        return known[0] if len(known) == 1 else UNKNOWN
+        return agreed_color(self.reads)
 
     def read_counts(self) -> dict[str, int]:
         return dict(sorted(Counter(self.reads).items()))
+
+
+def agreed_color(reads: list[str]) -> str:
+    """The color all known reads agree on; "unknown" when there is none or they disagree."""
+    known = {r for r in reads if r != UNKNOWN}
+    return known.pop() if len(known) == 1 else UNKNOWN
 
 
 @dataclass
@@ -98,6 +111,47 @@ class Extraction:
     @property
     def boards_with_unknown(self) -> int:
         return sum(1 for s in self.settled if any(UNKNOWN in s.board[c] for c in CELLS))
+
+
+@dataclass
+class FlatLog:
+    """--flat: every reading flatten() changed, as runs of consecutive frames with the same reading."""
+    runs: list[dict[str, Any]] = field(default_factory=list)
+    _open: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def note(self, gs: GridState, changed: dict[str, list[str]]) -> None:
+        for cell in CELLS:
+            run = self._open.get(cell)
+            said = changed.get(cell)
+            if run is not None and said == run["perception_said"]:
+                run["t_last"], run["frames"] = round(gs.t, 3), run["frames"] + 1
+                continue
+            self._open.pop(cell, None)
+            if said is not None:
+                run = {"cell": cell, "perception_said": said, "t_first": round(gs.t, 3), "t_last": round(gs.t, 3),
+                       "frames": 1}
+                self.runs.append(run)
+                self._open[cell] = run
+
+
+def flatten(gs: GridState) -> tuple[GridState, dict[str, list[str]]]:
+    """The recording is declared flat (one block per cell): a cell read more than one block high
+    becomes one block with the color the camera sees, the top. Returns (frame, {cell: what
+    perception said}) for the cells it changed."""
+    changed = {cell: list(gs.board[cell]) for cell in CELLS if len(gs.board[cell]) > 1}
+    if not changed:
+        return gs, {}
+    board = copy_board(gs.board)
+    for cell, stack in changed.items():
+        board[cell] = [stack[-1]]
+    return GridState(gs.t, board, gs.arm_clear, gs.hands_clear, dict(gs.confidence), gs.frame_id), changed
+
+
+def flat_frames(frames: Iterable[GridState], log: FlatLog) -> Iterable[GridState]:
+    for gs in frames:
+        flat, changed = flatten(gs)
+        log.note(gs, changed)
+        yield flat
 
 
 def unusable_reason(gs: GridState) -> Optional[str]:
@@ -131,10 +185,18 @@ def settle(frames: Iterable[GridState], extraction: Extraction,
 
 
 def extract(frames: Iterable[GridState], on_settle: Optional[Callable[[Settled], None]] = None) -> Extraction:
+    """Frames -> the existing stabilizer -> track()."""
     ex = Extraction(settled=[], steps=[], removed=[], baseline=[])
+    return track(settle(frames, ex, on_settle), ex)
+
+
+def track(settled: Iterable[Settled], ex: Optional[Extraction] = None) -> Extraction:
+    """Steps from boards that have already settled (oldest first): each cube from the moment it
+    appears in a slot until that slot is empty again (see the module docstring)."""
+    ex = ex if ex is not None else Extraction(settled=[], steps=[], removed=[], baseline=[])
     live: dict[tuple[str, int], Cube] = {}
     prev: Optional[Board] = None
-    for s in settle(frames, ex, on_settle):
+    for s in settled:
         ex.settled.append(s)
         if prev is None:
             for cell in CELLS:
@@ -156,6 +218,7 @@ def extract(frames: Iterable[GridState], on_settle: Optional[Callable[[Settled],
                 ex.steps.append(cube)
         for (cell, level), cube in live.items():
             cube.reads.append(s.board[cell][level])
+            cube.settles.append((s.frame_id, level == len(s.board[cell]) - 1))
         prev = s.board
     return ex
 
@@ -174,24 +237,34 @@ class StepRow:
     level: int
     t_video: float
     color: str                   # a color from COLORS, or "unknown"
-    source: str                  # "camera" or "manual"
+    source: str                  # "manual", "robot_memory", "camera", or "none" (unknown)
     camera_color: str
     reads: dict[str, int]
     frame_id: int
+    robot_color: Optional[str] = None             # None without a color memory
+    robot_reads: Optional[dict[str, int]] = None
+    manual_color: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         conflict = len([c for c in self.reads if c != UNKNOWN]) > 1
         return {"step": self.number, "cell": self.cell, "level": self.level, "t_video": round(self.t_video, 3),
-                "color": self.color, "color_source": self.source, "camera_color": self.camera_color,
-                "camera_reads": self.reads, "camera_reads_disagree": conflict, "frame_id": self.frame_id}
+                "color": self.color, "color_source": self.source,
+                "camera_color": self.camera_color, "camera_reads": self.reads, "camera_reads_disagree": conflict,
+                "robot_memory_color": self.robot_color, "robot_memory_reads": self.robot_reads,
+                "manual_color": self.manual_color, "frame_id": self.frame_id}
 
 
-def choose_color(camera: str, manual: Optional[str]) -> tuple[str, str]:
-    """The one place a step's color is decided: (color, source). A manual color wins over the
-    camera's; otherwise the camera's color stands, "unknown" included. Never a guess."""
+def choose_color(camera: str, robot: Optional[str], manual: Optional[str]) -> tuple[str, str]:
+    """The one place a step's color is decided: (color, source). Trust order: the manual colors
+    file, then the robot's color memory, then the camera; the first known color wins. A source
+    that does not know ("unknown", or None when not in use) passes to the next. Never a guess."""
     if manual is not None:
         return manual, "manual"
-    return camera, "camera"
+    if robot is not None and robot != UNKNOWN:
+        return robot, "robot_memory"
+    if camera != UNKNOWN:
+        return camera, "camera"
+    return UNKNOWN, "none"
 
 
 def parse_colors_file(data: Any) -> list[dict[str, Any]]:
@@ -227,13 +300,20 @@ def manual_colors(entries: list[dict[str, Any]], cubes: list[Cube]) -> dict[int,
     return out
 
 
-def step_rows(ex: Extraction, manual: Optional[dict[int, str]] = None) -> list[StepRow]:
+def step_rows(ex: Extraction, manual: Optional[dict[int, str]] = None,
+              robot_read: Optional[Callable[[int, str], Optional[str]]] = None) -> list[StepRow]:
+    """robot_read(frame id, cell): the robot-memory name of that cell's top block in a settled
+    frame (None if not read). Each cube's robot reads follow the same agreement rule as the camera's."""
     manual = manual or {}
     rows = []
     for i, cube in enumerate(ex.steps):
-        color, source = choose_color(cube.camera_color(), manual.get(i + 1))
-        rows.append(StepRow(i + 1, cube.cell, cube.level, cube.t_video, color, source,
-                            cube.camera_color(), cube.read_counts(), cube.frame_id))
+        robot_color = robot_counts = None
+        if robot_read is not None:
+            reads = [r for r in (robot_read(fid, cube.cell) for fid, top in cube.settles if top) if r is not None]
+            robot_color, robot_counts = agreed_color(reads), dict(sorted(Counter(reads).items()))
+        color, source = choose_color(cube.camera_color(), robot_color, manual.get(i + 1))
+        rows.append(StepRow(i + 1, cube.cell, cube.level, cube.t_video, color, source, cube.camera_color(),
+                            cube.read_counts(), cube.frame_id, robot_color, robot_counts, manual.get(i + 1)))
     return rows
 
 
@@ -424,9 +504,9 @@ def ws_frames(url: str, seconds: Optional[float], log: Callable[[str], None] = p
 
 
 def print_report(out: Outcome, ex: Extraction) -> None:
-    print(f"\n{'step':>4}  {'cell':<4}  {'level':>5}  {'color':<8}  {'source':<6}  {'video s':>7}")
+    print(f"\n{'step':>4}  {'cell':<4}  {'level':>5}  {'color':<8}  {'source':<12}  {'video s':>7}")
     for r in out.rows:
-        print(f"{r.number:>4}  {r.cell:<4}  {r.level:>5}  {r.color:<8}  {r.source:<6}  {r.t_video:>7.2f}")
+        print(f"{r.number:>4}  {r.cell:<4}  {r.level:>5}  {r.color:<8}  {r.source:<12}  {r.t_video:>7.2f}")
     if not out.rows:
         print("   (no steps)")
     for c in ex.removed:
@@ -469,18 +549,21 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--source-video", help="--script/--grid: video path to store in the lesson (for show-me clips)")
     p.add_argument("--seed", type=int, default=0, help="--script: jitter seed (default 0)")
     p.add_argument("--seconds", type=float, help="--grid: stop after this many seconds (default: Ctrl+C)")
+    p.add_argument("--flat", action="store_true", help="the recording is flat (one block per cell): a cell read "
+                                                       "taller than one block counts as one block, its top color")
     v = p.add_argument_group("--video only")
     v.add_argument("--calib", type=Path, help="folder with grid_lock.json, empty_board.png, colors.json "
                                               "(default: grid lock and empty board from the video's first second)")
     v.add_argument("--colors", help="comma-separated colors in play (default: perception's default)")
     v.add_argument("--block-mm", type=float, help="block edge in mm (default: what perception.publish uses)")
+    v.add_argument("--color-memory", type=Path, help="robot color memory (color_memory.json): name colors as the robot does")
     return p
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parser().parse_args(argv)
-    if not args.video and (args.calib or args.colors or args.block_mm):
-        print("[extract] --calib, --colors and --block-mm only apply to --video", file=sys.stderr)
+    if not args.video and (args.calib or args.colors or args.block_mm or args.color_memory):
+        print("[extract] --calib, --colors, --block-mm and --color-memory only apply to --video", file=sys.stderr)
         return EXIT_BAD_INPUT
     try:
         entries = parse_colors_file(json.loads(args.colors_file.read_text(encoding="utf-8"))) \
@@ -497,7 +580,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         from brain.video_source import VideoSource, VideoSourceError  # loads perception, --video only
         source_errors = (VideoSourceError,)
         try:
-            video = VideoSource(args.video, args.colors, args.block_mm, args.calib)
+            video = VideoSource(args.video, args.colors, args.block_mm, args.calib, args.color_memory)
         except (VideoSourceError, ValueError) as e:
             print(f"[extract] {e}", file=sys.stderr)
             return EXIT_BAD_INPUT
@@ -530,9 +613,15 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 def finish(args: argparse.Namespace, entries: list[dict[str, Any]], name: str, frames: Iterable[GridState],
            info: dict[str, Any], source_video: Optional[str], video: Any) -> int:
-    ex = extract(frames, video.on_settle if video is not None else None)
+    flat = FlatLog() if args.flat else None
+    ex = extract(flat_frames(frames, flat) if flat is not None else frames, video.on_settle if video is not None else None)
     if video is not None:
         info.update(video.info)
+    info["flat_mode"] = {"on": flat is not None, **({"changed_readings": flat.runs} if flat is not None else {})}
+    if flat is not None:
+        print(f"[extract] flat mode: {len(flat.runs)} reading(s) taller than one block were read as one block"
+              + "".join(f"\n  {r['cell']} {r['perception_said']} from {r['t_first']:.2f} s to {r['t_last']:.2f} s "
+                        f"({r['frames']} frames)" for r in flat.runs))
     try:
         manual = manual_colors(entries, ex.steps)
     except ColorsFileError as e:
@@ -544,7 +633,7 @@ def finish(args: argparse.Namespace, entries: list[dict[str, Any]], name: str, f
     if out.exists():
         print(f"[extract] {out} already exists; pick another --out (lessons are never overwritten)", file=sys.stderr)
         return EXIT_BAD_INPUT
-    rows = step_rows(ex, manual)
+    rows = step_rows(ex, manual, video.robot_read if video is not None and video.namer is not None else None)
     lesson = build_lesson(rows, lesson_id, args.title or name.replace("_", " ").replace("-", " ").title(), source_video)
     gate = gate_lesson(lesson, ex, video.reference_empty if video is not None else None)
     pictures = None
