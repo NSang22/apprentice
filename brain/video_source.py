@@ -4,7 +4,7 @@ This is the only brain file that imports perception/ and robot/perception/, and 
 imports it only for --video, so the live brain never loads them. It calls perception's own
 functions (Perceiver, the grid lock, segment.detect); it adds no detection or color logic.
 
-Frames are decoded from the file, never a camera. About HZ frames per second of video are run
+Frames are decoded from the file, never a camera. About SAMPLE_HZ frames per second of video are run
 through perception.perceive.Perceiver, and every timestamp comes from the video: t is the frame's
 own position (CAP_PROP_POS_MSEC, or frame_index / fps if that reads 0), and the Perceiver's clock
 (its empty-board refresh timer) reads the same video time. Same video in, same frames out.
@@ -72,7 +72,10 @@ from robot.perception import segment, sheet
 from shared.config import CELLS, UNKNOWN
 from shared.schemas import GridState
 
-HZ = 10.0                     # frames per second of video run through perception (the live feed's rate)
+SAMPLE_HZ = 5.0               # frames per second of video run through perception. 5 gave the same steps,
+                              # corrections and gate as 10 on expert_take1/2 in about half the time
+# Perception counts some things in frames, not seconds, so they span more time at a lower rate:
+# CellVote's 5-frame majority, StackMemory's 3 stable frames, RELOCK_FRAMES 5.
 FIRST_FRAME_SEARCH_S = 1.0    # first-frame mode: look this far into the video for all 4 tags
 PROGRESS_EVERY_S = 5.0
 CROP_MARGIN = 0.15            # step pictures: this share of a cell around it on every side
@@ -134,7 +137,7 @@ def _sha256(path: Path) -> str:
 class VideoSource:
     def __init__(self, path: Path, colors: Optional[str], block_mm: Optional[float],
                  calib_dir: Optional[Path] = None, color_memory: Optional[Path] = None,
-                 hz: float = HZ, log: Callable[[str], None] = print):
+                 hz: float = SAMPLE_HZ, log: Callable[[str], None] = print):
         self.path = Path(path)
         self.log = log
         if not self.path.is_file():
@@ -146,6 +149,7 @@ class VideoSource:
         self.size = (int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         self.stride = max(1, round(self.fps / hz)) if self.fps > 0 else 1
+        log(f"[extract] sampling {hz:g} frames per second (every {self.stride} video frame(s))")
         self.active = parse_colors(colors) if colors else default_active_colors()
         self.block_mm, line = set_block_mm(block_mm)
         log(f"[extract] {line}")

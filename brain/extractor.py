@@ -928,6 +928,8 @@ def parser() -> argparse.ArgumentParser:
                                               "(default: grid lock and empty board from the video's first second)")
     v.add_argument("--colors", help=f"comma-separated colors in play (default: all shared colors, {','.join(COLORS)})")
     v.add_argument("--block-mm", type=float, help=f"block edge in mm (default {DEFAULT_BLOCK_MM:g})")
+    v.add_argument("--sample-hz", type=float, help="frames per second of video to analyze "
+                                                   "(default brain/video_source.py SAMPLE_HZ)")
     v.add_argument("--color-memory", type=Path, help="robot color memory: name colors as the robot does "
                                                      "(default robot/outputs/color_memory.json if it exists)")
     return p
@@ -943,8 +945,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 def run(argv: Optional[list[str]] = None) -> int:
     args = parser().parse_args(argv)
-    if not args.video and (args.calib or args.colors or args.block_mm or args.color_memory):
-        print("[extract] --calib, --colors, --block-mm and --color-memory only apply to --video", file=sys.stderr)
+    if not args.video and (args.calib or args.colors or args.block_mm or args.color_memory or args.sample_hz):
+        print("[extract] --calib, --colors, --block-mm, --color-memory and --sample-hz only apply to --video",
+              file=sys.stderr)
         return EXIT_BAD_INPUT
     try:
         entries = parse_colors_file(json.loads(args.colors_file.read_text(encoding="utf-8"))) \
@@ -962,7 +965,7 @@ def run(argv: Optional[list[str]] = None) -> int:
         source_errors = (VideoSourceError,)
         try:
             video = VideoSource(args.video, args.colors or ",".join(COLORS), args.block_mm or DEFAULT_BLOCK_MM,
-                                args.calib, args.color_memory)
+                                args.calib, args.color_memory, **({"hz": args.sample_hz} if args.sample_hz else {}))
         except (VideoSourceError, ValueError) as e:
             print(f"[extract] {e}", file=sys.stderr)
             return EXIT_BAD_INPUT
