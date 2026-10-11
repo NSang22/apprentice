@@ -275,7 +275,7 @@ apprentice/
 
 ## 8. How to run (fill in as modules land)
 
-Run everything from the repo root. The default demo lesson is `lessons/sample-flat-v1.json` (6 blocks, all on the board, one of each color). Commands that take `--lesson` use it when you leave the flag out.
+Run everything from the repo root. The default demo lesson is `lessons/sample-flat-v1.json` (6 blocks, all on the board, red / purple / yellow / teal only, no two same-color blocks touching). Commands that take `--lesson` use it when you leave the flag out.
 
 ```bash
 # Tests (Python 3.11+)
@@ -308,19 +308,22 @@ python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --
 
 # Real perception: GridState on ws :8765 from the overhead camera (or a video)
 # One-time setup per rig and lighting (perception/calibrate.py): (1) clear the board, SPACE: grid lock
-# + empty board (all 4 tags needed); (2) each color in B2, SPACE; writes perception/calib/{grid_lock.json,
+# + empty board (all 4 tags needed); (2) each color in play in B2, SPACE; writes perception/calib/{grid_lock.json,
 # empty_board.png,colors.json}. On Linux it also locks exposure and white balance (--exposure, --wb).
-python -m perception.calibrate --camera 1
+# Blocks are found with robot.perception (segment.detect + cubefit, no vision model). --block-mm is the real
+# block edge (without it: the robot's CUBE_SIZE_MM, 48 mm foam, with a warning). --colors defaults to the
+# robot's ACTIVE_COLORS (red, purple, yellow, teal); other colors read unknown.
+python -m perception.calibrate --camera 1 --block-mm <edge mm>
 # --debug: status band (GRID LOCKED n/4 / GRID LOST: moved / GRID NOT LOCKED), each block "B2 teal 0.93"
 # ("?" = the brain will see unknown), hands in magenta. E re-takes the empty board. Blocks on the tags are fine.
-python -m perception.publish --camera 1 --debug
+python -m perception.publish --camera 1 --block-mm <edge mm> --debug
 python -m perception.publish --list-cameras        # Windows: which index/backend sees the grid
 python -m perception.publish --video videos/demo.mp4
 
 # Real setup: camera on the Jetson, brain + UI on the laptop (same network)
 #   Jetson:  v4l2-ctl --list-devices                                   # camera index N (/dev/videoN)
-#            python -m perception.calibrate --camera N                 # DISPLAY=:0 over ssh; prints the exposure it picked
-#            python -m perception.publish --camera N --exposure <picked> --host 0.0.0.0 --debug
+#            python -m perception.calibrate --camera N --block-mm <edge mm>   # DISPLAY=:0 over ssh; prints the exposure it picked
+#            python -m perception.publish --camera N --block-mm <edge mm> --exposure <picked> --host 0.0.0.0 --debug
 #   Laptop:  scp <jetson>:apprentice/perception/calib/colors.json perception/calib/   # UI shows the measured colors
 #            python -m brain.server --mode human --grid ws://<jetson-ip>:8765
 #            python ui/serve.py      # http://localhost:8000, F11, Space starts, R resets

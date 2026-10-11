@@ -2,23 +2,21 @@
 
 Examples:
   python -m perception.calibrate --camera 1           # once per setup: grid lock, empty board, block colors
-  python -m perception.publish --camera 1 --debug     # E in the window re-takes the empty board
+  python -m perception.publish --camera 1 --block-mm <edge mm> --debug   # E re-takes the empty board
   python -m perception.publish --video videos/demo.mp4
   python -m perception.publish --list-cameras         # which index/backend is the real webcam?
 
 The grid is locked once (perception/grid_lock.py): with the board empty and all 4 AprilTags in
 view, the homography and the empty board are saved, and from then on blocks covering tags never
-lose the grid. Blocks and hands are found by what changed since the empty board
-(perception/change.py), so a block lying on a tag is still seen from its visible top face.
-Block colors come from perception/calib/colors.json (perception/colors.py).
+lose the grid. Blocks are found with Taher's robot.perception pipeline (perception/blocks.py):
+segment.detect blobs that changed since the empty board, mid-height parallax correction, and
+cubefit.fit_cube; the corrected centre names the cell. Colors come from
+perception/calib/colors.json, among the colors in play (--colors, default robot ACTIVE_COLORS:
+red, purple, yellow, teal); anything else reads "unknown". The block size is --block-mm, or the
+robot's CUBE_SIZE_MM with a start-up warning.
 
-Per-cell confidence is the minimum of three scores in [0, 1] for the block's region:
-  area    1.0 when the region covers the calibrated block footprint (with headroom)
-  margin  1.0 when the second-nearest reference color is at least MARGIN_FULL delta E farther
-          than the nearest, 0.0 when the block is equally close to two colors (teal vs skyblue)
-  fill    region area / its min-area rectangle, rescaled so >= 0.5 maps to 1.0
-A block whose centre sits less than EDGE_MARGIN_MM inside its cell gets at most 0.5, so a block
-straddling two cells never passes MIN_CONFIDENCE.
+Per-cell confidence is min(color margin, cube fit). A corrected centre less than 10 mm inside its
+cell caps it at 0.5, so a block on a cell line never passes MIN_CONFIDENCE.
 
 hands_clear is false for a hand or an unknown object on the sheet, two blocks in one cell, or a
 grid that is not locked (or moved). A tag hidden by a block is never a hand.
@@ -44,8 +42,10 @@ from websockets.asyncio.server import ServerConnection, broadcast, serve
 
 from perception import camera_controls
 from perception.cells import cell_center_mm, grid_geometry, tag_corner_cells
-from perception.change import Block, sheet_to_image
-from perception.colors import CALIB_PATH, load_calibration
+from perception.blocks import Block
+from perception.change import sheet_to_image
+from perception.colors import CALIB_PATH, load_calibration, parse_colors
+from perception.robot_bridge import default_active_colors, set_block_mm
 from perception.perceive import FrameResult, Perceiver
 from robot.perception.sheet import SheetLocalizer, SheetPose
 from shared.config import GRID_WS_PORT, MIN_CONFIDENCE, UNKNOWN
@@ -75,15 +75,16 @@ def block_label(block: Block, confidence: dict[str, float]) -> str:
     return f"{block.cell} {block.color}{unsure} {conf:.2f}"
 
 
-def _polyline(img: np.ndarray, contour_sheet_px: np.ndarray, H: np.ndarray, color, thickness: int) -> np.ndarray:
-    pts = sheet_to_image(contour_sheet_px.reshape(-1, 2), H).astype(np.int32)
+def _polyline(img: np.ndarray, pts_px: np.ndarray, color, thickness: int) -> np.ndarray:
+    pts = np.asarray(pts_px).reshape(-1, 2).astype(np.int32)
     cv2.polylines(img, [pts], True, color, thickness, cv2.LINE_AA)
     return pts
 
 
 def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note: str = "") -> np.ndarray:
-    """Camera frame with the grid, changed regions (cyan), blocks labeled "cell color confidence"
-    in their color, hands and unknown objects in magenta. Status sits in its own band on top,
+    """Camera frame with the grid, changed regions (cyan), each block's blob (thin white), fitted
+    cube outline (its color), corrected centre (dot) and "cell color confidence" label, and hands
+    and unknown objects in magenta. Status sits in its own band on top,
     the hands line and notes in a band at the bottom, so messages never overlap the picture."""
     out = frame.copy()
     lock = perceiver.lock
@@ -102,14 +103,18 @@ def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note:
     if a is not None and lock is not None:
         contours, _ = cv2.findContours(a.mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for c in contours:
-            _polyline(out, c, lock.H, CHANGE_BGR, 1)
-        refs = perceiver.calib.refs
+            _polyline(out, sheet_to_image(c.reshape(-1, 2), lock.H), CHANGE_BGR, 1)
+        refs = perceiver.refs
         for b in a.blocks:
-            pts = _polyline(out, b.contour, lock.H, _bgr(refs[b.color].hex) if b.color in refs else (128, 128, 128), 3)
-            x, y = pts.mean(axis=0).astype(int)
-            _text(out, block_label(b, result.state.confidence), (x - 70, y), 0.8)
+            _polyline(out, b.contour_px, (255, 255, 255), 1)
+            _polyline(out, b.outline_px, _bgr(refs[b.color].hex) if b.color in refs else (128, 128, 128), 3)
+            _polyline(out, b.top_px, (255, 255, 255), 1)
+            x, y = (int(v) for v in b.center_px)
+            cv2.circle(out, (x, y), 7, (0, 0, 0), -1)
+            cv2.circle(out, (x, y), 5, (255, 255, 255), -1)
+            _text(out, block_label(b, result.state.confidence), (x - 70, y - 16), 0.8)
         for r in a.others:
-            pts = _polyline(out, r.contour, lock.H, HAND_BGR, 4)
+            pts = _polyline(out, r.contour_px, HAND_BGR, 4)
             x, y = pts.mean(axis=0).astype(int)
             _text(out, r.kind, (x - 30, y), 0.9, HAND_BGR)
     h, w = out.shape[:2]
@@ -130,9 +135,9 @@ def debug_lines(result: FrameResult) -> list[str]:
     if a is None:
         return lines
     for b in sorted(a.blocks, key=lambda b: (b.cell or "~", b.color)):
-        lines.append(f"{block_label(b, result.state.confidence):<22} area={b.area_score:.2f} ({b.area_mm2:.0f} mm2) "
-                     f"margin={b.margin_score:.2f} (dE {b.d_nearest:.1f} vs {b.d_second:.1f}) "
-                     f"fill={b.fill_score:.2f} ({b.fill_ratio:.2f}) edge={b.edge_mm:.1f}mm")
+        lines.append(f"{block_label(b, result.state.confidence):<22} centre ({b.center_mm[0]:.0f}, {b.center_mm[1]:.0f}) mm "
+                     f"edge={b.edge_mm:.1f}mm fit={b.fit_overlap:.2f} yaw={b.yaw_deg:.0f} "
+                     f"margin={b.margin_score:.2f} (dE {b.d_nearest:.1f} vs {b.d_second:.1f})")
     for r in a.others:
         lines.append(f"{r.kind:<22} {r.area_mm2:.0f} mm2: {r.why}")
     return lines
@@ -279,7 +284,8 @@ async def run(args: argparse.Namespace) -> None:
     else:
         print(f"[perception] NOT CALIBRATED: {args.calib} is missing, using nominal block colors. "
               "Run python -m perception.calibrate first.", flush=True)
-    perceiver = Perceiver(calib, log=lambda m: print(m, flush=True))
+    perceiver = Perceiver(calib, log=lambda m: print(m, flush=True), active=args.colors, block_mm=args.block_mm)
+    print(f"[perception] colors in play: {', '.join(perceiver.active)} (anything else reads unknown)", flush=True)
     if perceiver.lock is None:
         print("[perception] no grid lock yet: clear the board, then press E in the --debug window "
               "(or run perception.calibrate)", flush=True)
@@ -317,6 +323,20 @@ async def run(args: argparse.Namespace) -> None:
     cv2.destroyAllWindows()
 
 
+def add_block_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--block-mm", type=float, default=None,
+                        help="block edge in mm for perception (default robot/perception/config.py CUBE_SIZE_MM)")
+    parser.add_argument("--colors", type=parse_colors, default=default_active_colors(),
+                        help="comma-separated colors in play (default robot ACTIVE_COLORS: "
+                             + ",".join(default_active_colors()) + "); any other color reads unknown")
+
+
+def use_block_size(args: argparse.Namespace) -> None:
+    """Put the block size in use for robot.perception's segment/cubefit and say where it came from."""
+    args.block_mm, line = set_block_mm(args.block_mm)
+    print(f"[perception] {line}", flush=True)
+
+
 def add_camera_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--backend", choices=sorted(BACKENDS), default=None,
                         help="capture backend for --camera on Windows (indexes differ per backend)")
@@ -336,6 +356,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     source.add_argument("--list-cameras", action="store_true",
                         help="probe camera indexes on each backend, report resolution and grid tags seen, and exit")
     add_camera_args(parser)
+    add_block_args(parser)
     parser.add_argument("--snapshot-dir", type=Path, default=Path(tempfile.gettempdir()) / "apprentice_cameras",
                         help="where --list-cameras saves one frame per camera")
     parser.add_argument("--host", default="localhost")
@@ -346,6 +367,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     if args.list_cameras:
         print_camera_table(list_cameras(args.snapshot_dir))
         return
+    use_block_size(args)
     try:
         asyncio.run(run(args))
     except (KeyboardInterrupt, ValueError) as exc:

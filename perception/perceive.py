@@ -24,8 +24,11 @@ from typing import Callable, Optional
 import cv2
 import numpy as np
 
-from perception.change import Analysis, analyze, board_from, warp_to_sheet
-from perception.colors import Calibration
+from perception.blocks import Analysis, board_from, detect_blocks
+from perception.change import warp_to_sheet
+from perception.colors import Calibration, active_refs
+from perception.robot_bridge import default_active_colors
+from robot.perception import segment
 from perception.grid_lock import (CALIB_DIR, LOCK_PATH, MIN_CONFIRM_TAGS, TAG_IDS, GridLock, TagCheck, check_tags,
                                   load_lock, lock_from_frame, save_lock, tag_centers)
 from robot.perception.sheet import SheetLocalizer
@@ -61,8 +64,14 @@ def hands_clear(analysis: Analysis, crowded: bool) -> bool:
 class Perceiver:
     def __init__(self, calib: Calibration, localizer: Optional[SheetLocalizer] = None,
                  lock_path: Path = LOCK_PATH, ref_path: Path = REF_PATH,
-                 clock: Callable[[], float] = time.monotonic, log: Callable[[str], None] = print):
+                 clock: Callable[[], float] = time.monotonic, log: Callable[[str], None] = print,
+                 active: Optional[list[str]] = None, block_mm: Optional[float] = None):
+        """active: colors blocks may be named (default robot ACTIVE_COLORS); block_mm: block edge
+        (default whatever robot_bridge.set_block_mm put in use)."""
         self.calib = calib
+        self.active = active or default_active_colors()
+        self.refs = active_refs(calib, self.active)
+        self.block_mm = float(block_mm or segment.CUBE_SIZE_MM)
         self.localizer = localizer or SheetLocalizer(min_tags=MIN_CONFIRM_TAGS)
         self.lock_path, self.ref_path = lock_path, ref_path
         self.clock, self.log = clock, log
@@ -124,8 +133,8 @@ class Perceiver:
             self.log(f"[perception] saved grid lock confirmed by {check.visible} tags "
                      f"(off by at most {check.max_error_px:.1f} px)")
 
-        live = warp_to_sheet(frame_bgr, self.lock.H)
-        analysis = analyze(live, self.reference, self.calib, self.lock.camera_xyz)
+        analysis = detect_blocks(frame_bgr, self.lock.pose(), self.reference, self.refs, self.block_mm)
+        live = analysis.live_sheet
         board, confidence, crowded = board_from(analysis)
         clear = hands_clear(analysis, crowded)
         reason = "" if clear else ("two blocks in one cell" if crowded and not analysis.others
@@ -138,7 +147,8 @@ class Perceiver:
         status = "GRID LOST: moved (re-locks when all 4 tags show on an empty board)"
         if len(visible) == len(TAG_IDS):
             lock, _ = lock_from_frame(frame_bgr, self.localizer)
-            empty = lock is not None and analyze(warp_to_sheet(frame_bgr, lock.H), self.reference, self.calib).empty
+            empty = lock is not None and detect_blocks(frame_bgr, lock.pose(), self.reference, self.refs,
+                                                       self.block_mm).empty
             self.relock_count = self.relock_count + 1 if empty else 0
             if empty and self.relock_count >= RELOCK_FRAMES:
                 self._adopt(lock, warp_to_sheet(frame_bgr, lock.H))

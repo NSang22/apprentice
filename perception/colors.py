@@ -208,16 +208,32 @@ def save_calibration(path: Path, refs: dict[str, ColorRef], fracs: list[float], 
     return data
 
 
+def active_refs(calib: Calibration, active: list[str]) -> dict[str, ColorRef]:
+    """The references blocks may be named after. Any other color reads "unknown"."""
+    missing = [c for c in active if c not in calib.refs]
+    if missing:
+        raise ValueError(f"{calib.source}: no calibration for {missing}; rerun perception.calibrate --colors "
+                         + ",".join(active))
+    return {c: calib.refs[c] for c in active}
+
+
+def parse_colors(text: str) -> list[str]:
+    """--colors "red,purple,yellow,teal" -> a checked list."""
+    names = [c.strip() for c in text.split(",") if c.strip()]
+    bad = [c for c in names if c not in COLORS]
+    if bad or not names:
+        raise ValueError(f"--colors must name colors from {COLORS}, got {text!r}")
+    return names
+
+
 def load_calibration(path: Path = CALIB_PATH) -> Calibration:
-    """The saved calibration, or the nominal defaults if there is no file yet."""
+    """The saved calibration (whichever colors it measured), or the nominal defaults if there is
+    no file yet. active_refs() checks the colors in play are there."""
     if not path.exists():
         return default_calibration()
     data = json.loads(path.read_text(encoding="utf-8"))
     refs = {c: ColorRef(c, tuple(float(v) for v in d["lab"]), float(d["spread"]), d.get("hex", "#808080"))
             for c, d in data["colors"].items() if c in COLORS}
-    missing = [c for c in COLORS if c not in refs]
-    if missing:
-        raise ValueError(f"{path}: no calibration for {missing}; rerun perception.calibrate")
     block = data.get("block", {})
     return Calibration(
         refs=refs,
