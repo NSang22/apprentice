@@ -15,6 +15,13 @@ DEMO_LESSON = LESSONS_DIR / "sample-flat-v1.json"
 HUMAN_SIDE = "row3"
 HUMAN_SIDES = ("row1", "row3")
 
+# Stabilizer: a board counts as stable once it has been identical for STABLE_SECONDS (by the
+# feed's own timestamps) over at least STABLE_MIN_FRAMES frames, or for shared STABLE_FRAMES
+# frames, whichever comes first. Slow perception (a few fps on the Jetson) then waits ~0.6 s,
+# not 5 of its slow frames; a 10 Hz feed settles after 5 frames, as before.
+STABLE_SECONDS = 0.6
+STABLE_MIN_FRAMES = 2
+
 # Hint ladder (human mode): 1 text, 2 ghost cube, 3 show-me clip, 4 robot hovers.
 MAX_HINT_LEVEL = 4
 SHOW_ME_PRE_S = 3.0   # clip starts this long before the cube appeared in the expert video

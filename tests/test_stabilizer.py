@@ -13,10 +13,10 @@ A = {**empty_board(), "A1": ["red"]}
 B = {**empty_board(), "A1": ["red"], "B1": ["teal"]}
 
 
-def gs(board, hands=True, arm=True, conf=None, frame_id=0):
+def gs(board, hands=True, arm=True, conf=None, frame_id=0, t=0.0):
     confidence = {c: 0.95 for c in CELLS}
     confidence.update(conf or {})
-    return GridState(t=0.0, board={c: list(board[c]) for c in CELLS}, arm_clear=arm, hands_clear=hands,
+    return GridState(t=t, board={c: list(board[c]) for c in CELLS}, arm_clear=arm, hands_clear=hands,
                      confidence=confidence, frame_id=frame_id)
 
 
@@ -27,11 +27,17 @@ def feed_all(stab, frames):
 # ---------------------------------------------------------------- basics
 
 
-def test_emits_after_exactly_stable_frames():
-    stab = Stabilizer()
+def test_emits_after_stable_frames_or_stable_seconds():
+    stab = Stabilizer()  # timestamps that never advance: frame count decides
     for _ in range(STABLE_FRAMES - 1):
         assert stab.feed(gs(A)) is None
     assert stab.feed(gs(A)) == A
+    stab = Stabilizer()  # 1 fps perception: the second identical frame is already 1 s later
+    assert stab.feed(gs(A, t=10.0)) is None
+    assert stab.feed(gs(A, t=11.0)) == A
+    assert Stabilizer().feed(gs(A, t=0.0)) is None  # one frame alone never settles
+    fast = Stabilizer()  # 10 Hz: 0.6 s takes 7 frames, so the 5-frame count still decides first
+    assert [fast.feed(gs(A, t=i * 0.1)) for i in range(STABLE_FRAMES)][-1] == A
 
 
 def test_emits_once_while_board_stays_stable():

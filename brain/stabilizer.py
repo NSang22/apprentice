@@ -1,7 +1,10 @@
 """Stabilizer: turns the ~10 Hz GridState feed into stable boards (README section 6.1).
 
-A board counts as stable once it has been identical for STABLE_FRAMES consecutive usable
-frames. A frame is usable only if hands_clear and arm_clear are true and every EMPTY cell has
+A board counts as stable once it has been identical over consecutive usable frames for
+STABLE_SECONDS (brain/settings.py, measured with the frames' own timestamps t) across at least
+STABLE_MIN_FRAMES frames, or for STABLE_FRAMES frames, whichever comes first. Slow perception
+therefore costs ~STABLE_SECONDS, not STABLE_FRAMES of its slow frames, and a feed whose
+timestamps do not advance (tests, replays) still settles by frame count. A frame is usable only if hands_clear and arm_clear are true and every EMPTY cell has
 confidence >= MIN_CONFIDENCE (a cell with no confidence entry counts as 0). An occupied cell
 below MIN_CONFIDENCE becomes "unknown" in the frame's board instead of discarding the frame,
 so an unreadable block still settles into a board the session can explain ("I can't tell the
@@ -24,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Optional
 
+from brain.settings import STABLE_MIN_FRAMES, STABLE_SECONDS
 from shared.config import CELLS, MIN_CONFIDENCE, STABLE_FRAMES, UNKNOWN
 from shared.schemas import Board, GridState, boards_equal, copy_board
 
@@ -32,6 +36,7 @@ from shared.schemas import Board, GridState, boards_equal, copy_board
 class StabilizerState:
     candidate: Optional[Board] = None  # board seen on the current run of usable frames
     count: int = 0                     # length of that run
+    since: float = 0.0                 # timestamp t of the run's first frame
     emitted: Optional[Board] = None    # last board returned as stable
     interrupted: bool = False          # hands or arm crossed the grid since the last emit
 
@@ -60,6 +65,8 @@ def step(
     gs: GridState,
     stable_frames: int = STABLE_FRAMES,
     min_confidence: float = MIN_CONFIDENCE,
+    stable_seconds: float = STABLE_SECONDS,
+    min_frames: int = STABLE_MIN_FRAMES,
 ) -> tuple[StabilizerState, Optional[Board]]:
     """Advance the state by one frame. Returns (new state, newly stable board or None)."""
     board = frame_board(gs, min_confidence)
@@ -69,8 +76,10 @@ def step(
     if state.candidate is not None and boards_equal(state.candidate, board):
         state = replace(state, count=state.count + 1)
     else:
-        state = replace(state, candidate=board, count=1)
-    if state.count >= stable_frames and (
+        state = replace(state, candidate=board, count=1, since=gs.t)
+    settled = state.count >= stable_frames or (
+        state.count >= min_frames and gs.t - state.since >= stable_seconds)
+    if settled and (
         state.emitted is None or state.interrupted or not boards_equal(state.emitted, state.candidate)
     ):
         state = replace(state, emitted=state.candidate, interrupted=False)
@@ -79,13 +88,17 @@ def step(
 
 
 class Stabilizer:
-    def __init__(self, stable_frames: int = STABLE_FRAMES, min_confidence: float = MIN_CONFIDENCE):
+    def __init__(self, stable_frames: int = STABLE_FRAMES, min_confidence: float = MIN_CONFIDENCE,
+                 stable_seconds: float = STABLE_SECONDS, min_frames: int = STABLE_MIN_FRAMES):
         self.stable_frames = stable_frames
         self.min_confidence = min_confidence
+        self.stable_seconds = stable_seconds
+        self.min_frames = min_frames
         self.state = StabilizerState()
 
     def feed(self, gs: GridState) -> Optional[Board]:
-        self.state, board = step(self.state, gs, self.stable_frames, self.min_confidence)
+        self.state, board = step(self.state, gs, self.stable_frames, self.min_confidence,
+                                 self.stable_seconds, self.min_frames)
         return board
 
     def reset(self) -> None:
