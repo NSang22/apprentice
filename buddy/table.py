@@ -301,6 +301,20 @@ class Pip:
             self.step = "homing"
         self._run(job)
 
+    def place(self, cell: str, color: str, should_stop: Callable[[], bool] = lambda: False) -> None:
+        """Take Turns: pick a block of `color` from the supply below the grid and put it on `cell`."""
+        def job():
+            if not self._wait_hands(should_stop):
+                self.error = "hands"
+                return
+            self.step = "placing"
+            reply = self.client.place(color, self.to_robot_cell(cell), 0)
+            if not reply.get("ok"):
+                self.error = reply.get("error", "place failed")
+                return
+            self.step = "homing"
+        self._run(job)
+
     def remove(self, cells: list[str], should_stop: Callable[[], bool] = lambda: False) -> None:
         def job():
             for i, cell in enumerate(cells):

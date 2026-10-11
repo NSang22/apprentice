@@ -518,7 +518,7 @@ function renderHome() {
   const offsets = [0, 56, -56];
   const html = S.games.map((g, i) => `
     <div class="node-row" style="transform:translateX(${offsets[i % 3]}px)">
-      ${g.ready ? '<div class="play-tag">PLAY</div><div class="ring"></div>' : ""}
+      ${g.ready && i === 0 ? '<div class="play-tag">PLAY</div><div class="ring"></div>' : ""}
       <button class="node ${g.ready ? "" : "soon"}" data-game="${g.id}" aria-label="${g.title}"><svg><use href="#${GAME_ICON[g.id] || "i-star"}"/></svg></button>
       <div class="node-label">${g.title}<span>${g.ready ? g.desc : "Coming soon"}</span></div>
     </div>`).join("");
@@ -687,6 +687,7 @@ document.addEventListener("click", (e) => {
     const g = S.games.find((x) => x.id === t.dataset.game);
     sfx.tap();
     if (!g.ready) { toast(`${g.title} is coming soon!`); return; }
+    if (g.page) { location.href = g.page; return; }   // games with their own screen (Take Turns)
     $("su-title").textContent = g.title; openSetup(true);
   } else if (t.dataset.set) {
     sfx.tap();
