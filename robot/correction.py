@@ -11,7 +11,20 @@ from pathlib import Path
 
 import numpy as np
 
+from .perception.segment import in_bank
+
 CORRECTION_FILE = Path(__file__).resolve().parent / "calibration" / "placement_correction.json"
+
+
+def _fitted_box():
+    """(x0, y0, x1, y1) sheet mm spanned by the cell centres auto_calibrate places at."""
+    from .perception.config import SHEET_SPEC
+    g = json.loads(Path(SHEET_SPEC).read_text())["grid"]
+    (ox, oy), cell = g["origin_mm"], g["cell_mm"]
+    return np.array([ox + cell / 2, oy + cell / 2, ox + 2.5 * cell, oy + 2.5 * cell])
+
+
+FITTED_BOX = _fitted_box()
 
 
 def fit(commanded, observed):
@@ -56,10 +69,29 @@ def fit_robust(commanded, observed):
     return A, b, before, after, keep, None
 
 
-def save(A, b, before, after, n, path=CORRECTION_FILE):
-    path.write_text(json.dumps({"A": np.round(A, 6).tolist(), "b": np.round(b, 3).tolist(),
-                                "rms_before_mm": round(before, 2), "rms_after_fit_mm": round(after, 2),
-                                "n_placements": n}, indent=2))
+def save(A, b, before, after, n, path=CORRECTION_FILE, bank=None):
+    """bank: {"b": [dx, dy], ...} the arm's mean placement error in the cube bank (observed minus
+    commanded), kept separate: the grid fit's stretch must not be extrapolated out there."""
+    data = {"A": np.round(A, 6).tolist(), "b": np.round(b, 3).tolist(),
+            "rms_before_mm": round(before, 2), "rms_after_fit_mm": round(after, 2), "n_placements": n}
+    if bank is None and path.exists():  # a grid-only run keeps the last bank measurement
+        bank = json.loads(path.read_text()).get("bank")
+    if bank is not None:
+        data["bank"] = bank
+    path.write_text(json.dumps(data, indent=2))
+
+
+def fit_bank(commanded, observed):
+    """Translation-only fit for the bank: the mean of (observed - commanded) over placements
+    that are not gross failures, and the rms after it. Returns (b, before, after, inlier mask)."""
+    C, O = np.asarray(commanded, float), np.asarray(observed, float)
+    keep = np.hypot(*(O - C).T) < GROSS_MM
+    if keep.sum() == 0:
+        return None, None, None, keep
+    b = np.median(O[keep] - C[keep], axis=0)
+    before = float(np.sqrt(np.mean(np.sum((O[keep] - C[keep]) ** 2, axis=1))))
+    after = float(np.sqrt(np.mean(np.sum((O[keep] - C[keep] - b) ** 2, axis=1))))
+    return b, before, after, keep
 
 
 class Correction:
@@ -67,12 +99,22 @@ class Correction:
 
     def __init__(self, path=CORRECTION_FILE):
         self.A, self.b = np.eye(2), np.zeros(2)
+        self.bank_b = None  # the bank's own (translation) correction, from auto_calibrate --bank
         self.loaded = False
         if Path(path).exists():
             c = json.loads(Path(path).read_text())
             self.A, self.b = np.array(c["A"]), np.array(c["b"])
+            if c.get("bank"):
+                self.bank_b = np.array(c["bank"]["b"], float)
             self.loaded = True
         self.Ainv = np.linalg.inv(self.A)
 
     def __call__(self, xy):
-        return self.Ainv @ (np.asarray(xy, float) - self.b)
+        """Outside the cell centres it was fitted on, keep the shift measured at the nearest
+        edge instead of extrapolating the fit's stretch: in the cube bank (x ~300) the fit's
+        x scale of 0.92 added 16 mm, and the jaws closed beside the block (run 02:33)."""
+        xy = np.asarray(xy, float)
+        if self.bank_b is not None and in_bank(xy):
+            return xy - self.bank_b
+        edge = np.clip(xy, FITTED_BOX[:2], FITTED_BOX[2:])
+        return xy + (self.Ainv @ (edge - self.b) - edge)

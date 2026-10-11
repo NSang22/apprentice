@@ -201,9 +201,19 @@
   .power-row b.on { color: var(--green-d); } .power-row b.off { color: #afafaf; } .power-row b.outside { color: var(--orange-d); }
   #power .note { min-height: 18px; }
   .side { font-size: 12px; font-weight: 800; color: #afafaf; text-transform: uppercase; letter-spacing: .08em; margin: -6px 0; }
+  #dbgBtn { position: fixed; right: 12px; bottom: 12px; z-index: 20; border: 2px solid var(--line); background: #fff; color: #777;
+            font: 800 12px/1 inherit; font-family: inherit; padding: 9px 12px; border-radius: 12px; opacity: .8; }
+  #dbg { position: fixed; inset: auto 0 0 0; height: 70vh; z-index: 19; background: #1f2430; color: #d7dde8; display: none;
+         flex-direction: column; border-radius: 16px 16px 0 0; }
+  #dbg.on { display: flex; }
+  #dbg pre { margin: 0; padding: 12px 14px 60px; overflow: auto; flex: 1; font: 12px/1.45 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+  #dbg .bar { display: flex; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #39404f; font-weight: 800; font-size: 13px; }
+  #dbg .bar button { margin-left: auto; background: #39404f; color: #fff; border: 0; border-radius: 8px; padding: 6px 10px; font: inherit; }
 </style>
 </head>
 <body>
+<button id="dbgBtn" type="button">Debug</button>
+<div id="dbg"><div class="bar"><span>Debug log</span><button id="dbgCopy" type="button">Copy</button><button id="dbgClose" type="button" style="margin-left:0">Close</button></div><pre id="dbgOut">loading...</pre></div>
 <div class="app">
 
   <!-- ===== first run ===== -->
@@ -742,6 +752,41 @@ async function poll() {
   try { if (!busy) { S = await api("/api/buddy/state"); render(); } } catch (e) {}
   setTimeout(poll, S && ["show", "build", "scan", "helping"].includes(S.phase) ? 300 : 800);
 }
+// ---------- debug panel (bottom right): the game's own log, Pip's arm, the robot's vision, camera vs robot
+let dbgOn = false;
+async function dbgPoll() {
+  if (!dbgOn) return;
+  try {
+    const d = await api("/api/buddy/debug");
+    const t = (x) => new Date(x * 1000).toLocaleTimeString();
+    const out = [];
+    out.push(`phase ${d.phase}  source ${d.source}  round ${d.round}  attempt ${d.attempt}  helped ${d.helped || "-"}`);
+    out.push(`pattern ${JSON.stringify(d.pattern)}`, `seen    ${JSON.stringify(d.seen)}`, `grade   ${JSON.stringify(d.grade)}`);
+    out.push(`pip     ${JSON.stringify(d.pip)}`, `table   ${JSON.stringify(d.table)}`);
+    out.push(`eyes    ready=${d.eyes.ready} looking=${d.eyes.looking} error=${d.eyes.error || "-"}`);
+    if (d.sync) {
+      const n = d.sync.naming;
+      out.push(`last scan: source=${d.sync.source} agree=${d.sync.agree} ms=${JSON.stringify(d.sync.ms)} diffs=${JSON.stringify(d.sync.diffs)}`);
+      out.push(n === "model" ? "  colours: >>> GEMINI CALLED (traditional vision was unsure)"
+             : n === "prior" ? "  colours: >>> TRADITIONAL VISION FAILED and Gemini gave no answer: hue guess used"
+             : `  colours: ${n || "-"} (traditional vision, no Gemini)`);
+      (d.sync.notes || []).forEach((m) => out.push("    " + m));
+      if (d.sync.error) out.push("  robot vision error: " + d.sync.error);
+    }
+    out.push("", "--- game events (newest last)");
+    d.events.forEach((e) => out.push(`${t(e.t)} ${e.kind} ${e.data}`));
+    out.push("", "--- robot vision output");
+    out.push(...(d.eyes.log.length ? d.eyes.log : ["(none)"]));
+    const pre = $("dbgOut"), stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+    pre.textContent = out.join("\n");
+    if (stick) pre.scrollTop = pre.scrollHeight;
+  } catch (e) { $("dbgOut").textContent = "debug failed: " + e.message; }
+  setTimeout(dbgPoll, 1000);
+}
+$("dbgBtn").onclick = () => { dbgOn = true; $("dbg").classList.add("on"); dbgPoll(); };
+$("dbgClose").onclick = () => { dbgOn = false; $("dbg").classList.remove("on"); };
+$("dbgCopy").onclick = () => { try { navigator.clipboard.writeText($("dbgOut").textContent); toast("Copied"); } catch (e) { toast("Select the text to copy"); } };
+
 poll(); frame();
 </script>
 </body>

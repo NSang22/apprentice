@@ -52,7 +52,9 @@ MIN_BAND_PX = 30            # visible side-band pixels needed to name a lower bl
 BAND_MIN_MARGIN = 0.5
 COST_WRONG_COLOR = 0.6      # painted block color, observed another block color
 COST_COLORLESS = 0.5        # painted block, observed a changed but colorless pixel (sheen, shade)
-SEARCH_PASSES = 2
+VOTE_FRAMES = 3             # published reading = strict majority (2 of 3) of a cell's last readings
+SEARCH_PASSES = 2           # the second pass runs only if the first changed a cell
+DEMO_MAX_LEVEL = MAX_LEVEL  # alternatives go up to this level. Not 1: without the 3-high alternatives a hand reads as unknown cells, not a hand
 HAND_ZONE_MM = 15.0         # hands and objects count only over the grid plus this margin
 FAR = len(COLORS)           # pixel label: changed and colorful, but no block color
 NONE = -1                   # pixel label: not changed, or colorless
@@ -231,9 +233,10 @@ def read_cells(frame_bgr: np.ndarray, pose: SheetPose, reference_sheet: np.ndarr
     # Search.
     hyp = {c: (prior or {}).get(c) for c in CELLS}
     hyp = {c: (h if h is None or h[1] in active else None) for c, h in hyp.items()}
-    alternatives = [EMPTY] + [(lv, k) for lv in range(MAX_LEVEL + 1) for k in active]
+    alternatives = [EMPTY] + [(lv, k) for lv in range(DEMO_MAX_LEVEL + 1) for k in active]
     costs: dict = {}
     for _ in range(SEARCH_PASSES):
+        start = dict(hyp)
         for cell in CELLS:
             win = geo.window[cell]
             sl = (slice(win[0], win[1]), slice(win[2], win[3]))
@@ -244,6 +247,8 @@ def read_cells(frame_bgr: np.ndarray, pose: SheetPose, reference_sheet: np.ndarr
                 trial[alt] = cost(render(geo, hyp, win)[0], ch, ob, ro)
             hyp[cell] = min(trial, key=trial.get)
             costs[cell] = trial
+        if hyp == start:  # nothing moved: another pass would score the same alternatives against the same board
+            break
 
     # Final render with stack colors from the side bands, then read each cell.
     full = (0, shape[0], 0, shape[1])
@@ -363,7 +368,7 @@ def _paint(label: np.ndarray) -> np.ndarray:
 @dataclass
 class CellVote:
     """Each cell's published reading is the majority of its last `frames` readings, else unknown."""
-    frames: int = 5
+    frames: int = VOTE_FRAMES
     history: dict = field(default_factory=dict)
 
     def add(self, cell: str, value) -> None:

@@ -290,8 +290,8 @@ scripts/jetson_up.sh                 # flags: --no-robot, --no-debug
 powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Mode human   # or -Mode robot
 #    One command for both machines: -StartJetson ssh-es in, git pulls and runs scripts/jetson_up.sh first.
 #    -Lesson picks the lesson. -Sim needs no Jetson: simulated board, fake arm, brain + UI.
-powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -StartJetson -Lesson lessons\stack-test-v1.json
-powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Sim -Lesson lessons\stack-test-v1.json
+powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -StartJetson -Lesson lessons\stack-test-v2.json
+powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Sim -Lesson lessons\stack-test-v2.json
 #    SSH key once, so nothing asks for a password (PowerShell):
 #    ssh-keygen -t ed25519   (Enter through the prompts)
 #    type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh <user>@<jetson> "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
@@ -372,6 +372,10 @@ python ui/serve.py      # then open http://localhost:8000 and press F11; keys 2 
 # Robot module on its own (LeRobot venv, see robot/README.md and docs/SETUP_NOTES.md)
 python -m robot.scripts.tests.scene_snapshot robot/samples/overhead_02.png   # offline, no hardware
 python -m robot.scripts.tests.pick_place_test red_cube B2                     # moves the arm
+python -m robot.scripts.calibration.pin_camera                               # after moving the camera: clear the sheet first, then auto_calibrate
+python -m robot.scripts.calibration.auto_calibrate --bank                    # also measures the arm's error in the cube bank (5 more spots, ~5 min)
+python -m robot.scripts.tests.run_task "red->C2" "purple->on:red" "yellow->on:purple"   # builds from the cube bank right of the sheet
+python -m robot.scripts.tests.run_task --plan robot/plans/row_tower.json         # the demo line with a tower, from the bank (the file says how to refill it)
 
 # Analytics (offline, standard library only)
 python -m analytics.fake_journal --seed 7   # synthetic_*.jsonl journals in data/sessions/, written by the real brain; --lesson picks the lesson

@@ -25,6 +25,7 @@ memory, days played, lesson settings) is data/buddy/profile.json.
 
 from __future__ import annotations
 
+import collections
 import json
 import random
 import threading
@@ -112,6 +113,7 @@ class BuddySession:
         self.eyes = eyes or RobotEyes()
         self.pip = pip or Pip(self.table, self.eyes)
         self.last_sync: Optional[dict] = None    # the last scan: robot vs camera, for grown-ups
+        self.events: collections.deque = collections.deque(maxlen=200)  # in-memory tail of the journal, for the debug panel
         self._reset()
 
     def _reset(self) -> None:
@@ -233,7 +235,7 @@ class BuddySession:
             board, source = camera, "camera"
         diffs = board_diff(board, camera) if source == "robot" else {}
         self.last_sync = {"t": round(self.clock(), 1), "source": source, "agree": not diffs, "diffs": diffs,
-                          "naming": (res or {}).get("naming"), "error": None if source == "robot" else (res or {}).get("error"),
+                          "naming": (res or {}).get("naming"), "ms": (res or {}).get("ms"), "notes": (res or {}).get("notes"), "error": None if source == "robot" else (res or {}).get("error"),
                           "robot": board if source == "robot" else None, "camera": camera}
         self._log("scan", {"round": self.round, "attempt": self.attempt, **self.last_sync,
                            "blocks": (res or {}).get("blocks")})
@@ -333,6 +335,9 @@ class BuddySession:
                     say = (f"{recall.hint_line(self.pattern, self.grade, self.hint)} You have {recall.RETRY_S} seconds!"
                            if self.helped == "hint" else f"Now add the right blocks. You have {recall.RETRY_S} seconds!")
                     if self.helped == "fix":
+                        if self.arm_used and self.pip.error:
+                            self._log("pip_error", {"round": self.round, "error": self.pip.error,
+                                                    "left_over": self.pip.left_over})
                         if self.source == "practice":
                             for cell in self.removing:
                                 self.board[cell] = []
@@ -432,6 +437,8 @@ class BuddySession:
         }
 
     def _log(self, kind: str, data: dict) -> None:
+        self.events.append({"t": round(self.clock(), 1), "kind": kind,
+                            "data": json.dumps(data, default=str)[:300]})
         if not self.session_id:
             return
         SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -440,6 +447,23 @@ class BuddySession:
             f.write(line + "\n")
 
     # ------------------------------------------------------------ view
+
+    def debug(self) -> dict:
+        """Everything a grown-up needs to see why the game did what it did (the debug panel)."""
+        with self.lock:
+            self.tick()
+            return {
+                "phase": self.phase, "source": self.source, "session": self.session_id, "round": self.round,
+                "attempt": self.attempt, "helped": self.helped, "pattern": self.pattern,
+                "seen": self.seen, "grade": self.grade.to_dict() if self.grade else None,
+                "removing": self.removing,
+                "pip": {"busy": self.pip.busy, "step": self.pip.step, "error": self.pip.error,
+                        "left_over": self.pip.left_over, "arm_used": self.arm_used},
+                "table": self.table.status(), "sync": self.last_sync,
+                "eyes": {"ready": bool(self.eyes.info.get("ready")), "error": self.eyes.error,
+                         "looking": self.eyes_busy, "log": self.eyes.log[-30:]},
+                "events": list(self.events)[-60:],
+            }
 
     def state(self) -> dict:
         with self.lock:

@@ -23,7 +23,7 @@ from typing import Optional
 
 from shared.config import CELLS, UNKNOWN
 
-MEMORY_STABLE_FRAMES = 3   # a cell's (level, top) must hold this many usable frames to update memory
+MEMORY_STABLE_FRAMES = 2   # a cell's (level, top) must hold this many usable frames to update memory
 
 
 # ---------------------------------------------------------------- memory

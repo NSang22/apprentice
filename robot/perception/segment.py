@@ -13,7 +13,7 @@ Same interface as detect_color.detect, so scene.build_scene can use either.
 import cv2
 import numpy as np
 
-from .config import CUBE_SIZE_MM
+from .config import BANK_ZONE_MM, CUBE_SIZE_MM
 from .detect_color import Detection
 
 MIN_DELTA_C = 12.0       # object pixels must beat the paper's chroma by at least this (Lab units)
@@ -28,7 +28,10 @@ MIN_PEAK_SEPARATION = 9   # hue units; a single cube's lit top and shaded side d
 MIN_AREA_FACES = 0.5     # smaller than half a cube face = fragment (cable, LED glint, tape sliver)
 MERGED_FACES = 2.8       # one cube seen at an angle (top + two sides) reaches ~2.2 faces
 SHEET_W_MM, SHEET_H_MM = 215.9, 279.4
-CENTER_TOL_MM = 0.0      # an object's centre must lie on the paper
+CENTER_TOL_MM = 0.0      # an object's centre must lie on the paper (or in the cube bank)
+BANK_PAD_MM = 30.0       # search this far around the bank zone, so blocks at its edge are seen whole
+IGNORED_HUE = (40, 74)   # no green blocks in the kit: this is the green tape around the sheet and the bank.
+                         # Measured 2026-10-11: tape 64-68, the teal (mint) block 80-84, light blue 97-105.
 MIN_ASPECT = 0.45        # a block seen from above is squarish (top + one side ~0.6); thin strips are
                          # glare or the mat's sheen along the sheet edge (snapshot 16:55)
 
@@ -112,13 +115,29 @@ def refine(mask, chroma):
     return cv2.morphologyEx(out, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
 
 
-def detection_roi(pose, shape, spec_tags, margin_mm=5.0, corner_pad_mm=6.0):
-    """Sheet (plus a small margin) minus the corner squares holding the tags: objects must not
-    cover the tags anyway, and that is where the tape holding the sheet down sits."""
+def in_bank(xy, zone=None):
+    """True if a block centred at xy (sheet mm) sits in the cube bank beside the sheet (or in
+    `zone`, (x0, y0, x1, y1) sheet mm, instead)."""
+    zone = BANK_ZONE_MM if zone is None else zone
+    if zone is None:
+        return False
+    x0, y0, x1, y1 = zone
+    return x0 <= xy[0] <= x1 and y0 <= xy[1] <= y1
+
+
+def detection_roi(pose, shape, spec_tags, margin_mm=5.0, corner_pad_mm=6.0, bank_zone=None):
+    """Sheet (plus a small margin) and the cube bank, minus the corner squares holding the tags:
+    objects must not cover the tags anyway, and that is where the tape holding the sheet down sits."""
     m = margin_mm
     roi = np.zeros(shape[:2], np.uint8)
     poly = pose.to_image([(-m, -m), (SHEET_W_MM + m, -m), (SHEET_W_MM + m, SHEET_H_MM + m), (-m, SHEET_H_MM + m)])
     cv2.fillPoly(roi, [poly.astype(np.int32)], 255)
+    bank_zone = BANK_ZONE_MM if bank_zone is None else bank_zone
+    if bank_zone is not None:
+        x0, y0, x1, y1 = bank_zone
+        p = BANK_PAD_MM
+        bank = pose.to_image([(x0 - p, y0 - p), (x1 + p, y0 - p), (x1 + p, y1 + p), (x0 - p, y1 + p)])
+        cv2.fillPoly(roi, [bank.astype(np.int32)], 255)
     for corners in spec_tags.values():
         c = np.asarray(corners, float)
         x0, y0 = c.min(0) - corner_pad_mm
@@ -131,7 +150,7 @@ def detection_roi(pose, shape, spec_tags, margin_mm=5.0, corner_pad_mm=6.0):
     return roi
 
 
-def detect(frame_bgr, names=None, roi_mask=None, pose=None, tags=None):
+def detect(frame_bgr, names=None, roi_mask=None, pose=None, tags=None, bank_zone=None):
     """Segments on the sheet, named '<colour>_cube' (or '_cube_2' etc. for repeats).
 
     With `pose` (and the sheet's tag corners in `tags`) it restricts itself to the sheet minus the
@@ -143,7 +162,7 @@ def detect(frame_bgr, names=None, roi_mask=None, pose=None, tags=None):
     if pose is not None:
         px_per_mm = np.linalg.norm(pose.to_image([(100, 100)])[0] - pose.to_image([(110, 100)])[0]) / 10
         if tags is not None:
-            roi_mask = detection_roi(pose, frame_bgr.shape, tags)
+            roi_mask = detection_roi(pose, frame_bgr.shape, tags, bank_zone=bank_zone)
     roi = roi_mask if roi_mask is not None else np.full(hsv.shape[:2], 255, np.uint8)
     face_px = (CUBE_SIZE_MM * px_per_mm) ** 2 if (px_per_mm and CUBE_SIZE_MM) else None
     min_area_px = MIN_AREA_FACES * face_px if face_px else 3000
@@ -187,10 +206,16 @@ def detect(frame_bgr, names=None, roi_mask=None, pose=None, tags=None):
         center = (mo["m10"] / mo["m00"], mo["m01"] / mo["m00"])
         if pose is not None:
             cx, cy = pose.to_sheet([center])[0]
-            if not (-CENTER_TOL_MM <= cx <= SHEET_W_MM + CENTER_TOL_MM and -CENTER_TOL_MM <= cy <= SHEET_H_MM + CENTER_TOL_MM):
+            # The bank test uses the cube's mid-height point, like the scene's centre_mm (and
+            # BANK_ZONE_MM): the table-plane point sits up to 12 mm further out at the bank's edge.
+            mid = pose.to_sheet([center], CUBE_SIZE_MM / 2 if CUBE_SIZE_MM else 0.0)[0]
+            if not (-CENTER_TOL_MM <= cx <= SHEET_W_MM + CENTER_TOL_MM and -CENTER_TOL_MM <= cy <= SHEET_H_MM + CENTER_TOL_MM
+                    or in_bank(mid, bank_zone)):
                 continue
         sat = hsv[..., 1][m > 0]
         hue = float(np.median(hsv[..., 0][m > 0][sat >= np.percentile(sat, 75)]))
+        if IGNORED_HUE[0] <= hue <= IGNORED_HUE[1]:
+            continue
         color = _hue_name(hue)
         seen[color] = seen.get(color, 0) + 1
         name = f"{color}_cube" + ("" if seen[color] == 1 else f"_{seen[color]}")

@@ -9,7 +9,7 @@
 - A rate is always `{"n", "passes", "rate"}`. `rate` is `null` when `n` is 0. Show "no data" for `null`, never 0%.
 - Every list is grouped by `lesson_id` first. Step 2 of one lesson is not step 2 of another.
 - `step` is a 0-based index into the lesson's steps. Add 1 for display.
-- Cells use the brain's names: letter = column, A to C left to right as the human at the row 3 edge sees them; number = row, row 1 = arm side, row 3 = human side.
+- Cells follow the printed sheet: letter = row, A on the arm's edge, C on the student's edge; number = column, 1 on the student's left, 3 on the right.
 
 ## Top level
 
@@ -37,7 +37,7 @@ Provenance: `real` means the grid came from the camera (`perception:`). `simulat
 | `first_try_pass_rate` | `[{lesson_id, mode, n, passes, rate}]`. The eval chart: share of steps passed on the first try |
 | `step_difficulty` | `[{lesson_id, step, mode, n, passes, rate, n_passed, n_not_passed, mean_attempts, median_seconds_to_pass}]`. `rate` is first try; `mean_attempts` counts attempts until the pass; seconds run from when the step became the current one |
 | `verdict_mix` | `[{lesson_id, mode, n, passes, counts: {VERDICT: int}, shares: {VERDICT: float or null}}]` |
-| `cell_error_map` | `{"human" or "robot": {lesson_id: {cell: {n, passes, rate, fails, fault_count}}}}`. All 9 cells per lesson, brain cell names (row 1 = arm side). `n` counts attempts by the verdict's `expected_cell`. For `WRONG_CELL` that can be a later step's slot: a block whose color an open slot still needs is graded "move it there", so the attempt counts against that later slot, not the current step's cell |
+| `cell_error_map` | `{"human" or "robot": {lesson_id: {cell: {n, passes, rate, fails, fault_count}}}}`. All 9 cells per lesson, printed-sheet cell names (row A = arm side). `n` counts attempts by the verdict's `expected_cell`. For `WRONG_CELL` that can be a later step's slot: a block whose color an open slot still needs is graded "move it there", so the attempt counts against that later slot, not the current step's cell |
 | `hint_effectiveness` | `[{lesson_id, failed_verdict, hint_level, n, passes, rate}]`. After a mistake, how often the next try passed with that hint showing. Human only. Only tries up to the step's first pass |
 | `robot_retry_stats` | `[{lesson_id, n, pass_try_1, pass_after_1_retry, pass_after_2_retries, stopped, unfinished, stops_by_reason}]`. Each bucket is a rate over `n` robot steps |
 | `leaderboard` | `[{rank, lesson_id, session, provenance, total_seconds, mistakes, max_hint_level}]`. Completed human sessions, ranked per lesson |
@@ -51,7 +51,7 @@ From `robot/outputs/tasks/*.json` when the report runs with `--tasks`.
 
 | Key | Shape |
 |---|---|
-| `cell_naming` | `"robot"`: letter is the row (A nearest the arm), number is the column. Do not mix with brain cell names |
+| `cell_naming` | `"robot"`: letter is the row (A nearest the arm), number is the column. Robot and brain cell names are the same now, so these cells line up with `cell_error_map` |
 | `tested_against_real_file` | `false` until we test against a real task report |
 | `task_steps` | Steps read |
 | `cells` | `[{cell, n, passes, rate, unknown, mean_error_mm, max_error_mm, mean_seconds}]`. `cell` is `null` for goals that are not a cell |
