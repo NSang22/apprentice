@@ -49,6 +49,8 @@ FIELDS: dict[str, dict[str, Optional[str]]] = {
     "hint": {"step": "step", "hint_level": "hint_level"},
     "note": {"grid_source": "grid_source"},  # the server notes the real source once the first frame arrives
     "step_advance": {"from_step": "from_step", "to_step": "to_step", "first_try": "first_try"},
+    "step_back": {"from_step": "from_step", "to_step": "to_step"},  # an earlier block came off
+
     "robot_cmd": {"step": "step", "cmd": "cmd"},
     "robot_result": {"step": "step", "cmd": "cmd", "ok": "ok", "error": "error"},
     "gate": {"gate": "gate"},
@@ -276,7 +278,13 @@ def _step_info(steps: Optional[list[dict]], step: int) -> tuple[Any, Any, Any]:
 
 
 def build_attempts(events: list[dict], lessons: dict[str, Lesson]) -> list[Attempt]:
-    """One Attempt per graded check in one session's events."""
+    """One Attempt per graded check in one session's events.
+
+    Progress follows the board, so the brain can step back: taking an earlier block off writes
+    step_back, and putting it back writes a PASS and a step_advance for that step again. Only a
+    step's first PASS is an attempt; a re-pass is not. Mistakes made on a revisit are attempts.
+    A step's clock starts each time it becomes the current step (session_start, step_advance or
+    step_back into it), so a revisit is timed from the step_back, not from an older advance."""
     all_events, events = events, _after_start(events)
     if not events:
         return []
@@ -285,20 +293,28 @@ def build_attempts(events: list[dict], lessons: dict[str, Lesson]) -> list[Attem
     lesson_id = field_of(start, "lesson_id")
     steps = lesson_steps(start, lessons)
 
-    step_start_t = start["t"]
+    current_since: dict[int, float] = {0: start["t"]}  # step -> when it last became the current step
     attempt_no: dict[int, int] = defaultdict(int)
-    placed: set[int] = set()  # steps with a place command already issued (robot mode)
+    passed: set[int] = set()  # steps whose first PASS is already counted
+    placed: set[int] = set()  # robot mode: steps with a place issued since they last became current
     out = []
     for e in events[1:]:
         kind = e["kind"]
-        if kind == "step_advance":
-            step_start_t = e["t"]
+        if kind in ("step_advance", "step_back"):
+            to = field_of(e, "to_step")
+            if isinstance(to, int):
+                current_since[to] = e["t"]
+                placed.discard(to)  # the brain's placed_current resets on every progress change
         elif kind == "robot_cmd" and field_of(e, "cmd") == VALUES["place_cmd"]:
             placed.add(field_of(e, "step"))
         elif kind == "verdict":
             verdict, step = field_of(e, "verdict"), field_of(e, "step")
             if not isinstance(verdict, str) or not isinstance(step, int) or verdict == VALUES["waiting"]:
                 continue
+            if verdict == VALUES["pass"]:
+                if step in passed:
+                    continue  # a re-pass after a step_back
+                passed.add(step)
             if verdict == VALUES["missing"] and field_of(e, "fault_cell") is None:
                 # "Still placing": the board is exactly as before this step. Human mode never counts
                 # it (brain/session.py:63-67, is_mistake). Robot mode counts it only once a place for
@@ -314,7 +330,7 @@ def build_attempts(events: list[dict], lessons: dict[str, Lesson]) -> list[Attem
                 expected_cell=field_of(e, "expected_cell"), expected_level=field_of(e, "expected_level"),
                 attempt_no=attempt_no[step],
                 hint_level_before=field_of(e, "hint_level"), retry=field_of(e, "retry"),
-                t=e["t"], seconds_since_step_start=round(e["t"] - step_start_t, 3),
+                t=e["t"], seconds_since_step_start=round(e["t"] - current_since.get(step, start["t"]), 3),
             ))
     return out
 
@@ -351,6 +367,13 @@ def build_robot_cmds(events: list[dict]) -> list[RobotCmd]:
     return out
 
 
+def furthest_step(events: list[dict]) -> int:
+    """Steps completed: the furthest step_advance reached. Counting advances would count a
+    step again each time it is re-passed after a step_back."""
+    reached = [field_of(e, "to_step") for e in events if e["kind"] == "step_advance"]
+    return max((s for s in reached if isinstance(s, int)), default=0)
+
+
 def build_session(events: list[dict], lessons: dict[str, Lesson], path: str = "", skipped: int = 0) -> Optional[SessionRow]:
     all_events, events = events, _after_start(events)
     if not events:
@@ -379,7 +402,7 @@ def build_session(events: list[dict], lessons: dict[str, Lesson], path: str = ""
         t_end=None if end is None else end["t"],
         outcome=None if end is None else field_of(end, "outcome"),
         end_reason=None if end is None else field_of(end, "reason"),
-        steps_completed=sum(1 for e in events if e["kind"] == "step_advance"),
+        steps_completed=furthest_step(events),
         skipped_lines=skipped,
         human_side=field_of(start, "human_side"),
     )

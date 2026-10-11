@@ -3,12 +3,47 @@ import shutil
 from pathlib import Path
 
 from analytics.fake_journal import generate, write_journals
-from analytics.load import DEFAULT_LESSON_DIRS, load_all, provenance, read_journal
+from analytics.load import DEFAULT_LESSON_DIRS, build_attempts, build_session, load_all, provenance, read_journal
+from brain.journal import Journal
+from brain.session import Session
 from brain.settings import DEMO_LESSON
-from shared.schemas import Lesson
+from shared.schemas import Lesson, empty_board
 
 FIXTURES = Path(__file__).parent / "fixtures"
 HUMAN, ROBOT = "s-20261011-003036", "s-20261011-003021"  # session ids inside the brain fixtures
+
+
+def test_step_back_counts_one_pass_per_step_and_restarts_the_step_clock(tmp_path):
+    lesson = Lesson.from_dict(json.loads(DEMO_LESSON.read_text()))  # red A1, teal C1, purple B2, ...
+    now = [0.0]
+    journal = Journal("s-back", "human", tmp_path, clock=lambda: now[0])
+    session = Session(lesson, "human", journal)
+    board = empty_board()
+
+    def settle(t, cell, stack):
+        now[0] = t
+        board[cell] = stack
+        session.on_board({c: list(v) for c, v in board.items()})
+
+    session.on_board(empty_board())
+    session.start()
+    settle(10, "A1", ["red"])
+    settle(20, "C1", ["teal"])
+    settle(30, "A1", [])            # red comes off: the brain steps back to step 0
+    settle(35, "A2", ["red"])       # put back on the wrong cell: a mistake on the revisit
+    settle(40, "A2", [])
+    settle(40, "A1", ["red"])       # back in place: steps 0 and 1 re-pass
+    for i, s in enumerate(lesson.steps[2:], 5):
+        settle(10 * i, s.cell, [s.color])
+    journal.close()
+
+    events = read_journal(journal.path)[0]
+    assert sum(e["kind"] == "step_advance" for e in events) > len(lesson.steps)  # the brain re-advanced
+    assert build_session(events, {}).steps_completed == len(lesson.steps)
+    attempts = build_attempts(events, {})
+    assert [(a.verdict, a.attempt_no, a.seconds_since_step_start) for a in attempts if a.step == 0] == [
+        ("PASS", 1, 10.0), ("WRONG_CELL", 2, 5.0)]  # the revisit is timed from the step_back at 30
+    assert sorted(a.step for a in attempts if a.passed) == list(range(len(lesson.steps)))
 
 
 def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
@@ -48,6 +83,14 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
                 assert first[key] == e["data"]["first_try"], (path.name, e)
                 checked += 1
     assert checked > 50
+    assert any(e["kind"] == "step_back" and e["mode"] == "human"
+               for p in sessions.glob("synthetic_*.jsonl") for e in read_journal(p)[0])  # the invariant sees revisits
+    # A re-pass after a step_back is not an attempt, and steps completed never exceed the lesson.
+    passes = [(a.session, a.step) for a in t.attempts if a.passed]
+    assert len(passes) == len(set(passes))
+    for s in t.sessions:
+        assert 0 <= s.steps_completed <= s.n_steps
+        assert s.outcome != "complete" or s.steps_completed == s.n_steps
 
     # Hand-checked against the fixture lines.
     human = [a for a in t.attempts if a.session == HUMAN]

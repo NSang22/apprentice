@@ -136,9 +136,12 @@ def cell_error_map(attempts: list[Attempt], mode: str) -> dict[str, dict[str, di
 def hint_effectiveness(attempts: list[Attempt], by: tuple[str, ...] = ("failed_verdict", "hint_level")) -> list[dict]:
     """After a failed attempt, the share of next attempts (same session and step) that pass.
     hint_level is the hint showing at that next attempt. Robot attempts carry no hint level,
-    so they drop out. `by` may use failed_verdict, hint_level, step, mode."""
+    so they drop out. `by` may use failed_verdict, hint_level, step, mode.
+    Only tries up to the step's first pass count: a re-pass after a step_back is not an
+    attempt, so a mistake on a revisit has no next attempt to pair with."""
     pairs = []
     for tries in _by_session_step(attempts).values():
+        tries = tries[: next((i for i, a in enumerate(tries, 1) if a.passed), len(tries))]
         for failed, nxt in zip(tries, tries[1:]):
             if failed.passed or nxt.hint_level_before is None:
                 continue
