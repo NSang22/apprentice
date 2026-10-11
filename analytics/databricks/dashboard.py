@@ -91,15 +91,19 @@ def _axis(field: str, title: str, kind: str, percent: bool = False) -> dict[str,
     return {"fieldName": field, "scale": {"type": kind}, "displayName": title, **({"format": PERCENT} if percent else {})}
 
 
-def _bar(name: str, query: str, title: str, x: tuple[str, str], y: tuple[str, str],
-         color: Optional[tuple[str, str]] = None, y_percent: bool = False) -> dict[str, Any]:
-    """x, y, color: (field, axis title). A rate on y never gets a color split: that would stack rates."""
-    if y_percent and color is not None and color[0] != x[0]:
+def _bar(name: str, query: str, title: str, category: tuple[str, str], value: tuple[str, str],
+         color: Optional[tuple[str, str]] = None, percent: bool = False, horizontal: bool = False) -> dict[str, Any]:
+    """category, value, color: (field, axis title). The category axis is x, or y when horizontal
+    (Lakeview draws horizontal bars when the categorical field is on y). A rate value never
+    gets a color split: that would stack rates."""
+    if percent and color is not None and color[0] != category[0]:
         raise ValueError(f"{name}: a rate bar cannot be split by color; that would stack rates")
-    enc: dict[str, Any] = {"x": _axis(x[0], x[1], "categorical"), "y": _axis(y[0], y[1], "quantitative", y_percent)}
+    cat_axis = _axis(category[0], category[1], "categorical")
+    value_axis = _axis(value[0], value[1], "quantitative", percent)
+    enc: dict[str, Any] = {"x": value_axis, "y": cat_axis} if horizontal else {"x": cat_axis, "y": value_axis}
     if color:
         enc["color"] = _axis(color[0], color[1], "categorical")
-    names = list(dict.fromkeys([x[0], y[0]] + ([color[0]] if color else [])))
+    names = list(dict.fromkeys([category[0], value[0]] + ([color[0]] if color else [])))
     return {
         "name": name,
         "queries": [{"name": "main_query", "query": {"datasetName": dataset_id(query), "fields": _fields(names),
@@ -167,32 +171,33 @@ def _filter(name: str, title: str, param: str, options_query: str, queries: dict
 
 def build_dashboard(queries: dict[str, str]) -> dict[str, Any]:
     """The serialized_dashboard object: every query as a dataset, one page of tiles."""
+    # Grid is 6 wide. Filters stack on the left; every table is full width so none scrolls sideways.
     tiles = [
         ({"name": "banner", "multilineTextboxSpec": {"lines": [BANNER]}}, (0, 0, 6, 1)),
         (_filter("filter_provenance", "Provenance", "provenance", "options_provenance", queries), (0, 1, 2, 1)),
-        (_filter("filter_lesson", "Lesson", "lesson_id", "options_lesson", queries), (2, 1, 2, 1)),
+        (_filter("filter_lesson", "Lesson", "lesson_id", "options_lesson", queries), (0, 2, 2, 1)),
         (_table("session_count", "session_count", "Sessions behind these numbers", [
             ("provenance", "string"), ("sessions", "integer"), ("human", "integer"), ("robot", "integer")]),
-         (4, 1, 2, 2)),
+         (2, 1, 4, 3)),
         (_bar("first_try", "first_try_human_vs_robot", "First-try pass rate, human vs robot",
-              ("mode", "Mode"), ("first_try_rate", "First-try pass rate"), y_percent=True), (0, 3, 3, 6)),
+              ("mode", "Mode"), ("first_try_rate", "First-try pass rate"), percent=True), (0, 4, 3, 6)),
         (_bar("robot_retries", "robot_retries", "Robot steps by outcome",
-              ("outcome_label", "Outcome"), ("steps", "Robot steps")), (3, 3, 3, 6)),
+              ("outcome_label", "Outcome"), ("steps", "Robot steps"), horizontal=True), (3, 4, 3, 6)),
         (_bar("mistake_mix", "mistake_mix", "Mistake mix",
-              ("verdict", "Mistake"), ("verdict_count", "Mistakes"), color=("mode", "Mode")), (0, 9, 3, 6)),
+              ("verdict", "Mistake"), ("verdict_count", "Mistakes"), color=("mode", "Mode")), (0, 10, 3, 6)),
         (_bar("hint_by_level", "hint_by_level", "Next try passes, by hint level",
-              ("hint_level", "Hint level"), ("next_try_pass_rate", "Next-try pass rate"), y_percent=True), (3, 9, 3, 6)),
+              ("level_label", "Hint level"), ("next_try_pass_rate", "Pass rate"), percent=True), (3, 10, 3, 6)),
         (_table("hardest_steps", "hardest_steps", "Hardest steps", [
             ("step_number", "integer"), ("mode", "string"), ("first_try_rate", "string"),
             ("n", "integer"), ("mean_attempts", "float"), ("n_not_passed", "integer")]),
-         (0, 15, 6, 6)),
+         (0, 16, 6, 6)),
         (_table("hint_breakdown", "hint_breakdown", "Next try passes, by mistake and hint level", [
             ("failed_verdict", "string"), ("hint_level", "integer"), ("n", "integer"), ("passes", "integer"),
             ("next_try_pass_rate", "string")]),
-         (0, 21, 3, 6)),
+         (0, 22, 6, 6)),
         (_table("cell_error_map", "cell_error_map_3x3", "Pass rate by cell (rows 1 to 3, columns A to C)", [
             ("mode", "string"), ("grid_row", "string"), ("A", "string"), ("B", "string"), ("C", "string")]),
-         (3, 21, 3, 6)),
+         (0, 28, 6, 6)),
     ]
     return {
         "datasets": [_dataset(name, sql) for name, sql in queries.items()],

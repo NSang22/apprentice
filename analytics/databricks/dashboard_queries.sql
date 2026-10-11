@@ -66,7 +66,8 @@ ORDER BY mode, grid_row;
 
 -- name: hint_by_level
 -- One rate per hint level: passes and n added up across failed verdicts, then divided.
-SELECT lesson_id, hint_level, SUM(n) AS n, SUM(passes) AS passes,
+SELECT lesson_id, hint_level, CONCAT('Level ', hint_level, ' (n=', SUM(n), ')') AS level_label,
+       SUM(n) AS n, SUM(passes) AS passes,
        CASE WHEN SUM(n) = 0 THEN NULL ELSE SUM(passes) / SUM(n) END AS next_try_pass_rate
 FROM workspace.apprentice.hint_effectiveness
 WHERE provenance = :provenance AND lesson_id = :lesson_id

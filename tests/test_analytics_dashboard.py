@@ -49,22 +49,29 @@ def test_payload_datasets_filters_and_tiles():
         assert f["selection"]["defaultSelection"]["values"]["values"] == [{"value": default}]
 
     def bar(name):
+        """(category field, title), (value field, title), color field, value format, horizontal."""
         spec = widgets[name]["spec"]
         assert spec["widgetType"] == "bar"
         e = spec["encodings"]
-        return ((e["x"]["fieldName"], e["x"]["displayName"]), (e["y"]["fieldName"], e["y"]["displayName"]),
-                e.get("color", {}).get("fieldName"), e["y"].get("format", {}).get("type"))
-    assert bar("first_try") == (("mode", "Mode"), ("first_try_rate", "First-try pass rate"), None, "number-percent")
-    assert bar("mistake_mix") == (("verdict", "Mistake"), ("verdict_count", "Mistakes"), "mode", None)
-    assert bar("hint_by_level") == (("hint_level", "Hint level"), ("next_try_pass_rate", "Next-try pass rate"), None,
-                                    "number-percent")
-    assert bar("robot_retries") == (("outcome_label", "Outcome"), ("steps", "Robot steps"), None, None)
+        horizontal = e["y"]["scale"]["type"] == "categorical"
+        cat, val = (e["y"], e["x"]) if horizontal else (e["x"], e["y"])
+        assert (cat["scale"]["type"], val["scale"]["type"]) == ("categorical", "quantitative")
+        return ((cat["fieldName"], cat["displayName"]), (val["fieldName"], val["displayName"]),
+                e.get("color", {}).get("fieldName"), val.get("format", {}).get("type"), horizontal)
+    assert bar("first_try") == (("mode", "Mode"), ("first_try_rate", "First-try pass rate"), None, "number-percent", False)
+    assert bar("mistake_mix") == (("verdict", "Mistake"), ("verdict_count", "Mistakes"), "mode", None, False)
+    assert bar("hint_by_level") == (("level_label", "Hint level"), ("next_try_pass_rate", "Pass rate"), None,
+                                    "number-percent", False)
+    # Horizontal, so the full outcome labels fit.
+    assert bar("robot_retries") == (("outcome_label", "Outcome"), ("steps", "Robot steps"), None, None, True)
+    # Each hint level's label carries its count: "Level 1 (n=10)".
+    assert "CONCAT('Level ', hint_level, ' (n=', SUM(n), ')') AS level_label" in "".join(ds["hint_by_level"]["queryLines"])
 
     # No tile stacks or adds up a rate: rate bars have no color split, tables carry rates as text,
     # and the per-level hint rate is recomputed from passes and n, never a sum of rates.
     for w in widgets.values():
         spec = w.get("spec", {})
-        if spec.get("widgetType") == "bar" and spec["encodings"]["y"].get("format", {}).get("type") == "number-percent":
+        if spec.get("widgetType") == "bar" and bar(w["name"])[3] == "number-percent":
             assert "color" not in spec["encodings"], w["name"]
         for col in spec.get("encodings", {}).get("columns", []):
             assert "%" not in col.get("numberFormat", ""), (w["name"], col["fieldName"])
@@ -72,7 +79,21 @@ def test_payload_datasets_filters_and_tiles():
     assert "SUM(passes) / SUM(n)" in hint_sql and "SUM(rate)" not in hint_sql and "AVG(rate)" not in hint_sql
     with pytest.raises(ValueError):
         _bar("x", "hint_by_level", "t", ("hint_level", "Hint level"), ("next_try_pass_rate", "r"),
-             color=("failed_verdict", "Mistake"), y_percent=True)
+             color=("failed_verdict", "Mistake"), percent=True)
+
+    # Layout on the 6-wide grid: no overlaps, every table full width (no sideways scrolling),
+    # and the session count big enough to show its row.
+    pos = {item["widget"]["name"]: item["position"] for item in page["layout"]}
+    cells = {}
+    for name, p in pos.items():
+        assert 0 <= p["x"] and p["x"] + p["width"] <= 6, name
+        for x in range(p["x"], p["x"] + p["width"]):
+            for y in range(p["y"], p["y"] + p["height"]):
+                assert (x, y) not in cells, (name, cells.get((x, y)))
+                cells[(x, y)] = name
+    for name in ("hardest_steps", "hint_breakdown", "cell_error_map"):
+        assert (pos[name]["x"], pos[name]["width"]) == (0, 6), name
+    assert pos["session_count"]["width"] >= 4 and pos["session_count"]["height"] >= 3
 
     def columns(name):
         return [c["fieldName"] for c in widgets[name]["spec"]["encodings"]["columns"]]
