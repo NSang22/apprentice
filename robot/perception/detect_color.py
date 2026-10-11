@@ -1,4 +1,4 @@
-"""Find the foam cubes by colour. Offline fallback for the Gemini detector; same interface."""
+"""Find the foam cubes by colour. Offline fallback for the vision-model detector; same interface."""
 
 from dataclasses import dataclass
 

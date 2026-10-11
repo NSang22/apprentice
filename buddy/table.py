@@ -7,7 +7,7 @@ Two readings of the board, kept in sync:
   TableBoard  perception's GridState stream (ws :8765) through brain.stabilizer, unchanged. It
               answers "are hands off?" and "has the board settled?" ten times a second.
   RobotEyes   the arm's own vision (buddy/eyes_worker.py, run in the main checkout): robot
-              segmentation, colour memory, Gemini when unsure. It decides what the child built,
+              segmentation, colour memory, the vision model (OpenAI) when unsure. It decides what the child built,
               so the board Buddy grades is the board the arm acts on.
 Each scan records both, and where they disagree (buddy/session.py logs it, the phone shows it).
 
@@ -46,7 +46,7 @@ HOVER_HOLD_S = 3.0        # Pip points this long, then goes home
 EDGE_MM = 8.0             # a block centre closer than this to a cell line reads "unknown" (nudge it)
 CELL_MATCH_MM = 1.0       # a cell-map pair must name the same sheet point to within this
 EYES_START_S = 90.0       # the robot-vision helper's first import of torch/lerobot is slow
-EYES_SCAN_S = 45.0        # one scan, including a Gemini call when the colour memory is unsure
+EYES_SCAN_S = 45.0        # one scan, including a vision-model call when the colour memory is unsure
 WORKER = Path(__file__).resolve().parent / "eyes_worker.py"
 
 
@@ -100,7 +100,7 @@ def camera_jpeg(width: int = 640, quality: int = 70) -> Optional[bytes]:
 
 
 def missing_from_bank(need: list[str], seen: list[str]) -> list[str]:
-    """Colors still needed after matching what Gemini saw in the bank, counting repeats."""
+    """Colors still needed after matching what the vision model saw in the bank, counting repeats."""
     left = list(seen)
     out = []
     for c in need:
@@ -218,7 +218,7 @@ class RobotEyes:
         self.proc: Optional[subprocess.Popen] = None
         self.lines: "queue.Queue[str]" = queue.Queue()
         self.lock = threading.Lock()
-        self.info: dict = {}                 # the worker's start-up report (cell map, gemini)
+        self.info: dict = {}                 # the worker's start-up report (cell map, model)
         self.log: list[str] = []             # the robot code's own output, newest last
         self.error: Optional[str] = None
 
@@ -278,11 +278,11 @@ class RobotEyes:
         return self._ask("scan", EYES_SCAN_S)
 
     def bank(self) -> dict:
-        """Gemini Flash's list of the block colors in the robot's cube bank: {ok, colors: [...]}."""
+        """The vision model's list of the block colors in the robot's cube bank: {ok, colors: [...]}."""
         return self._ask("bank", EYES_SCAN_S)
 
     def narration(self, audio: Path) -> dict:
-        """Gemini Flash's transcript of a recording's audio and the placements said in it."""
+        """The recording's narration as text (OpenAI speech to text) and the placements said in it."""
         return self._ask(f"narration {Path(audio).resolve()}", 90.0)
 
     def cell_map(self) -> dict[str, str]:

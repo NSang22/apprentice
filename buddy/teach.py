@@ -8,7 +8,7 @@ Later, "Build it, Pip!" rebuilds it step by step with the arm (buddy/teach_sessi
 
 How Pip learns on the table: the extractor runs on the recorded video itself (learn_video:
 python -m brain.extractor --video in the main checkout, sampling 5 frames a second, with the robot's
-colour memory and the Gemini fallback). If the video gives no answer, the live frames are used
+colour memory and the vision-model fallback). If the video gives no answer, the live frames are used
 instead (learn).
 
 What is recorded on the table:
@@ -139,7 +139,7 @@ MIC = "hw:CARD=Camera,DEV=0"   # the overhead webcam's own microphone (arecord -
 
 class AudioRecorder:
     """The webcam microphone to an Opus file while the child builds (GStreamer: alsasrc, opusenc).
-    The narration is a second source for the steps: Gemini transcribes it afterwards."""
+    The narration is a second source for the steps: OpenAI transcribes it afterwards."""
 
     def __init__(self, path: Path, device: str = MIC):
         self.path, self.device = path, device
@@ -295,14 +295,14 @@ def learn(frames: list[dict], lesson_id: str, title: str, source_video: Optional
 EXTRACT_TIMEOUT_S = 240.0   # the video run gives up after this long (the live frames take over)
 EXTRACT_S_PER_VIDEO_S = 0.6  # first guess at run time per second of video, for the progress bar
 # Lines the extractor prints, in the order it prints them -> the stage the bar is in by then.
-EXTRACT_MILESTONES = [("sampling", "flummox"), ("hand band", "count"), ("gemini", "squint"), ("run time", "check")]
+EXTRACT_MILESTONES = [("sampling", "flummox"), ("hand band", "count"), ("] model:", "squint"), ("run time", "check")]
 
 
 def learn_video(video: Path, repo: Path, title: str, video_s: float,
                 stage: Callable[[str, float], None] = lambda name, frac: None, log: Callable[[str], None] = print) -> dict:
     """The recording's video -> lesson with the team's extractor on the video itself
     (python -m brain.extractor --video, 5 frames a second by default), run in `repo` (the main
-    checkout) so it uses the calibration, robot colour memory and Gemini key everything else uses.
+    checkout) so it uses the calibration, robot colour memory and OpenAI key everything else uses.
 
     Returns like learn(), or {ok: None, error} when the video run could not produce an answer
     (unreadable video, no tags in the first frame, a crash, a timeout): the caller then learns
@@ -389,7 +389,7 @@ def report(details: dict) -> dict:
                  "checks": gate.get("checks")},
         "frames": details.get("frames"), "skipped_boards": details.get("skipped_boards"),
         "corrections": details.get("removed") or details.get("corrections"), "transients": details.get("transients"),
-        "unusable": details.get("unusable"), "gemini": details.get("gemini"),
+        "unusable": details.get("unusable"), "model_colors": details.get("model"),
     }
 
 

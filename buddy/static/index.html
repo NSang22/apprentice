@@ -757,7 +757,7 @@ function renderPower(p) {
   $("pw-step").textContent = p.error ? `⚠ ${p.error}` : p.step;
   if (S) {
     const e = S.eyes || {}, y = S.sync;
-    $("pw-eyes").textContent = e.ready ? `ready${e.gemini ? " · Gemini on" : " · no Gemini"}` : e.error ? "not working" : "starts with a table game";
+    $("pw-eyes").textContent = e.ready ? `ready${e.model ? " · " + e.model : " · no vision model"}` : e.error ? "not working" : "starts with a table game";
     $("pw-eyes").className = e.ready ? "on" : "off";
     $("pw-sync").textContent = !y ? "none yet"
       : y.source !== "robot" ? `camera only (${y.error || "robot eyes down"})`
@@ -827,9 +827,9 @@ async function dbgPoll() {
     if (d.sync) {
       const n = d.sync.naming;
       out.push(`last scan: source=${d.sync.source} agree=${d.sync.agree} ms=${JSON.stringify(d.sync.ms)} diffs=${JSON.stringify(d.sync.diffs)}`);
-      out.push(n === "model" ? "  colours: >>> GEMINI CALLED (traditional vision was unsure)"
-             : n === "prior" ? "  colours: >>> TRADITIONAL VISION FAILED and Gemini gave no answer: hue guess used"
-             : `  colours: ${n || "-"} (traditional vision, no Gemini)`);
+      out.push(n === "model" ? "  colours: >>> VISION MODEL CALLED (traditional vision was unsure)"
+             : n === "prior" ? "  colours: >>> TRADITIONAL VISION FAILED and the vision model gave no answer: hue guess used"
+             : `  colours: ${n || "-"} (traditional vision, no vision model)`);
       (d.sync.notes || []).forEach((m) => out.push("    " + m));
       if (d.sync.error) out.push("  robot vision error: " + d.sync.error);
     }

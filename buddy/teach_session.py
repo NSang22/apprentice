@@ -9,7 +9,7 @@ Phases:
   review      the steps Pip learned; the child names the lesson and saves it
   saved       saved: "Build it, Pip!" now, or later from the saved lessons
   bank        rebuild: Pip asks for the next colors in its bank (it holds BANK_SIZE), then Ready
-  bank_check  (table) Gemini Flash looks in the bank: before placing, and when robot.api says a
+  bank_check  (table) the vision model looks in the bank: before placing, and when robot.api says a
               color is missing (its sheet calibration can misread blocks on the green box)
   building    Pip places one step (the arm on the table; it appears on the phone in practice)
   build_check (table) did the block land on its square and level?
@@ -66,7 +66,7 @@ class TeachSession:
         self.scan_stuck = False
         self.audio = None                    # the microphone recorder while recording
         self.audio_path = None
-        self.heard: dict = {}                # Gemini's transcript and where speech and grid disagree
+        self.heard: dict = {}                # the narration's transcript and where speech and grid disagree
         self.bank_mode = ""                  # "ready" (check before placing) or "retry" (after a miss)
         self.bank_result: Optional[dict] = None
         self.place_retried = False
@@ -202,7 +202,7 @@ class TeachSession:
                             time.monotonic() - t, {"file": str(video)})
             listener, t_listen = None, time.monotonic()
             if self.source == "table" and sound:
-                # Gemini transcribes the narration while the extractor works on the video
+                # OpenAI transcribes the narration while the extractor works on the video
                 def listen():
                     heard.update(self.eyes.narration(sound))
                 listener = threading.Thread(target=listen, daemon=True)
@@ -213,7 +213,7 @@ class TeachSession:
             result = {"ok": None}
             if self.source == "table" and video:
                 # the team's extractor on the video itself (fast 5 Hz sampling, robot colour memory,
-                # Gemini for any color nobody could name), run in the main checkout
+                # the vision model for any color nobody could name), run in the main checkout
                 video_s = recorder.frames / teach.VIDEO_FPS if recorder else 0.0
                 t = time.monotonic()
                 result = teach.learn_video(video, self.eyes.repo, title, video_s, stage=self._set_stage,
@@ -259,7 +259,7 @@ class TeachSession:
             if listener is not None:
                 listener.join(timeout=60)
                 ok = heard.get("ok")
-                self._trace("narration", "Gemini: what you said", "ok" if ok else "fail",
+                self._trace("narration", "What you said (speech to text)", "ok" if ok else "fail",
                             (f"\"{heard.get('transcript', '')[:120]}\"" if ok else heard.get("error", "no answer")),
                             heard.get("seconds") or (time.monotonic() - t_listen),
                             {k: heard.get(k) for k in ("transcript", "placements", "model", "error")})
@@ -359,7 +359,7 @@ class TeachSession:
     def ready(self) -> None:
         with self.lock:
             if self.phase == "bank":
-                if self.source == "table" and self.eyes.info.get("gemini"):
+                if self.source == "table" and self.eyes.info.get("model"):
                     self._check_bank("ready")
                 else:
                     self._place_next()
@@ -371,7 +371,7 @@ class TeachSession:
                 self.scanner.start()
 
     def _check_bank(self, mode: str) -> None:
-        """Gemini Flash lists the colors in the bank (worker thread); tick() acts on the answer."""
+        """The vision model lists the colors in the bank (worker thread); tick() acts on the answer."""
         self.phase, self.bank_mode, self.bank_result, self.mood = "bank_check", mode, None, "look"
         self.say = "Let me look in my bank..."
 
@@ -452,7 +452,7 @@ class TeachSession:
                         self.say = "Hands away from the board, please, so I can move! Then tap Ready."
                     elif self.pip.error:
                         self._log("place_error", {"step": self.build_i + 1, "error": self.pip.error})
-                        if self.eyes.info.get("gemini"):
+                        if self.eyes.info.get("model"):
                             self._check_bank("retry")
                         else:
                             self._ask_bank([s.color], empty=True)

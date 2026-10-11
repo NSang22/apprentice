@@ -137,13 +137,13 @@ function chip(label, state, value, why) {
 async function loadStatus() {
   const s = await get("/api/buddy/status"), t = s.table, e = s.eyes;
   const cam = t.connected && t.fresh;
-  const gem = e.gemini == null ? ["", "unknown"] : e.gemini ? ["ok", "key found"] : ["fail", "no key"];
-  const gemErr = (e.log || []).slice().reverse().find((l) => /429|Gemini|gemini/.test(l) && /error|HTTP|Unavailable/i.test(l));
+  const gem = e.model === undefined ? ["", "unknown"] : e.model ? ["ok", e.model] : e.ready ? ["fail", "no OpenAI key"] : ["", "starts with a table game"];
+  const gemErr = (e.log || []).slice().reverse().find((l) => /OpenAI|vision model/.test(l) && /error|HTTP|Unavailable|failed/i.test(l));
   $("status").innerHTML = [
     chip("Camera", cam ? "ok" : "fail", cam ? "seeing the board" : "off", cam ? "" : "Turn on the table (⚙ on the home screen)"),
     chip("Pip's arm", s.pip.error ? "warn" : s.pip.busy ? "warn" : "ok", s.pip.busy ? `busy: ${s.pip.step}` : "ready", s.pip.error ? `last error: ${s.pip.error}` : ""),
     chip("Robot's eyes", e.ready ? "ok" : e.error ? "fail" : "", e.ready ? "ready" : e.error ? "not working" : "starts with a table game", e.error || ""),
-    chip("Gemini", gemErr ? "warn" : gem[0], gem[1], gemErr ? gemErr.slice(0, 120) : ""),
+    chip("Vision model (OpenAI)", gemErr ? "warn" : gem[0], gem[1], gemErr ? gemErr.slice(0, 120) : ""),
   ].join("");
   $("eyes-log").textContent = (e.log || []).length ? e.log.join("\n") : "(nothing yet)";
 }
@@ -164,7 +164,7 @@ function stepBody(d) {
       `<tr><td><code>${esc(c.name)}</code></td><td class="${c.passed ? "pass" : "nopass"}">${c.passed ? "passed" : "failed"}</td><td>${esc((g.reasons || {})[c.name] || ((g.notes || {})[c.name] || []).join("; "))}</td></tr>`).join("")}</table>`;
     if ((x.steps || []).length) h += `<div class="label">Steps the extractor found</div><table><tr><th>#</th><th>cell</th><th>level</th><th>color</th><th>decided by</th><th>camera</th><th>robot memory</th></tr>${x.steps.map((r) =>
       `<tr><td>${r.step}</td><td>${esc(r.cell)}</td><td>${r.level}</td><td>${sw(r.color)}</td><td>${esc(r.color_source)}</td><td>${esc(r.camera_color)}</td><td>${esc(r.robot_memory_color ?? "-")}</td></tr>`).join("")}</table>`;
-    const rest = { frames: x.frames, corrections: x.corrections, transients: x.transients, skipped_boards: x.skipped_boards, unusable: x.unusable, gemini: x.gemini };
+    const rest = { frames: x.frames, corrections: x.corrections, transients: x.transients, skipped_boards: x.skipped_boards, unusable: x.unusable, model_colors: x.model_colors };
     h += `<div class="label">More from the extractor's report</div><div class="log">${esc(JSON.stringify(rest, null, 2))}</div>`;
     return h;
   }
@@ -206,7 +206,7 @@ function what(e) {
     case "round": return `round ${d.round}: ${d.right ?? ""}${d.total ? "/" + d.total : ""} right, ${d.stars ?? "-"} stars${d.mistakes != null ? `, ${d.mistakes} slips` : ""}`;
     case "turn": return `${d.who} ${d.cell ? `${d.color} on ${d.cell}` : ""} ${d.result ?? (d.landed === false ? "missed" : d.landed ? "landed" : "")} ${d.error ? "error: " + d.error : ""}`;
     case "scan": return `scan by ${d.source}: ${d.agree ? "robot and camera agree" : "differ on " + Object.keys(d.diffs || {}).join(", ")}${d.naming ? ", colors from " + d.naming : ""}`;
-    case "bank_check": return `bank: Gemini saw [${(d.colors || []).join(", ")}], needed [${[].concat(d.need || []).join(", ")}]${d.error ? " error: " + d.error : ""}`;
+    case "bank_check": return `bank: the vision model saw [${(d.colors || []).join(", ")}], needed [${[].concat(d.need || []).join(", ")}]${d.error ? " error: " + d.error : ""}`;
     case "placed": return `step ${d.step}: ${d.color} on ${d.cell}${d.level ? " (on top)" : ""}: ${d.landed ? "landed" : "missed"}`;
     case "place_error": return `step ${d.step}: robot said "${d.error}"`;
     case "help": return `asked for ${d.kind}${d.arm ? " (arm)" : ""}`;

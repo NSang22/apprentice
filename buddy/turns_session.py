@@ -5,7 +5,7 @@ Phases:
   clear        (table) waiting for an empty board before the next pattern
   pip_turn     Pip places a block (the arm on the table; it just appears in practice)
   pip_check    (table) looking at the board: did Pip's block land on its square?
-  bank_check   (table) robot.api found no block of that color: Gemini Flash looks in the bank first
+  bank_check   (table) robot.api found no block of that color: the vision model looks in the bank first
   need_supply  Pip could not place (no block of that color in the bank, or hands stayed on)
   child_turn   the child places a block, then taps "Your turn, Pip!"
   child_check  (table) looking at the board after the child's tap
@@ -68,7 +68,7 @@ class TurnsSession:
         self.xp = 0
         self.gained = 0
         self.scan_stuck = False
-        self.bank_result: Optional[dict] = None   # Gemini's look in the bank after a failed place
+        self.bank_result: Optional[dict] = None   # the vision model's look in the bank after a failed place
         self.place_retried = False
         self.rounds: list[dict] = []
         self.mood, self.say = "happy", ""
@@ -198,8 +198,8 @@ class TurnsSession:
                         cell, color = self.pip_move
                         self._log("turn", {"round": self.round, "who": "pip", "cell": cell, "color": color,
                                            "error": self.pip.error})
-                        if self.pip.error != "hands" and self.eyes.info.get("gemini"):
-                            self._check_bank(color)   # robot.api can misread bank blocks: ask Gemini first
+                        if self.pip.error != "hands" and self.eyes.info.get("model"):
+                            self._check_bank(color)   # robot.api can misread bank blocks: ask the vision model first
                         else:
                             self.phase, self.mood = "need_supply", "think"
                             self.say = ("Hands away from the board, please, so I can move! Then tap Try again."
@@ -237,7 +237,7 @@ class TurnsSession:
                 self.phase = "child_turn"
 
     def _check_bank(self, color: str) -> None:
-        """Gemini Flash lists the bank's colors (worker thread) before Pip says a color is missing."""
+        """The vision model lists the bank's colors (worker thread) before Pip says a color is missing."""
         self.phase, self.bank_result, self.mood = "bank_check", None, "look"
         self.say = "Hmm, let me look in my bank..."
 

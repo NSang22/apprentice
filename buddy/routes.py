@@ -380,9 +380,9 @@ def debug_trace(game: str = "teach", session: str = ""):
 
 @router.get("/api/buddy/status")
 def debug_status():
-    """Camera, arm, the robot's eyes and Gemini, for the debug page's status strip."""
+    """Camera, arm, the robot's eyes and the vision model, for the debug page's status strip."""
     eyes = game.eyes
     return {"table": game.table.status(), "pip": {"busy": game.pip.busy, "step": game.pip.step, "error": game.pip.error},
-            "eyes": {"ready": bool(eyes.info.get("ready")), "gemini": eyes.info.get("gemini"), "error": eyes.error,
+            "eyes": {"ready": bool(eyes.info.get("ready")), "model": eyes.info.get("model"), "error": eyes.error,
                      "log": eyes.log[-40:]},
             "phases": {"recall": game.phase, "turns": turns.phase, "teach": teach.phase}}

@@ -357,7 +357,8 @@ python -m perception.publish --video videos/demo.mp4
 # grid lock + empty board from the video's first second. Exit 0 gate passed, 1 gate failed, 3 colors unknown.
 # Stacks up to 3 come from history (a clear new top color on an occupied cell), never the camera's height read.
 # Defaults: --block-mm 48, --colors all shared colors, --sample-hz 5, --color-memory robot/outputs/color_memory.json if present.
-# A step no source can name is asked of Gemini (GEMINI_API_KEY, offline, answers reused on reruns); --no-gemini skips it.
+# A step no source can name is asked of the vision model (OpenAI: OPENAI_API_KEY, OPENAI_MODEL default gpt-5.6-sol; offline,
+# answers reused on reruns); --no-model skips it.
 python -m brain.extractor --video videos/expert_take1.mp4 --color-memory videos/calib_oct11/color_memory.json --boards-out data/boards.json
 python -m brain.extractor --video videos/expert_take1.mp4 --colors red,yellow,orange,purple,skyblue --colors-file colors.json
 python -m brain.extractor --script tests/scripts/staircase_with_mistake.json   # or --grid ws://<host>:8765 (live camera; Ctrl+C ends the take)

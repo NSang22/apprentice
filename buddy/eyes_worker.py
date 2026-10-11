@@ -2,10 +2,10 @@
 
 Run by buddy/table.py (RobotEyes) as a long-lived helper with cwd and PYTHONPATH set to the
 repo's main checkout, so every import below is the code robot.api runs, with its calibration,
-its colour memory (robot/outputs/color_memory.json) and its Gemini key:
+its colour memory (robot/outputs/color_memory.json) and its OpenAI key:
 
   segmentation      robot.perception.segment (via scene.build_scene)
-  colour names      robot.perception.naming: colour memory first, Gemini when unsure, hue guess last
+  colour names      robot.perception.naming: colour memory first, the vision model (OpenAI) when unsure, hue guess last
   sheet mm -> cell  perception.cells.mm_to_cell (the team's one cell-naming source)
 
 Protocol: one command line on stdin -> one line "@@{json}" on stdout. Lines without "@@" are the
@@ -14,19 +14,19 @@ cell map: for every cell name, the robot cell whose centre (robot.executor.cell_
 robot.api moves to) is the same point on the sheet as perception's centre for that name.
 
   scan               the grid, as above
-  bank               Gemini Flash looks at the robot's cube bank (the green box, robot config
+  bank               the vision model looks at the robot's cube bank (the green box, robot config
                      BANK_ZONE_MM) and lists the block colors in it. robot.api names bank blocks
                      with the camera's sheet calibration, which can misread them on the green box;
                      this is the second opinion Buddy asks before telling a child a color is missing.
-  narration <path>   Gemini Flash transcribes a recording's audio and lists the placements spoken
-                     in it ("red on B2"), with times. Advice only: the grid decides (AGENTS.md rule 2).
-Both use brain/gemini_colors.py's key and model (GEMINI_API_KEY, the newest flash model), the
-same as the extractor's Gemini fallback, and never print the key.
+  narration <path>   speech to text (OPENAI_TRANSCRIBE_MODEL, gpt-4o-transcribe), then the vision
+                     model lists the placements spoken in it ("red on B2"). Advice only: the grid
+                     decides (AGENTS.md rule 2).
+All model calls go through robot/perception/openai_vision.py (OPENAI_API_KEY, OPENAI_MODEL, default
+gpt-5.6-sol), the same as the extractor's color fallback, and never print the key.
 """
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 import sys
@@ -39,7 +39,7 @@ import numpy as np
 
 from perception.cells import cell_center_mm, edge_margin_mm, mm_to_cell
 from robot.executor import cell_center as robot_cell_center
-from robot.perception import gemini_namer, naming, scene as scene_mod
+from robot.perception import naming, openai_vision, scene as scene_mod
 from robot.perception.sheet import SheetLocalizer
 from shared.config import CELLS, COLORS
 
@@ -76,7 +76,7 @@ def scan(localizer: SheetLocalizer) -> dict:
     t0 = time.perf_counter()
     img = frame()
     t1 = time.perf_counter()
-    notes: list[str] = []   # what the colour namer says this scan (Gemini asked, Gemini failed, guesses)
+    notes: list[str] = []   # what the colour namer says this scan (model asked, model failed, guesses)
     namer = scene_mod._namer("auto")
     namer.log = lambda m: (notes.append(m.strip()), print(m, flush=True))
     scene, _, _ = scene_mod.build_scene(img, localizer, naming="auto")
@@ -91,9 +91,9 @@ def scan(localizer: SheetLocalizer) -> dict:
     t2 = time.perf_counter()
     source = getattr(namer, "last_source", None)
     if source == "model":
-        notes.insert(0, "traditional vision was unsure of a colour, so Gemini was asked")
+        notes.insert(0, "traditional vision was unsure of a colour, so the vision model was asked")
     elif source == "prior":
-        notes.insert(0, "traditional vision was unsure of a colour and Gemini did not answer: hue guess used")
+        notes.insert(0, "traditional vision was unsure of a colour and the vision model did not answer: hue guess used")
     return {"ok": True, "blocks": blocks, "naming": source, "notes": notes,
             "ms": {"frame": round((t1 - t0) * 1000), "vision": round((t2 - t1) * 1000)}}
 
@@ -106,27 +106,14 @@ BANK_PROMPT = (
     'Reply with JSON only, like {"blocks": ["red", "teal"]}.'
 )
 NARRATION_PROMPT = (
-    "This is a short recording of someone (often a child, maybe with an adult) building with toy blocks "
+    "This is the transcript of someone (often a child, maybe with an adult) building with toy blocks "
     "on a 3 by 3 grid while talking. Grid squares are named A1 to C3: the letter is the row (A on the "
     "robot's side, C nearest the builder), the number is the column (1 to 3, left to right). Transcribe "
     "what is said, then list every block placement or removal the speaker describes, with the time in "
     f"seconds when it is said. Colors must be one of: {', '.join(COLORS)}, or \"unknown\". Use a cell only "
     "if it is said or clearly described, else null. Reply with JSON only: "
-    '{"transcript": "...", "placements": [{"t": 3.5, "action": "place", "color": "red", "cell": "B2", "text": "red one in the middle"}]}'
+    '{"placements": [{"action": "place", "color": "red", "cell": "B2", "text": "red one in the middle"}]}'
 )
-
-
-def gemini(parts: list[dict]) -> dict:
-    """One generateContent call with the extractor's key and model; returns the JSON it answered."""
-    from brain import gemini_colors as g
-    key = g.api_key()
-    if not key:
-        raise RuntimeError("no GEMINI_API_KEY")
-    body = {"contents": [{"parts": parts}], "generationConfig": {"temperature": 0, "responseMimeType": "application/json"}}
-    started = time.monotonic()
-    reply = g._request(f"{g.API}/models/{g.model_name(key)}:generateContent", key, body)
-    text = reply["candidates"][0]["content"]["parts"][0]["text"]
-    return {"answer": json.loads(text), "seconds": round(time.monotonic() - started, 1), "model": g.model_name(key)}
 
 
 def bank(localizer: SheetLocalizer) -> dict:
@@ -147,7 +134,7 @@ def bank(localizer: SheetLocalizer) -> dict:
     if bx1 - bx0 < 20 or by1 - by0 < 20:
         return {"ok": False, "error": "the bank is out of the camera's view"}
     ok, jpg = cv2.imencode(".jpg", img[by0:by1, bx0:bx1], [cv2.IMWRITE_JPEG_QUALITY, 90])
-    r = gemini([{"text": BANK_PROMPT}, {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(jpg.tobytes()).decode()}}])
+    r = openai_vision.ask_json(BANK_PROMPT, [jpg.tobytes()])
     colors = [TO_SHARED.get(c, c) for c in (r["answer"].get("blocks") or []) if isinstance(c, str)]
     return {"ok": True, "colors": [c for c in colors if c in COLORS], "seconds": r["seconds"], "model": r["model"]}
 
@@ -156,11 +143,14 @@ def narration(path: str) -> dict:
     audio = Path(path)
     if not audio.is_file() or audio.stat().st_size < 2000:
         return {"ok": False, "error": "no audio"}
-    r = gemini([{"text": NARRATION_PROMPT},
-                {"inline_data": {"mime_type": "audio/ogg", "data": base64.b64encode(audio.read_bytes()).decode()}}])
+    heard = openai_vision.transcribe(audio, prompt="Toy blocks on a 3 by 3 grid, squares A1 to C3. "
+                                                   "Colors: red, orange, yellow, teal, sky blue, purple.")
+    if not heard["text"]:
+        return {"ok": True, "transcript": "", "placements": [], "seconds": heard["seconds"], "model": heard["model"]}
+    r = openai_vision.ask_json(NARRATION_PROMPT + "\n\nThe transcript:\n" + heard["text"])
     a = r["answer"] if isinstance(r["answer"], dict) else {}
-    return {"ok": True, "transcript": str(a.get("transcript") or ""), "placements": a.get("placements") or [],
-            "seconds": r["seconds"], "model": r["model"]}
+    return {"ok": True, "transcript": heard["text"], "placements": a.get("placements") or [],
+            "seconds": round(heard["seconds"] + r["seconds"], 2), "model": f"{heard['model']} + {r['model']}"}
 
 
 def main() -> None:
@@ -170,7 +160,7 @@ def main() -> None:
     from robot.perception.config import ACTIVE_COLORS
     naming.NAMEABLE = list(ACTIVE_COLORS)
     localizer = SheetLocalizer()
-    say({"ready": True, "cell_map": cell_map(), "gemini": gemini_namer.available()})
+    say({"ready": True, "cell_map": cell_map(), "model": openai_vision.model() if openai_vision.available() else None})
     for line in sys.stdin:
         cmd, _, arg = line.strip().partition(" ")
         if cmd not in ("scan", "bank", "narration"):

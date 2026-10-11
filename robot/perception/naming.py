@@ -2,7 +2,7 @@
 
 Order of preference for every frame:
 1. ColorMemory (what each colour looked like earlier in this setup): instant, offline.
-2. The vision model (gemini_namer), only if some block is unfamiliar, ambiguous between two
+2. The vision model (vision_namer: OpenAI), only if some block is unfamiliar, ambiguous between two
    remembered colours, or two blocks would get the same name (tasks use all-different colours).
    Its answer is learned, so the next frames are local again.
 3. PRIOR hue guess, if the model isn't available. Logged, because it can be wrong.
@@ -11,7 +11,7 @@ Order of preference for every frame:
 import cv2
 import numpy as np
 
-from . import color, gemini_namer
+from . import color, vision_namer
 from .config import ACTIVE_COLORS, ROBOT_EXTRA_COLORS
 
 NAMEABLE = ACTIVE_COLORS + [c for c in ROBOT_EXTRA_COLORS if c not in ACTIVE_COLORS]
@@ -47,20 +47,20 @@ class ColorNamer:
             self.last_source = "memory"
             return names
 
-        if self.use_model and gemini_namer.available():
+        if self.use_model and vision_namer.available():
             try:
-                answer = {i: normalize(n) for i, n in gemini_namer.name_segments(frame_bgr, contours).items()}
+                answer = {i: normalize(n) for i, n in vision_namer.name_segments(frame_bgr, contours).items()}
                 if len(answer) == len(contours):
                     for i, s in enumerate(sigs):
                         self.memory.learn(answer[i], s)
                     self.memory.save()
-                    info = getattr(gemini_namer.name_segments, "last", {})
+                    info = getattr(vision_namer.name_segments, "last", {})
                     self.log(f"  (colours named by {info.get('model', 'the vision model')} in {info.get('seconds', '?')} s "
                              f"and remembered for this setup)")
                     self.last_source = "model"
                     return [answer[i] for i in range(len(contours))]
                 self.log(f"  (vision model named only {len(answer)} of {len(contours)} blocks; using guesses)")
-            except gemini_namer.NamerUnavailable as e:
+            except vision_namer.NamerUnavailable as e:
                 self.log(f"  ({e}; using colour guesses)")
 
         # No model: name the rest jointly, each name used once (blocks in a task are all different
