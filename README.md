@@ -275,6 +275,25 @@ apprentice/
 
 ## 8. How to run (fill in as modules land)
 
+### Demo startup
+
+```bash
+# 1. Jetson (ssh in; export DISPLAY=:0 first for the perception debug window). Kills stale publish /
+#    robot.api / camera holders, finds the camera, starts perception.publish then robot.api in the
+#    background (logs/publish.log, logs/robot.log), prints OK/FAIL per service.
+#    Env: BLOCK_MM (default 47), CAMERA (skip the search), EXPOSURE. Stop: see the last line it prints.
+scripts/jetson_up.sh                 # flags: --no-robot, --no-debug
+
+# 2. Laptop (PowerShell). Once: copy scripts\jetson.env.example to scripts\jetson.env, set JETSON_HOST, JETSON_USER.
+#    Frees ports 8765/8766/8770/8000, opens the SSH tunnel (8765, 8770), copies colors.json, waits for a
+#    GridState, starts brain.server and ui/serve.py in their own windows, opens http://localhost:8000.
+powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Mode human   # or -Mode robot
+
+# 3. Ready check (either machine): perception rate, hands/arm clear, board, brain phase and step, robot status.
+#    Prints READY TO DEMO (exit 0) or the list of problems (exit 1). Never sends a command.
+python scripts/check.py
+```
+
 Run everything from the repo root. The default demo lesson is `lessons/sample-flat-v1.json` (6 blocks, all on the board, red / purple / yellow / teal only, no two same-color blocks touching). Commands that take `--lesson` use it when you leave the flag out.
 
 ```bash
