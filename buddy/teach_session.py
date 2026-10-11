@@ -275,6 +275,24 @@ class TeachSession:
                                 "all checks passed" if gate.get("passed") else
                                 "; ".join(f"{k}: {v}" for k, v in (gate.get("reasons") or {}).items()),
                                 details=rep)
+            if (self.source == "table" and result.get("ok") is False and rep
+                    and "one_cube_per_change" in (result.get("reasons") or {})):
+                # one block on a stack read as two (a tower leans in the picture): merge them
+                if listener is not None:
+                    listener.join(timeout=60)
+                fixed = teach.merge_ghost(rep.get("steps") or [], result.get("reasons") or {},
+                                          heard.get("placements", []) if heard.get("ok") else [])
+                if fixed:
+                    from shared.schemas import Lesson, Step, empty_board
+                    lesson_steps = [Step(st["color"], st["cell"], int(st["level"]), None, None) for st in fixed]
+                    final = empty_board()
+                    for st in lesson_steps:
+                        final[st.cell].append(st.color)
+                    lesson = Lesson(self.session_id, title, source_video, lesson_steps, final)
+                    result = {"ok": True, "lesson": lesson, "steps": [st.to_dict() for st in lesson_steps], "via": "video, repaired"}
+                    self._trace("repair", "One block on a stack, read as two", "warn",
+                                "merged the unread block with the colored one next to it; the narration counts one block there",
+                                details={"before": rep.get("steps"), "after": fixed})
             if self.source == "table" and result.get("ok") is None:
                 # no answer from the video: learn from perception's live frames, with the robot's
                 # own eyes naming each cell's top block

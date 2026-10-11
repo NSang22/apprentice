@@ -329,6 +329,43 @@ def speech_colors(steps: list, placements: list[dict]) -> dict[int, str]:
     return out
 
 
+def merge_ghost(steps: list[dict], reasons: dict, placements: list[dict]) -> Optional[list[dict]]:
+    """A 2-high tower leans in the camera's picture (the camera is not straight above), so for one
+    block put on a stack, "on this square" and "on the neighbour" can fit the image almost equally:
+    the extractor then records two blocks at once, one with the color (the neighbour, a ghost) and
+    one it could not read (the square where the change really happened). Seen in a real run: orange
+    on the teal at B2 came out as "orange on A1" plus "unknown on B2".
+
+    When the gate says two blocks were added at once, exactly one of them has a color, and the
+    narration counts one block fewer than the extractor's steps, they are one block: it keeps the
+    unread step's square and level and takes the ghost's color. Returns the repaired steps, or None.
+    """
+    import re
+    m = re.search(r"added (\w\d) L(\d), (\w\d) L(\d)", str(reasons.get("one_cube_per_change", "")))
+    spoken = [p for p in placements if isinstance(p, dict) and p.get("action", "place") == "place" and p.get("color") in COLORS]
+    if not m or len(spoken) != len(steps) - 1:
+        return None
+    slots = {(m.group(1), int(m.group(2))), (m.group(3), int(m.group(4)))}
+    pair = [st for st in steps if (st["cell"], int(st["level"])) in slots]
+    known = [st for st in pair if st["color"] in COLORS]
+    unread = [st for st in pair if st["color"] not in COLORS]
+    if len(pair) != 2 or len(known) != 1 or len(unread) != 1:
+        return None
+    ghost, real = known[0], unread[0]
+    out = []
+    for st in steps:
+        if st is ghost:
+            continue
+        out.append({**st, "color": ghost["color"], "color_source": "merged"} if st is real else dict(st))
+    # the replay must still stack properly: each block's level is the number already under it
+    height: dict[str, int] = {}
+    for st in out:
+        if int(st["level"]) != height.get(st["cell"], 0):
+            return None
+        height[st["cell"]] = height.get(st["cell"], 0) + 1
+    return out
+
+
 # ---------------------------------------------------------------- learning (the extractor)
 
 
