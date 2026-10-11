@@ -547,7 +547,6 @@ function renderHome() {
   const offsets = [0, 56, -56];
   const html = S.games.map((g, i) => `
     <div class="node-row" style="transform:translateX(${offsets[i % 3]}px)">
-      ${g.ready && i === 0 ? '<div class="play-tag">PLAY</div><div class="ring"></div>' : ""}
       <button class="node ${g.ready ? "" : "soon"}" data-game="${g.id}" aria-label="${g.title}"><svg><use href="#${GAME_ICON[g.id] || "i-star"}"/></svg></button>
       <div class="node-label">${g.title}<span>${g.ready ? g.desc : "Coming soon"}</span></div>
     </div>`).join("");
