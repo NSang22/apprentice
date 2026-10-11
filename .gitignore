@@ -46,3 +46,9 @@ build/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local scratch: camera snapshots, patches, per-machine settings
+logs/
+one-command.patch
+snap.py
+scripts/jetson.env

@@ -39,6 +39,7 @@ from shared.schemas import GridState, empty_board
 REF_PATH = CALIB_DIR / "empty_board.png"
 REFRESH_EMPTY_S = 3.0
 RELOCK_FRAMES = 5
+UNREADABLE_CELLS_HAND = 3   # this many unknown cells in one frame: a hand, almost never a real board
 
 NOT_LOCKED, NOT_CONFIRMED, LOCKED, LOST = "not_locked", "not_confirmed", "locked", "lost"
 
@@ -60,8 +61,22 @@ class FrameResult:
 
 
 def hands_clear(analysis: CellAnalysis) -> bool:
-    """No hand or unknown object on the sheet. Hidden tags play no part."""
-    return not analysis.others
+    """No hand or unknown object on the sheet, and fewer than UNREADABLE_CELLS_HAND cells unknown
+    this frame. Hidden tags play no part."""
+    return not analysis.others and unreadable_cells(analysis) < UNREADABLE_CELLS_HAND
+
+
+def unreadable_cells(analysis: CellAnalysis) -> int:
+    return sum(r.state == "unknown" for r in analysis.cells.values())
+
+
+def hands_reason(analysis: CellAnalysis) -> str:
+    """Why hands_clear is false ("" if it is true)."""
+    if analysis.others:
+        return f"{analysis.others[0].kind} on the sheet"
+    if unreadable_cells(analysis) >= UNREADABLE_CELLS_HAND:
+        return "several cells unreadable at once (hand?)"
+    return ""
 
 
 class Perceiver:
@@ -149,7 +164,7 @@ class Perceiver:
                               prior=self.hypothesis, fg_chroma=self.calib.fg_chroma, live_sheet=live)
         self.hypothesis = analysis.hypothesis
         clear = hands_clear(analysis)
-        reason = "" if clear else f"{analysis.others[0].kind} on the sheet"
+        reason = hands_reason(analysis)
         board, confidence, stacks = self._publish(analysis, clear)
         self._maybe_refresh(live, analysis, clear)
         state = GridState(t=t, board=board, arm_clear=True, hands_clear=clear, confidence=confidence, frame_id=frame_id)

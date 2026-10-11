@@ -54,7 +54,7 @@ COST_WRONG_COLOR = 0.6      # painted block color, observed another block color
 COST_COLORLESS = 0.5        # painted block, observed a changed but colorless pixel (sheen, shade)
 VOTE_FRAMES = 3             # published reading = strict majority (2 of 3) of a cell's last readings
 SEARCH_PASSES = 2           # the second pass runs only if the first changed a cell
-DEMO_MAX_LEVEL = 1          # demo stacks are capped at 2 blocks: alternatives go up to level 1, not shared MAX_LEVEL
+DEMO_MAX_LEVEL = MAX_LEVEL  # alternatives go up to this level. Not 1: without the 3-high alternatives a hand reads as unknown cells, not a hand
 HAND_ZONE_MM = 15.0         # hands and objects count only over the grid plus this margin
 FAR = len(COLORS)           # pixel label: changed and colorful, but no block color
 NONE = -1                   # pixel label: not changed, or colorless
