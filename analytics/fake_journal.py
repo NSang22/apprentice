@@ -14,9 +14,12 @@ on top of the brain's own fields; the report leaves these out unless asked. The 
 only writes files whose names start with "synthetic_" and replaces earlier ones of the same name.
 
 What the journals contain:
-  - human sessions with every failing verdict the checker gives (WRONG_CELL, WRONG_COLOR,
-    WRONG_LEVEL, EXTRA, MISSING for a knocked cube) and hint levels 1 to 4 (level 4 makes
-    the fake robot hover over the right cell)
+  - human sessions with every failing verdict a human gets (WRONG_CELL, WRONG_COLOR,
+    WRONG_LEVEL, EXTRA) and hint levels 1 to 4 (level 4 makes the fake robot hover over the
+    right cell)
+  - humans who lift an earlier block off and put it back (step_back, then a re-pass). The
+    brain's progress follows the board, so a knocked-off older cube is a step back too, never
+    a MISSING mistake; only "still placing" MISSING shows up
   - robot sessions with retries that pass, a cube a judge moved, a failed place, and one
     session that hits the retry cap and stops
   - one human session stopped early (outcome server_stopped) and one cut off mid-line
@@ -49,23 +52,24 @@ WRONG_CELL = Verdict.WRONG_CELL.value
 WRONG_COLOR = Verdict.WRONG_COLOR.value
 WRONG_LEVEL = Verdict.WRONG_LEVEL.value
 EXTRA = Verdict.EXTRA.value
-MISSING = Verdict.MISSING.value  # here: an older cube knocked off, so fault_cell is set
-MISTAKES = [WRONG_CELL, WRONG_COLOR, WRONG_LEVEL, EXTRA, MISSING]
+MISSING = Verdict.MISSING.value  # only "still placing" (fault_cell None): a knocked cube is a step_back
+MISTAKES = [WRONG_CELL, WRONG_COLOR, WRONG_LEVEL, EXTRA]
 
 # Simulated human.
 MAX_HUMAN_ATTEMPTS = 6  # by then the robot is pointing at the cell, so they get it
 FIRST_TRY_P = {0: 0.75, 1: 0.6, 2: 0.45}  # by step level: higher stacks are harder
-HUMAN_MISTAKE_WEIGHTS = {WRONG_CELL: 0.35, WRONG_COLOR: 0.25, WRONG_LEVEL: 0.15, EXTRA: 0.10, MISSING: 0.15}
+HUMAN_MISTAKE_WEIGHTS = {WRONG_CELL: 0.40, WRONG_COLOR: 0.30, WRONG_LEVEL: 0.15, EXTRA: 0.15}
 # Chance the attempt after a hint passes, by the hint level now showing and the last mistake.
 # Text fixes color and count mistakes; spatial mistakes need the ghost cube or more.
 FIX_P = {
-    1: {WRONG_CELL: 0.30, WRONG_COLOR: 0.80, WRONG_LEVEL: 0.35, EXTRA: 0.70, MISSING: 0.70},
-    2: {WRONG_CELL: 0.80, WRONG_COLOR: 0.75, WRONG_LEVEL: 0.80, EXTRA: 0.70, MISSING: 0.75},
+    1: {WRONG_CELL: 0.30, WRONG_COLOR: 0.80, WRONG_LEVEL: 0.35, EXTRA: 0.70},
+    2: {WRONG_CELL: 0.80, WRONG_COLOR: 0.75, WRONG_LEVEL: 0.80, EXTRA: 0.70},
     3: {m: 0.70 for m in MISTAKES},
     4: {m: 0.90 for m in MISTAKES},
 }
 REPEAT_MISTAKE_P = 0.5
 THINK_S = (4.0, 10.0)  # seconds between settles, plus 3 s per hint level
+TAKE_BACK_P = 0.08     # chance, before a step, of lifting an earlier block off and putting it back
 
 # Fake robot.
 ROBOT_WRONG_CELL_P = 0.15  # chance any one place lands on the nearest other cell
@@ -154,21 +158,22 @@ def mistake_board(rng: random.Random, before: Board, step: Step, mistake: str) -
         board[step.cell] += [rng.choice([c for c in COLORS if c != step.color]), step.color]
         return board
     if mistake == EXTRA:
+        # Placed the cube, plus a second one of the same color elsewhere. A color an open slot
+        # still needs would be WRONG_CELL (move it there), so the extra is the color just used.
         board = apply_step(before, step)
         options = [c for c in CELLS if c != step.cell and _has_room(board, c)]
         if not options:
             return None
-        board[rng.choice(options)].append(rng.choice(COLORS))
-        return board
-    if mistake == MISSING:
-        # Placed the cube but knocked an older one off the grid.
-        board = apply_step(before, step)
-        knockable = [c for c in CELLS if c != step.cell and board[c]]
-        if not knockable:
-            return None
-        board[rng.choice(knockable)].pop()
+        board[rng.choice(options)].append(step.color)
         return board
     raise ValueError(f"not a mistake: {mistake}")
+
+
+def take_back(rng: random.Random, board: Board) -> Board:
+    """The board with one block lifted off the top of its stack (the brain steps back to it)."""
+    out = copy_board(board)
+    out[rng.choice([c for c in CELLS if out[c]])].pop()
+    return out
 
 
 def _possible(mistake: str, before: Board, step: Step) -> bool:
@@ -191,8 +196,9 @@ def _pick_mistake(rng: random.Random, before: Board, step: Step, last: Optional[
 
 
 def _settle(session: Session, board: Board, clock: FakeClock) -> None:
-    """One stable board into the session. Like brain/server.py:174-176, a robot move resets the
-    stabilizer, so the same board settles once more after any move (a hover, in human mode)."""
+    """One stable board into the session. Like brain/server.py:271-273 (BrainServer.process), a
+    robot move resets the stabilizer, so the same board settles once more after any move (a hover,
+    in human mode)."""
     moves = session.robot_moves
     session.on_board(copy_board(board))
     if session.robot_moves != moves and session.phase == RUNNING:
@@ -210,8 +216,11 @@ def human_session(
     clock: FakeClock,
     forced: dict[int, list[str]],
     stop_at_step: Optional[int] = None,
+    take_back_at: Optional[int] = None,
 ) -> None:
-    """forced maps a step index to mistakes the human makes on its first attempts."""
+    """forced maps a step index to mistakes the human makes on its first attempts. Before step
+    take_back_at (and now and then before any step after the first) the human lifts an earlier
+    block off and puts it back, so the brain steps back and forward again."""
     robot = FakeRobot(motion_s=ROBOT_MOTION_S, sleep=clock.advance)  # only hovers in human mode
     session = Session(lesson, "human", journal, robot=robot, sleep=clock.advance, provenance=SIM_PROVENANCE["human"].copy)
     _start(session, journal)
@@ -222,6 +231,11 @@ def human_session(
             session.end("server_stopped")
             return
         before = expected_board(lesson, k - 1)
+        if k > 0 and (k == take_back_at or rng.random() < TAKE_BACK_P):
+            clock.advance(rng.uniform(*THINK_S))
+            _settle(session, take_back(rng, before), clock)
+            clock.advance(rng.uniform(*THINK_S))
+            _settle(session, before, clock)
         plan = forced.get(k, [])
         last: Optional[str] = None
         for attempt in range(1, MAX_HUMAN_ATTEMPTS + 1):
@@ -315,7 +329,8 @@ def generate(lesson: Lesson, seed: int = 7, n_human: int = 10, n_robot: int = 6)
                 ks = [k for k in range(len(steps)) if _possible(first, expected_board(lesson, k - 1), steps[k])]
                 forced = [first] + {0: [WRONG_CELL] * 3, 1: [WRONG_CELL]}.get(human_i, [])  # hint level 4 at least once
                 stop = rng.randrange(1, len(steps)) if human_i == n_human - 2 and len(steps) > 1 else None
-                human_session(rng, journal, lesson, clock, {rng.choice(ks): forced} if ks else {}, stop)
+                take_back_at = rng.randrange(1, len(steps)) if human_i == 2 and len(steps) > 1 else None  # at least once
+                human_session(rng, journal, lesson, clock, {rng.choice(ks): forced} if ks else {}, stop, take_back_at)
                 human_i += 1
             else:
                 wrong, fail = {
@@ -340,6 +355,7 @@ def coverage(files: dict[str, str]) -> dict:
     hint_levels: set[int] = set()
     outcomes: dict[str, int] = {}
     modes: dict[str, int] = {}
+    step_backs: dict[str, int] = {}
     retry_passes = bad_lines = 0
     for text in files.values():
         for line in text.split("\n"):
@@ -360,6 +376,8 @@ def coverage(files: dict[str, str]) -> dict:
                     retry_passes += 1
             elif kind == "hint":
                 hint_levels.add(data["hint_level"])
+            elif kind == "step_back":
+                step_backs[event["mode"]] = step_backs.get(event["mode"], 0) + 1
             elif kind == "session_end":
                 outcomes[data["outcome"]] = outcomes.get(data["outcome"], 0) + 1
     return {
@@ -368,6 +386,7 @@ def coverage(files: dict[str, str]) -> dict:
         "hint_levels": sorted(hint_levels),
         "outcomes": outcomes,
         "robot_retry_passes": retry_passes,
+        "step_backs": step_backs,
         "cut_off_lines": bad_lines,
     }
 
@@ -378,6 +397,8 @@ def missing_coverage(cov: dict) -> list[str]:
     gaps += [f"outcome {o}" for o in ("complete", "robot_stopped", "server_stopped") if o not in cov["outcomes"]]
     if not cov["robot_retry_passes"]:
         gaps.append("a robot retry that passes")
+    if not cov["step_backs"].get("human"):
+        gaps.append("a human step_back")
     if cov["cut_off_lines"] != 1:
         gaps.append("exactly one cut-off line")
     return gaps

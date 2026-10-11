@@ -77,7 +77,7 @@ print(f"{len(everything.sessions)} sessions on the volume, {len(t.sessions)} inc
 rows = {
     "journal_raw": [
         r for p in sorted(journals.glob("*.jsonl"))
-        for r in T.journal_raw_rows(p.name, p.read_text(encoding="utf-8", errors="replace"))
+        for r in T.journal_raw_rows(p.name, p.read_text(encoding="utf-8-sig", errors="replace"))
     ]
 }
 rows.update(T.silver(t))

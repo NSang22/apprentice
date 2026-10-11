@@ -3,12 +3,54 @@ import shutil
 from pathlib import Path
 
 from analytics.fake_journal import generate, write_journals
-from analytics.load import DEFAULT_LESSON_DIRS, load_all, provenance, read_journal
+from analytics.load import DEFAULT_LESSON_DIRS, build_attempts, build_session, load_all, provenance, read_journal
+from analytics.metrics import camera_unreadable
+from brain.journal import Journal
+from brain.session import Session
 from brain.settings import DEMO_LESSON
-from shared.schemas import Lesson
+from shared.schemas import Lesson, empty_board
 
-FIXTURES = Path(__file__).parent / "fixtures"
-HUMAN, ROBOT = "s-20261011-003036", "s-20261011-003021"  # session ids inside the brain fixtures
+FIXTURES = Path(__file__).parent / "fixtures"  # re-recorded by python -m analytics.record_fixtures, never by hand
+HUMAN, ROBOT = (read_journal(FIXTURES / f"brain_journal_{m}.jsonl")[0][0]["session"] for m in ("human", "robot"))
+
+
+def test_a_byte_order_mark_does_not_hide_session_start(tmp_path):
+    (tmp_path / "s-bom.jsonl").write_bytes(b"\xef\xbb\xbf" + (FIXTURES / "brain_journal_human.jsonl").read_bytes())
+    t = load_all(tmp_path, DEFAULT_LESSON_DIRS)
+    assert (len(t.sessions), t.skipped_lines) == (1, 0)
+
+
+def test_step_back_counts_one_pass_per_step_and_restarts_the_step_clock(tmp_path):
+    lesson = Lesson.from_dict(json.loads(DEMO_LESSON.read_text()))  # red A1, teal C1, purple B2, ...
+    now = [0.0]
+    journal = Journal("s-back", "human", tmp_path, clock=lambda: now[0])
+    session = Session(lesson, "human", journal)
+    board = empty_board()
+
+    def settle(t, cell, stack):
+        now[0] = t
+        board[cell] = stack
+        session.on_board({c: list(v) for c, v in board.items()})
+
+    session.on_board(empty_board())
+    session.start()
+    settle(10, "A1", ["red"])
+    settle(20, "C1", ["teal"])
+    settle(30, "A1", [])            # red comes off: the brain steps back to step 0
+    settle(35, "A2", ["red"])       # put back on the wrong cell: a mistake on the revisit
+    settle(40, "A2", [])
+    settle(40, "A1", ["red"])       # back in place: steps 0 and 1 re-pass
+    for i, s in enumerate(lesson.steps[2:], 5):
+        settle(10 * i, s.cell, [s.color])
+    journal.close()
+
+    events = read_journal(journal.path)[0]
+    assert sum(e["kind"] == "step_advance" for e in events) > len(lesson.steps)  # the brain re-advanced
+    assert build_session(events, {}).steps_completed == len(lesson.steps)
+    attempts = build_attempts(events, {})
+    assert [(a.verdict, a.attempt_no, a.seconds_since_step_start) for a in attempts if a.step == 0] == [
+        ("PASS", 1, 10.0), ("WRONG_CELL", 2, 5.0)]  # the revisit is timed from the step_back at 30
+    assert sorted(a.step for a in attempts if a.passed) == list(range(len(lesson.steps)))
 
 
 def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
@@ -24,9 +66,15 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
     # Synthetic journals are written by the real brain too, and add a robot place that fails.
     lesson = Lesson.from_dict(json.loads(DEMO_LESSON.read_text()))
     write_journals(generate(lesson, seed=7), sessions)
+    # Recorded before sample-flat-v1 went from 5 steps to 6 under the same id: listed, in no table.
+    (sessions / "s-old.jsonl").write_text(
+        '{"t":2.0,"session":"s-old","mode":"human","kind":"session_start","data":{"lesson_id":"sample-flat-v1","steps":5}}\n'
+        '{"t":3.0,"session":"s-old","mode":"human","kind":"verdict","data":{"step":0,"verdict":"PASS"}}\n')
 
     t = load_all(sessions, DEFAULT_LESSON_DIRS)
 
+    assert [(m.session, m.recorded_steps, m.lesson_steps) for m in t.lesson_mismatches] == [("s-old", 5, 6)]
+    assert "s-old" not in {s.session for s in t.sessions} | {a.session for a in t.attempts}
     assert t.never_started == 1
     assert t.skipped_lines == 2  # our cut line plus the generator's one cut-off session
     assert t.unknown_lessons == []
@@ -48,18 +96,38 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
                 assert first[key] == e["data"]["first_try"], (path.name, e)
                 checked += 1
     assert checked > 50
+    assert any(e["kind"] == "step_back" and e["mode"] == "human"
+               for p in sessions.glob("synthetic_*.jsonl") for e in read_journal(p)[0])  # the invariant sees revisits
+    # A re-pass after a step_back is not an attempt, and steps completed never exceed the lesson.
+    passes = [(a.session, a.step) for a in t.attempts if a.passed]
+    assert len(passes) == len(set(passes))
+    for s in t.sessions:
+        assert 0 <= s.steps_completed <= s.n_steps
+        assert s.outcome != "complete" or s.steps_completed == s.n_steps
 
-    # Hand-checked against the fixture lines.
+    # Hand-checked against the fixture lines (scenarios in analytics/record_fixtures.py).
     human = [a for a in t.attempts if a.session == HUMAN]
-    assert len(human) == 7  # 6 passes + 1 mistake; the 6 "still placing" checks are skipped
-    assert [(a.verdict, a.attempt_no, a.hint_level_before, a.fault_cell) for a in human if a.step == 2] == [
-        ("WRONG_CELL", 1, 0, "C2"), ("PASS", 2, 1, None)]
-    assert (human[0].step_color, human[0].step_cell, human[0].step_level) == ("red", "A1", 0)  # tests/fixtures lesson
+    assert len(human) == 10  # 6 first passes + 4 mistakes; still placing, the unreadable block, re-passes skipped
+    assert [(a.verdict, a.attempt_no, a.hint_level_before, a.fault_cell) for a in human if a.step == 1] == [
+        ("WRONG_CELL", 1, 0, "B1"), ("WRONG_CELL", 2, 1, "C2"), ("WRONG_COLOR", 3, 2, "C1"),
+        ("WRONG_CELL", 4, 3, "B1"), ("PASS", 5, 4, None)]
+    assert (human[0].step_color, human[0].step_cell, human[0].step_level) == ("red", "A1", 0)  # lessons/sample-flat-v1.json
     robot = [a for a in t.attempts if a.session == ROBOT]
-    assert len(robot) == 7  # 6 passes + 1 wrong cell; the first "still placing" check comes before any place, so it is skipped
+    assert len(robot) == 8  # 3 first passes, 1 retry that passes, the judge's moved cube, 3 misses on A3
     assert [(a.verdict, a.retry, a.fault_cell) for a in robot if a.step == 1] == [
         ("WRONG_CELL", 0, "B1"), ("PASS", 1, None)]
-    assert robot[0].step_color == "red"  # lessons/sample-flat-v1.json
+    assert [(a.verdict, a.attempt_no, a.fault_cell) for a in robot if a.step == 0] == [
+        ("PASS", 1, None), ("WRONG_CELL", 2, "A2")]  # the judge slid red to A2: a revisit, then a re-pass (skipped)
+    assert [(a.verdict, a.retry) for a in robot if a.step == 3] == [("WRONG_CELL", 0), ("WRONG_CELL", 1), ("WRONG_CELL", 2)]
+    # The camera number: the human run has one block the camera could not read (A3).
+    assert [(c.unreadable, c.boards > c.unreadable) for c in t.camera if c.session == HUMAN] == [(1, True)]
+    assert [(c.unreadable, c.boards > 0) for c in t.camera if c.session == ROBOT] == [(0, True)]
+    sim = camera_unreadable(t.only(["simulation"]).camera)
+    assert [(r["lesson_id"], r["mode"], r["unreadable"]) for r in sim] == [
+        ("sample-flat-v1", "human", 1), ("sample-flat-v1", "robot", 0)]
+    rows = {s.session: s for s in t.sessions}
+    assert (rows[HUMAN].steps_completed, rows[HUMAN].outcome) == (6, "complete")
+    assert (rows[ROBOT].steps_completed, rows[ROBOT].outcome) == (3, "robot_stopped")
     # After a failed place, "still placing" is a failed robot attempt, as in the brain.
     assert any(a.mode == "robot" and a.verdict == "MISSING" and a.fault_cell is None for a in t.attempts)
 
