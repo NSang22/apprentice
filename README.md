@@ -303,6 +303,12 @@ python -m brain.server --mode robot --robot fake --grid sim --autostart  # defau
 python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --autostart  # 2nd place lands on the wrong cell, robot fixes it
 python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --fake-wrong-on 3 --fake-wrong-on 4 --autostart  # hits the retry cap and stops
 
+# Real perception: GridState on ws :8765 from the overhead camera, a video, or still images
+# --debug opens an annotated window and prints area / hue / fill confidence per cube
+python -m perception.publish --camera 1 --debug
+python -m perception.publish --video videos/demo.mp4
+python -m perception.publish --images "robot/samples/overhead_*.png" --debug
+
 # Monitor UI (ui/): reads SessionState from brain.server on ws :8766, no network needed
 python ui/serve.py      # then open http://localhost:8000 and press F11; keys 2 / 3 switch 2D / 3D board
 
@@ -315,7 +321,6 @@ Planned, not built yet:
 
 ```bash
 python -m brain.extractor --video videos/expert_staircase.mp4 --out lessons/staircase-v1.json  # planned: lesson from an expert video
-python -m perception.publish   # planned: real GridState on ws :8765
 python -m robot.api            # planned: robot HTTP API on :8770
 # planned full system: perception.publish + robot.api, then the brain (this flag already works;
 # with --robot http, arm_clear also requires the robot's GET /status at_home)

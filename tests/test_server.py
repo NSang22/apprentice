@@ -209,3 +209,20 @@ def test_start_and_reset_commands(tmp_path):
     assert server.session.phase == "ready" and server.session.step_index == 0
     assert server.journal is made[0] and json.loads(server.latest)["phase"] == "ready"
     assert server.parse_command("not json") is None and server.parse_command('{"cmd": "fly"}') is None
+
+
+# ---------------------------------------------------------------- provenance in session_start
+
+
+def test_session_start_records_provenance(tmp_path):
+    journal = Journal("s-prov", "human", directory=tmp_path)
+    server = BrainServer(Session(LESSON, "human", journal), journal,
+                         grid="ws://localhost:8765", robot_spec="http://localhost:8770")
+    frame_msg = json.dumps({**frame().to_dict(), "source": "fake_feed"})
+    assert server.parse(frame_msg) is not None  # extra "source" key parses fine
+    server.session.start()
+    journal.close()
+    start = [l for l in read_journal(journal.path) if l["kind"] == "session_start"][0]["data"]
+    assert {"grid_source", "robot", "mode", "lesson_id", "human_side", "git_commit", "git_dirty"} <= start.keys()
+    assert start["grid_source"] == "fake_feed" and start["robot"] == "http:http://localhost:8770"
+    assert start["mode"] == "human" and start["git_dirty"] in (True, False, "unknown")

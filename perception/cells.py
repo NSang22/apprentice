@@ -38,3 +38,19 @@ def mm_to_cell(
     column = int(x // cell_mm)
     row = int(y // cell_mm)
     return f"{'ABC'[column]}{row + 1}"
+
+
+def edge_margin_mm(
+    x_mm: float,
+    y_mm: float,
+    spec_path: str | Path = DEFAULT_SHEET_SPEC,
+) -> float:
+    """Distance from a sheet point to the nearest boundary of the cell containing it,
+    or -1.0 outside the grid. A cube centred near a line may straddle two cells."""
+    x0, y0, cell_mm = _grid_geometry(str(Path(spec_path).resolve()))
+    x = float(x_mm) - x0
+    y = float(y_mm) - y0
+    if not (0.0 <= x < 3.0 * cell_mm and 0.0 <= y < 3.0 * cell_mm):
+        return -1.0
+    fx, fy = x % cell_mm, y % cell_mm
+    return float(min(fx, cell_mm - fx, fy, cell_mm - fy))

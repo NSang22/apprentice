@@ -2,7 +2,8 @@
 
 The monitor the student follows while building. It shows one big instruction, the board as
 the student sees it, kind feedback, the hint ladder, and two progress strips. It reads
-`SessionState` (README 5.4) from `brain.server` on ws `:8766` and never sends anything back.
+`SessionState` (README 5.4) from `brain.server` on ws `:8766`, and sends back only two
+commands: `{"cmd": "start"}` and `{"cmd": "reset"}`.
 
 ## Run
 
@@ -14,43 +15,42 @@ No network needed: the page, its styles, and three.js (`vendor/`, r160, MIT) are
 `serve.py` serves only `ui/` and `videos/` (for show-me clips), with correct MIME types and
 byte ranges so clips can seek.
 
-Touch free: nobody clicks during the demo. Keys `2` / `3` (or `v`) switch the board between
-2D (default) and 3D. URL options: `?view=3d`, `?ws=ws://<host>:8766`, `?side=row1`.
+Keys (nobody clicks during the demo): `Space` starts the lesson from the ready screen (only
+when the board is clear), `R` starts over (the brain ends the session and opens a new one),
+`2` / `3` (or `v`) switch the board between 2D and 3D. Space and R show a short confirmation.
+URL options: `?view=2d`, `?ws=ws://<host>:8766`.
+
+The 3D table is the main view: wood tabletop, the grid sheet with AprilTag corners and labels
+from the student's side, rounded 48 mm cubes with shadows (new cubes drop in, removed ones fade),
+a bobbing ghost with a light column, an arc arrow at hint level 2, amber floor glow on mistakes,
+and a low-poly arm on the robot side that reaches while `robot_status` is placing/fixing (or
+pointing) and rests otherwise. Ready and complete turn the structure slowly; a lesson finish
+bursts confetti. Everything is drawn at runtime with the vendored three.js, no network. If WebGL
+or the module fails, the 2D board takes over automatically.
 
 ## What it shows
 
 | SessionState | Monitor |
 |---|---|
 | no data yet | "Waiting for the camera", connection pill "Connecting" |
+| `phase` "ready" | ready screen: `lesson_title`, a thumbnail of `final_board`, `hint_text` ("Waiting for the camera" / "Please clear the board to start."), and "Press Space to start" once the board is clear |
 | `expected_step` | big instruction "Place the blue cube on C1" (robot mode: "Blue cube to C1"), ghost cube pulsing in its cell |
 | `PASS` | green check, held 1.6 s so it survives the instant step advance |
 | `WRONG_*`, `EXTRA`, `MISSING` with `fault_cell` | calm amber card with `hint_text`, amber ring on `fault_cell` |
 | `WAITING` | "Waiting for the camera" |
-| `hint_level` 2 | ghost pulses harder, arrow from the misplaced cube to its cell |
+| `hint_level` 2 | ghost pulses harder, arrow from `fault_cell` to `expected_cell` |
 | `hint_level` 3 | "Watch how it was done": `show_me` clip looped between start and end, muted. Skipped when `show_me` is null or the clip fails to load |
-| `hint_level` 4 | banner "The robot will point to the right spot." |
-| robot mode | large robot status ("Placing", "Fixing it", "Checks out") plus `hint_text` |
-| `progress` containing `error` | "The robot needs a hand" |
-| `expected_step` null | "All done!" |
+| `hint_level` 4 and the arm busy | banner "The robot is pointing to the right spot." |
+| robot mode | robot panel from `robot_status`: Placing, Fixing it, Going home, Checking, Checks out |
+| `phase` "complete" | "All done!" with the finished structure |
+| `phase` "stopped" | calm "Let's sort it out together" screen with `hint_text` and "Press R to try again" |
 | socket closed | last state dimmed, "Reconnecting to Apprentice...", retries every 0.5 to 3 s |
 
-The board is drawn from the student's side, `HUMAN_SIDE` in `config.js`. It must match
-`brain/settings.py` by hand: if one changes, change the other. For `row3`: column A on the
-left, row 3 nearest, robot side at the top.
+The board is drawn from the student's side, `human_side` in each SessionState (set in
+`brain/settings.py`). For `row3`: column A on the left, row 3 nearest, robot side at the top.
 
-## Needs from brain (not built in the UI until these exist)
-
-1. **Lesson overview before a session (task 4).** `SessionState` has `lesson_id` but no
-   `title` and no `final_board` (or `steps`), and the brain starts the session the moment it
-   launches, so there is no "ready" state to show a Start screen in. Needed: `title`,
-   `final_board`, and a `phase` (`ready` / `running` / `complete` / `stopped`), with the brain
-   holding in `ready` until the board is clear or the lesson is started.
-2. **`expected_cell` for older cubes.** The level 2 arrow points at `expected_step.cell`. When
-   the fault is an older cube that got knocked (not the current step's cube), the right
-   target is the checker's `expected_cell`, which `SessionState` does not carry. Until it
-   does, the arrow only shows when the cube at `fault_cell` is the current step's color.
-3. **A robot status field.** The robot panel word ("Placing", "Fixing it") is matched from
-   `hint_text`. A `robot_status` enum (or the `phase` above) would make it exact.
+`robot_status` has no "pointing" value (the shared enum is frozen), so the monitor treats
+human mode at `hint_level` 4 with `robot_status` "fixing" (the hover) as pointing.
 
 ## Checking it
 

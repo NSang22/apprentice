@@ -56,6 +56,7 @@ READY, RUNNING, COMPLETE, STOPPED = "ready", "running", "complete", "stopped"
 
 CLEAR_BOARD = "Please clear the board to start."
 READY_TO_START = "Ready to start."
+WAITING_FOR_CAMERA = "Waiting for the camera."  # ready, but no stable board seen yet
 
 ROBOT_NEEDS_HAND = "The robot needs a hand. Please check the board, then restart the lesson."
 
@@ -83,7 +84,10 @@ class Session:
         sleep: Callable[[float], None] = time.sleep,
         human_side: str = HUMAN_SIDE,
         max_retries: int = MAX_ROBOT_RETRIES,
+        provenance: Optional[Callable[[], dict[str, Any]]] = None,
     ):
+        """provenance: returns grid_source, robot, git_commit, git_dirty for session_start
+        (the server supplies it; without one those fields read "unknown")."""
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
         if mode == "robot" and robot is None:
@@ -98,6 +102,7 @@ class Session:
         self.sleep = sleep
         self.human_side = human_side
         self.max_retries = max_retries
+        self.provenance = provenance
         self.max_hint_level = MAX_HINT_LEVEL if robot is not None else MAX_HINT_LEVEL - 1
 
         self.phase = READY
@@ -116,7 +121,7 @@ class Session:
         self.robot_moves = 0
         self.expected_cell: Optional[str] = lesson.steps[0].cell
         self.expected_level: Optional[int] = lesson.steps[0].level
-        self.hint_text = READY_TO_START
+        self.hint_text = WAITING_FOR_CAMERA
         self._activity: Optional[str] = None  # robot_status while a robot command is in flight
         self._fixing = False
         self._hover_board: Optional[Board] = None
@@ -177,9 +182,14 @@ class Session:
             "lesson_id": self.lesson.lesson_id,
             "title": self.lesson.title,
             "steps": len(self.lesson.steps),
+            "mode": self.mode,
             "human_side": self.human_side,
             "max_retries": self.max_retries,
-            "robot": type(self.robot).__name__ if self.robot is not None else None,
+            "grid_source": "unknown",
+            "robot": "unknown" if self.robot is not None else "none",
+            "git_commit": "unknown",
+            "git_dirty": "unknown",
+            **(self.provenance() if self.provenance is not None else {}),
         })
         gate = self.lesson.gate
         self._event("gate", {"gate": None if gate is None else gate.to_dict()})
