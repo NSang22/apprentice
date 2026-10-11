@@ -87,7 +87,7 @@ class Perceiver:
         self.relock_count = 0
         self.empty_since: Optional[float] = None
         self.memory = StackMemory()   # per-cell stack history (perception/stacks.py)
-        self.vote = CellVote()        # published reading = majority of the last 5 frames
+        self.vote = CellVote()        # published reading = majority of the last 3 frames
         self.hypothesis: Optional[dict] = None  # last frame's board, where the next search starts
         self.refreshed = False
 
@@ -157,7 +157,7 @@ class Perceiver:
 
     def _publish(self, analysis: CellAnalysis, usable: bool) -> tuple[dict, dict, dict]:
         """Per cell: this frame's reading -> stack memory (push/pop, unknown on conflict) -> the
-        majority of the last 5 frames. Returns (board, confidence, cell -> (stack or None, why))."""
+        majority of the last 3 frames. Returns (board, confidence, cell -> (stack or None, why))."""
         readings = {}
         for cell, r in analysis.cells.items():
             if r.state == "block":
@@ -181,7 +181,7 @@ class Perceiver:
             if not agreed or value == "unknown":
                 level = r.level if r.level is not None else 0
                 board[cell], confidence[cell] = (unknown_stack(level), 0.0)
-                out[cell] = (None, why or "no majority over the last 5 frames")
+                out[cell] = (None, why or "no majority over the last 3 frames")
             else:
                 board[cell] = list(value)
                 if not value:
@@ -189,7 +189,7 @@ class Perceiver:
                 elif r.state == "block" and frame_value == value:
                     confidence[cell] = r.confidence
                 else:
-                    confidence[cell] = 0.9      # this frame disagrees, but the last 5 hold a majority
+                    confidence[cell] = 0.9      # this frame disagrees, but the last 3 hold a majority
                 out[cell] = (list(value), "")
         return board, confidence, out
 
