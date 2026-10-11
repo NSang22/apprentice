@@ -7,7 +7,11 @@
 
 Step syntax: <colour>-><cell>, <colour>->beside:<reference>:<left|right|top|bottom>[:<gap mm>],
 or <colour>->on:<reference>. Colours are names like red or "light blue".
-The camera checks the table before and after every step; any problem stops the task.
+The camera checks the table before and after every step. A block that lands off target gets up
+to 2 retries; any other problem stops the task. Blocks must all start on the table; stacks the
+task builds are tracked (towers up to 3 blocks), so later steps can unstack or build on them.
+Blocks crowding a target (under 8 mm edge to edge) or hemming in a block so no grip fits are moved
+to the nearest empty cell first; the step's reference block and later steps' target cells are left alone.
 """
 
 import argparse
