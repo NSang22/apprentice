@@ -5,8 +5,10 @@ Changing anything here requires the whole team to agree (see AGENTS.md).
 
 from pathlib import Path
 
-# Grid. Columns A to C left to right from the operator side; rows 1 to 3
-# front (nearest the operator) to back. A1 = front-left, C3 = back-right.
+# Grid, as printed on the sheet: the letter is the ROW (A along the arm's edge, C along the
+# student's edge), the number is the COLUMN (1 to 3 left to right for the student, who stands
+# opposite the arm). Tag 0 at A1, 1 at A3, 2 at C3, 3 at C1. The constant names below predate
+# this and are frozen: COLUMNS holds the row letters, ROWS the column numbers.
 COLUMNS = ["A", "B", "C"]
 ROWS = ["1", "2", "3"]
 CELLS = [c + r for c in COLUMNS for r in ROWS]  # A1, A2, A3, B1, ..., C3

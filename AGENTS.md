@@ -30,7 +30,7 @@ If a task needs a change outside your module, stop and tell your human what chan
 - If a contract seems wrong, propose the change to your human in one short paragraph and wait.
 
 Key conventions (details in README section 5):
-- Cells are `A1` to `C3`. Columns A to C left to right from the operator side; rows 1 to 3 front to back.
+- Cells are `A1` to `C3`, as printed on the sheet: the letter is the row (A along the arm's edge, C along the student's edge), the number is the column (1 to 3 left to right for the student, who stands opposite the arm). Tag 0 is at A1, 1 at A3, 2 at C3, 3 at C1.
 - Colors are exactly `red`, `orange`, `yellow`, `teal`, `skyblue`, `purple`, or `unknown`.
 - Stacks are lists bottom to top. All 9 cells always appear in a board.
 - Ports: perception ws `8765`, brain ws `8766`, robot HTTP `8770`.

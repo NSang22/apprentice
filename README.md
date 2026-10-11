@@ -62,14 +62,14 @@ Nothing past the core loop starts until we have **10 clean end-to-end runs**.
 | Item | Spec |
 |---|---|
 | Grid | 3x3, 2.25 in cells, printed, **taped down** |
-| Tags | AprilTag 36h11, IDs 0 to 3 at the corners (0 front-left, 1 front-right, 2 back-right, 3 back-left, "front" = operator side) |
+| Tags | AprilTag 36h11, IDs 0 to 3 at the corners: 0 at A1, 1 at A3, 2 at C3, 3 at C1 (tags 0 and 1 on the arm's edge, 2 and 3 on the student's) |
 | Cubes | Playskool silicone cubes, 2 each of red / orange / yellow / teal / skyblue / purple. Calibrate their colors with `perception.calibrate` (section 8) whenever the lighting changes |
 | Camera | Webcam on a tripod, fixed above the grid. Never move it after calibration. Recalibrate color at the actual demo table |
 | Perception | NVIDIA Jetson |
 | Robot | SO-101 arm, **taught poses, no IK**. Work zone 7 to 14 in |
 | Display | Monitor at the station, readable from arm's length |
 
-**Cell naming.** Columns A to C left to right as seen from the operator side. Rows 1 to 3 from front (nearest the operator) to back. So `A1` is front-left, `C3` is back-right. Levels count up from 0 (on the board).
+**Cell naming** (as printed on the sheet, and as the robot uses it). The letter is the **row**: row A runs along the arm's edge, row C along the student's edge (the student stands opposite the arm). The number is the **column**: 1 to 3 left to right as the student sees it. So `A1` is far-left from the student (at tag 0), `A3` far-right (tag 1), `C3` near-right (tag 2), `C1` near-left (tag 3). Levels count up from 0 (on the board).
 
 **Cube supply.** The robot picks from a fixed tray with one taught slot per color. `place(color, cell, level)` means "pick a cube of that color from the tray and place it there."
 
@@ -129,7 +129,7 @@ These live in `shared/schemas.py` and `shared/config.py`. **Changing them requir
   "title": "Staircase",
   "source_video": "videos/expert_staircase.mp4",
   "steps": [
-    { "color": "red", "cell": "A1", "level": 0, "t_video": 4.2, "narration": "Start with red in the front-left corner." }
+    { "color": "red", "cell": "A1", "level": 0, "t_video": 4.2, "narration": "Start with red in the far-left corner." }
   ],
   "final_board": { "A1": ["red"], "...": [] },
   "gate": { "passed": true, "checks": [ { "name": "replay_matches_final_frame", "passed": true } ] }

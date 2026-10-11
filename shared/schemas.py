@@ -303,7 +303,7 @@ class SessionState:
     # Added for the UI. All optional with defaults, so older producers and consumers still work.
     lesson_title: Optional[str] = None
     final_board: Optional[Board] = None
-    human_side: Optional[str] = None       # "row1" or "row3", brain/settings.py HUMAN_SIDE
+    human_side: Optional[str] = None       # "row3" (C-row edge, opposite the arm) or "row1", brain/settings.py
     phase: str = "running"                 # one of PHASES
     expected_cell: Optional[str] = None    # slot that needs a cube, from the latest check
     expected_level: Optional[int] = None
