@@ -450,7 +450,9 @@ def test_start_is_refused_until_the_board_is_clear(tmp_path):
     assert s.start() is False and s.phase == "ready" and robot.calls == []
     s.on_board(empty_board())
     assert s.start() is True and s.phase == "running"
-    assert robot.calls == [("home",)] and states[-1].robot_status == "checking"
+    # The clear board was already stable, so start grades it at once and the robot places step 1.
+    assert robot.calls == [("home",), ("place", "red", "A1", 0), ("home",)]
+    assert states[-1].robot_status == "checking"
 
 
 def test_ready_hint_waits_for_the_camera_then_reports_the_board(tmp_path):
@@ -462,3 +464,22 @@ def test_ready_hint_waits_for_the_camera_then_reports_the_board(tmp_path):
     assert s.state().hint_text == CLEAR_BOARD
     s.on_board(empty_board())
     assert s.state().hint_text == READY_TO_START
+
+
+def test_start_checks_the_last_stable_board_at_once(tmp_path):
+    j = Journal("s-first", "human", directory=tmp_path)
+    s = Session(LESSON, "human", j)
+    assert s.state().board_seen is False
+    s.on_board(empty_board())
+    assert s.state().board_seen is True
+    assert s.start() is True
+    st = s.state()
+    assert st.verdict is Verdict.MISSING and st.hint_text == "Place a red cube on A1."
+
+
+def test_hover_reports_pointing(tmp_path):
+    h = Harness(tmp_path, robot=FakeRobot())
+    wrong = board(A1=["red"], B1=["green"], C2=["blue"])
+    h.feed(after(0), after(1), wrong, wrong, wrong, wrong)
+    statuses = [st.robot_status for st in h.states]
+    assert "pointing" in statuses and "fixing" not in statuses
