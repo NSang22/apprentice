@@ -284,7 +284,7 @@ class Progress:
 
 MODES = ["human", "robot"]
 PHASES = ["ready", "running", "complete", "stopped"]
-ROBOT_STATUSES = ["idle", "placing", "checking", "fixing", "homing", "stopped"]
+ROBOT_STATUSES = ["idle", "placing", "checking", "fixing", "homing", "stopped", "pointing"]  # pointing: human-mode hover
 
 
 @dataclass
@@ -308,6 +308,7 @@ class SessionState:
     expected_cell: Optional[str] = None    # slot that needs a cube, from the latest check
     expected_level: Optional[int] = None
     robot_status: str = "idle"             # one of ROBOT_STATUSES
+    board_seen: bool = False               # brain has seen at least one stable board (camera is up)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -329,6 +330,7 @@ class SessionState:
             "expected_cell": self.expected_cell,
             "expected_level": self.expected_level,
             "robot_status": self.robot_status,
+            "board_seen": self.board_seen,
         }
 
     @classmethod
@@ -376,4 +378,5 @@ class SessionState:
             expected_cell=expected_cell,
             expected_level=None if expected_level is None else int(expected_level),
             robot_status=robot_status,
+            board_seen=bool(d.get("board_seen", False)),
         )

@@ -131,6 +131,13 @@ body {
 .feedback[data-kind="mistake"] .feedback-text,
 .feedback[data-kind="stopped"] .feedback-text { color: var(--text); }
 .feedback[data-kind="waiting"] .feedback-icon { animation: breathe 2s ease-in-out infinite; }
+.feedback[data-kind="watching"] .feedback-icon,
+.feedback[data-kind="waiting"] .feedback-icon { position: relative; }
+.feedback[data-kind="watching"] .feedback-icon::after,
+.feedback[data-kind="waiting"] .feedback-icon::after {   /* an eye-like ring: the camera is looking */
+  content: ""; position: absolute; inset: 22px; border-radius: 50%;
+  border: 6px solid var(--info); animation: breathe 2.4s ease-in-out infinite;
+}
 .feedback[hidden] { display: none; }
 
 /* ---------------------------------------------------------------- robot panel */
@@ -161,10 +168,13 @@ body {
 
 /* ---------------------------------------------------------------- show me */
 .showme {
-  position: absolute; right: var(--s4); top: var(--s3); width: min(34vw, 640px); height: 42vh;
-  display: flex; flex-direction: column; gap: 10px;
-  padding: var(--s2); border-radius: var(--radius); background: rgba(22, 27, 35, 0.9); border: 2px solid var(--info);
+  width: min(40vw, 620px); height: 26vh; margin-top: 6px;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 14px var(--s2); border-radius: var(--radius); background: rgba(22, 27, 35, 0.9); border: 2px solid var(--info);
 }
+/* While the clip shows, the instruction shrinks so the clip fits above the hint card. */
+.stage.showing .instruction { font-size: clamp(36px, 3vw, 60px); }
+.stage.showing .hud-top { gap: 10px; }
 .showme[hidden] { display: none; }
 .showme-label { font-size: var(--s2); color: var(--info); font-weight: 600; }
 .showme video { width: 100%; flex: 1 1 auto; min-height: 0; object-fit: contain; background: #000; border-radius: 10px; }
@@ -242,7 +252,7 @@ body {
 .stage.view-3d .screen[data-kind="complete"] .screen-thumb { display: none; }
 
 .toast {
-  position: absolute; left: 50%; bottom: var(--s3); transform: translateX(-50%);
+  position: absolute; right: var(--s4); top: var(--s3);   /* top right: clear of the instruction and the strips */
   font-size: var(--s3); font-weight: 600; padding: 14px var(--s4); border-radius: 999px;
   background: var(--panel-2); border: 2px solid var(--info); color: var(--text);
 }

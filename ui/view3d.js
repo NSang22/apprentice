@@ -135,21 +135,21 @@ function paperTexture(side) {
     }
 
     g.fillStyle = "#555";
-    g.font = `600 ${0.17 * PX}px Segoe UI, system-ui, sans-serif`;
+    g.font = `600 ${0.24 * PX}px Segoe UI, system-ui, sans-serif`;
     g.textBaseline = "top";
     for (const c of CELLS) {
       const [x, z] = cellXZ(c, side);
       g.fillText(c, X(x - 0.42), Z(z - 0.42));
     }
     g.fillStyle = "#222";
-    g.font = `700 ${0.3 * PX}px Segoe UI, system-ui, sans-serif`;
+    g.font = `700 ${0.4 * PX}px Segoe UI, system-ui, sans-serif`;
     g.textAlign = "center";
     g.textBaseline = "middle";
     for (const col of COLUMNS) g.fillText(col, X(cellXZ(col + "1", side)[0]), Z(1.85));
     for (const row of ROWS) g.fillText(row, X(-1.85), Z(cellXZ("A" + row, side)[1]));
     g.fillStyle = "#8a8a8a";
-    g.font = `600 ${0.16 * PX}px Segoe UI, system-ui, sans-serif`;
-    g.fillText("YOUR SIDE", X(0), Z(2.3));
+    g.font = `700 ${0.24 * PX}px Segoe UI, system-ui, sans-serif`;
+    g.fillText("YOUR SIDE", X(0), Z(2.32));
 
     // Four corner tags: black square, white ring, a fixed 4x4 bit pattern per id.
     const patterns = [0b1011010011100101, 0b0110100111010011, 0b1100101101100110, 0b0011110010101101];
@@ -404,6 +404,17 @@ export function createView3D(container) {
     a.y += CUBE * 0.6; b.y += CUBE * 0.95;            // land just above the target slot
     const mid = a.clone().lerp(b, 0.5);
     mid.y += 1.5 + 0.3 * a.distanceTo(b);
+    // Seen end on (from and to in line with the camera), a vertical arc collapses into a pole.
+    // Swing the arc sideways in proportion, so it always reads as a curve with a visible head.
+    const dir = new THREE.Vector3(b.x - a.x, 0, b.z - a.z).normalize();
+    const view = new THREE.Vector3(camera.position.x - mid.x, 0, camera.position.z - mid.z).normalize();
+    const along = Math.abs(dir.dot(view));
+    if (along > 0.5) {
+      const side = new THREE.Vector3(-dir.z, 0, dir.x);
+      if (side.dot(new THREE.Vector3(1, 0, 0)) < 0) side.negate();   // swing toward open table on the right
+      mid.addScaledVector(side, 1.6 * along);
+      mid.y -= 0.5 * along;
+    }
     const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
     const group = new THREE.Group();
     const tex = stripes.clone();
@@ -414,7 +425,7 @@ export function createView3D(container) {
       new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.95, depthTest: false }));
     tube.renderOrder = 10;
     group.add(tube);
-    const head = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.42, 16), new THREE.MeshBasicMaterial({ color: AMBER, depthTest: false }));
+    const head = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.62, 20), new THREE.MeshBasicMaterial({ color: AMBER, depthTest: false }));
     head.renderOrder = 10;
     const tangent = curve.getTangent(1).normalize();
     head.position.copy(b);
@@ -510,7 +521,7 @@ export function createView3D(container) {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(posArr, 3));
     geo.setAttribute("color", new THREE.BufferAttribute(colArr, 3));
-    const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.09, vertexColors: true, transparent: true, opacity: 1, depthWrite: false }));
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.2, vertexColors: true, transparent: true, opacity: 1, depthWrite: false }));
     scene.add(pts);
     burst = { obj: pts, vel, born: performance.now() };
   }

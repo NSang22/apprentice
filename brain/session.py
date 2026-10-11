@@ -2,7 +2,10 @@
 
 A session begins in phase "ready": it tracks stable boards but checks nothing. start()
 begins the lesson, and refuses while the last stable board seen still has cubes on it
-(hint_text asks to clear the board). Then feed it stable boards with on_board(). It checks each one, advances on PASS, and drives
+(hint_text asks to clear the board). If a stable board has already been seen, start()
+checks it at once, so the first verdict is MISSING ("Place the red cube on A1") rather than
+WAITING until the student touches the board. board_seen in the state tells the UI whether
+the camera has produced any stable board yet. Then feed it stable boards with on_board(). It checks each one, advances on PASS, and drives
 hints (human mode) or the robot (robot mode). All I/O goes through the injected journal,
 robot client, and on_state callback; sleep is injectable so tests run instantly.
 
@@ -127,6 +130,7 @@ class Session:
         self._hover_board: Optional[Board] = None
         self._started = False
         self._ended = False
+        self.board_seen = False
 
     # ------------------------------------------------------------ public
 
@@ -155,6 +159,7 @@ class Session:
             expected_cell=self.expected_cell,
             expected_level=self.expected_level,
             robot_status=self.robot_status(),
+            board_seen=self.board_seen,
         )
 
     def robot_status(self) -> str:
@@ -197,11 +202,22 @@ class Session:
             self._event("note", {"warning": "lesson gate missing or failed"})
         if self.mode == "robot":
             self._home_or_stop()
-            self._settle()
+        if self.board_seen and self.phase == RUNNING:
+            self._check_current()   # the board is already stable: grade it now, not on the next change
+        self._settle()
         return True
+
+    def _check_current(self) -> None:
+        """Run the mode's board handler on the last stable board (no new board event)."""
+        board = copy_board(self.board)
+        if self.mode == "human":
+            self._human_on_board(board)
+        else:
+            self._robot_on_board(board)
 
     def on_board(self, board: Board) -> None:
         self.board = copy_board(board)
+        self.board_seen = True
         if self.phase == READY:
             self.hint_text = CLEAR_BOARD if any(board.values()) else READY_TO_START
         self._event("board", {"step": self.step_index, "board": copy_board(board)})
@@ -404,7 +420,7 @@ class Session:
 
     def _robot_cmd(self, cmd: str, **args: Any) -> RobotReply:
         self.robot_moves += 1
-        self._activity = {"home": "homing", "pick": "fixing", "hover": "fixing"}.get(
+        self._activity = {"home": "homing", "pick": "fixing", "hover": "pointing"}.get(
             cmd, "fixing" if self._fixing else "placing")
         self._event("robot_cmd", {"step": self.step_index, "cmd": cmd, **args})
         try:

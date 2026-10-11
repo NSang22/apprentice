@@ -16,9 +16,6 @@
   const CELLS = COLUMNS.flatMap((c) => ROWS.map((r) => c + r));
   const COLORS = ["red", "blue", "yellow", "green"];
   const VERDICTS = ["PASS", "WRONG_CELL", "WRONG_COLOR", "WRONG_LEVEL", "EXTRA", "MISSING", "WAITING"];
-  const PHASES = ["ready", "running", "complete", "stopped"];
-  const ROBOT_STATUSES = ["idle", "placing", "checking", "fixing", "homing", "stopped"];
-  const WAITING_CAMERA = /waiting for the camera/i;
   const LEVEL_WORDS = ["", "second", "third"];
 
   const $ = (id) => document.getElementById(id);
@@ -94,13 +91,14 @@
       hintText: str(d.hint_text),
       showMe,
       progress: { human: marks(p.human), robot: marks(p.robot) },
-      phase: PHASES.includes(d.phase) ? d.phase : null,
+      phase: str(d.phase),                          // brain's phase; enums live in shared/schemas.py
       lessonTitle: str(d.lesson_title),
       finalBoard: d.final_board && typeof d.final_board === "object" ? boardOf(d.final_board) : null,
       humanSide: d.human_side === "row1" || d.human_side === "row3" ? d.human_side : null,
       expectedCell: cell(d.expected_cell),
       expectedLevel: Number.isInteger(d.expected_level) ? d.expected_level : null,
-      robotStatus: ROBOT_STATUSES.includes(d.robot_status) ? d.robot_status : "idle",
+      robotStatus: str(d.robot_status) || "idle",
+      boardSeen: d.board_seen === true,              // false until the camera produced a stable board
     };
   }
 
@@ -112,13 +110,6 @@
     if ((s.progress[s.mode] || []).includes("error")) return "stopped";   // older brains: derive it
     if (!s.expected) return "complete";
     return "running";
-  }
-
-  // "pointing" is not a brain robot_status (shared ROBOT_STATUSES is frozen): the level-4 hover
-  // runs as "fixing" in human mode, so that combination is the robot pointing at the right cell.
-  function robotActivity(s) {
-    if (s.mode === "human" && s.hintLevel >= 4 && s.robotStatus === "fixing") return "pointing";
-    return s.robotStatus;
   }
 
   function isMistake(s) {
@@ -135,7 +126,7 @@
   };
 
   function robotStatus(s, phase) {
-    const a = robotActivity(s);
+    const a = s.robotStatus;
     if (phase === "stopped" || a === "stopped") return { word: "Needs a hand", kind: "hand" };
     if (phase === "complete") return { word: "All done", kind: "done" };
     if (a === "placing") return { word: "Placing", kind: "busy" };
@@ -230,12 +221,12 @@
         fb = { kind: "mistake", icon: "!", title: MISTAKE_TITLES[s.verdict] || "Almost!", text: s.hintText || "" };
       } else if (now < app.passUntil) {
         fb = { kind: "pass", icon: "✓", title: app.passText || "Nice! That's right.", text: "" };
-      } else if (s.verdict === "WAITING") {
+      } else if (!s.boardSeen) {
         fb = { kind: "waiting", icon: "", title: "Waiting for the camera", text: "Hands off the board for a moment." };
       } else {
         fb = { kind: "watching", icon: "", title: "I'm watching the board", text: "" };
       }
-      if (robotActivity(s) === "pointing") banner = "The robot is pointing to the right spot.";
+      if (s.robotStatus === "pointing") banner = "The robot is pointing to the right spot.";
     }
 
     ui.banner.hidden = !banner;
@@ -331,7 +322,7 @@
       (s.mode === "human" ? isMistake(s) : s.verdict !== "PASS" && s.verdict !== "WAITING"));
     if (app.view3d && app.view === "3d") {
       guard(app.view3d.update, { s, phase, side: side(), faultVisible, arrow: s ? arrowFrom(s) : null,
-                                 activity: s ? robotActivity(s) : null });
+                                 activity: s ? s.robotStatus : null });
     }
 
     const W = G.x0 * 2 + G.pitch * 3 - 16, H = G.y0 + G.pitch * 3 + 90;
@@ -368,10 +359,13 @@
         parts.push(`<rect class="b-fault" x="${b.x - 6}" y="${b.y - 6}" width="${G.size + 12}" height="${G.size + 12}" rx="20"/>`);
       }
       const e = s.expected;
-      if (e && s.board[e.cell].length <= e.level) {   // only while its slot is still open
-        const r = levelRect(e.cell, Math.min(e.level, 2));
+      const gCell = s.expectedCell || (e && e.cell);
+      const gLevel = s.expectedLevel ?? (e ? e.level : 0);
+      const gColor = (s.finalBoard && s.finalBoard[gCell] && s.finalBoard[gCell][gLevel]) || (e && e.color);
+      if (gCell && s.board[gCell].length <= gLevel) {   // only while its slot is still open
+        const r = levelRect(gCell, Math.min(gLevel, 2));
         const strong = s.mode === "human" && s.hintLevel >= 2 ? " strong" : "";
-        parts.push(`<rect class="b-ghost${strong}" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.w}" rx="10" style="fill:${fill(e.color)}"/>`);
+        parts.push(`<rect class="b-ghost${strong}" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.w}" rx="10" style="fill:${fill(gColor)}"/>`);
       }
       const arrow = arrowFrom(s);
       if (arrow) {
@@ -521,7 +515,7 @@
     if (phase === "ready") {
       title = s.lessonTitle || "Ready";
       board = s.finalBoard;
-      const camera = WAITING_CAMERA.test(s.hintText || "");
+      const camera = !s.boardSeen;
       text = camera ? "Waiting for the camera" : isClear(s.board) ? (s.mode === "robot" ? "The robot is ready to build this." : "Build this, one cube at a time.") : (s.hintText || "Please clear the board to start.");
       key = !camera && isClear(s.board) ? "Press Space to start" : "";
     } else if (phase === "complete") {
