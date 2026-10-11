@@ -29,15 +29,21 @@ def key_sets(lines):
     return out
 
 
-def test_generator_writes_every_key_set_the_brain_writes():
+def keys_by_kind(sets):
+    """{(mode, kind): every data key written for that kind in that mode}."""
+    out = {}
+    for (mode, kind, _), shapes in sets.items():
+        out.setdefault((mode, kind), set()).update(*shapes)
+    return out
+
+
+def test_generator_and_brain_write_the_same_keys():
     brain = key_sets(l for p in FIXTURES.glob("brain_journal_*.jsonl") for l in p.read_text().splitlines())
     lesson = Lesson.from_dict(json.loads(DEMO_LESSON.read_text()))
     ours = key_sets(l for text in generate(lesson, seed=7).values() for l in text.splitlines())
+    # Both ways, per kind and per mode: the generator writes no kind or key the brain doesn't,
+    # and misses none the brain writes (a new brain key fails here until the fixtures are re-recorded).
+    assert keys_by_kind(ours) == keys_by_kind(brain)
+    # And each exact shape the brain writes shows up in the generator's output.
     for group, sets in brain.items():
-        assert group in ours, f"generator never writes {group}"
         assert sets <= ours[group], f"{group}: brain {sorted(map(sorted, sets))} vs ours {sorted(map(sorted, ours[group]))}"
-    # The other way for the grid_source note: the brain writes it for a ws feed (human, fake_feed)
-    # and never for the sim feed (robot), so the generator must not invent one.
-    def noted(sets):
-        return {mode for (mode, kind, _), s in sets.items() if kind == "note" and frozenset({"grid_source"}) in s}
-    assert noted(ours) == noted(brain) == {"human"}
