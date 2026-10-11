@@ -39,6 +39,7 @@ from shared.schemas import GridState, empty_board
 REF_PATH = CALIB_DIR / "empty_board.png"
 REFRESH_EMPTY_S = 3.0
 RELOCK_FRAMES = 5
+UNREADABLE_CELLS_HAND = 3   # this many unknown cells in one frame: a hand, almost never a real board
 
 NOT_LOCKED, NOT_CONFIRMED, LOCKED, LOST = "not_locked", "not_confirmed", "locked", "lost"
 
@@ -60,8 +61,22 @@ class FrameResult:
 
 
 def hands_clear(analysis: CellAnalysis) -> bool:
-    """No hand or unknown object on the sheet. Hidden tags play no part."""
-    return not analysis.others
+    """No hand or unknown object on the sheet, and fewer than UNREADABLE_CELLS_HAND cells unknown
+    this frame. Hidden tags play no part."""
+    return not analysis.others and unreadable_cells(analysis) < UNREADABLE_CELLS_HAND
+
+
+def unreadable_cells(analysis: CellAnalysis) -> int:
+    return sum(r.state == "unknown" for r in analysis.cells.values())
+
+
+def hands_reason(analysis: CellAnalysis) -> str:
+    """Why hands_clear is false ("" if it is true)."""
+    if analysis.others:
+        return f"{analysis.others[0].kind} on the sheet"
+    if unreadable_cells(analysis) >= UNREADABLE_CELLS_HAND:
+        return "several cells unreadable at once (hand?)"
+    return ""
 
 
 class Perceiver:
@@ -87,7 +102,7 @@ class Perceiver:
         self.relock_count = 0
         self.empty_since: Optional[float] = None
         self.memory = StackMemory()   # per-cell stack history (perception/stacks.py)
-        self.vote = CellVote()        # published reading = majority of the last 5 frames
+        self.vote = CellVote()        # published reading = majority of the last 3 frames
         self.hypothesis: Optional[dict] = None  # last frame's board, where the next search starts
         self.refreshed = False
 
@@ -149,7 +164,7 @@ class Perceiver:
                               prior=self.hypothesis, fg_chroma=self.calib.fg_chroma, live_sheet=live)
         self.hypothesis = analysis.hypothesis
         clear = hands_clear(analysis)
-        reason = "" if clear else f"{analysis.others[0].kind} on the sheet"
+        reason = hands_reason(analysis)
         board, confidence, stacks = self._publish(analysis, clear)
         self._maybe_refresh(live, analysis, clear)
         state = GridState(t=t, board=board, arm_clear=True, hands_clear=clear, confidence=confidence, frame_id=frame_id)
@@ -157,7 +172,7 @@ class Perceiver:
 
     def _publish(self, analysis: CellAnalysis, usable: bool) -> tuple[dict, dict, dict]:
         """Per cell: this frame's reading -> stack memory (push/pop, unknown on conflict) -> the
-        majority of the last 5 frames. Returns (board, confidence, cell -> (stack or None, why))."""
+        majority of the last 3 frames. Returns (board, confidence, cell -> (stack or None, why))."""
         readings = {}
         for cell, r in analysis.cells.items():
             if r.state == "block":
@@ -181,7 +196,7 @@ class Perceiver:
             if not agreed or value == "unknown":
                 level = r.level if r.level is not None else 0
                 board[cell], confidence[cell] = (unknown_stack(level), 0.0)
-                out[cell] = (None, why or "no majority over the last 5 frames")
+                out[cell] = (None, why or "no majority over the last 3 frames")
             else:
                 board[cell] = list(value)
                 if not value:
@@ -189,7 +204,7 @@ class Perceiver:
                 elif r.state == "block" and frame_value == value:
                     confidence[cell] = r.confidence
                 else:
-                    confidence[cell] = 0.9      # this frame disagrees, but the last 5 hold a majority
+                    confidence[cell] = 0.9      # this frame disagrees, but the last 3 hold a majority
                 out[cell] = (list(value), "")
         return board, confidence, out
 

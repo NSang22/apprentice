@@ -19,6 +19,6 @@ def test_vote_needs_a_majority_of_the_last_five():
     vote = CellVote()
     for value in [("red",), ("red",), "unknown", ("red",), ()]:
         vote.add("B2", value)
-    assert vote.winner("B2") == (("red",), True)
-    vote.add("B2", ())                                    # last 5: red, unknown, red, empty, empty
-    assert vote.winner("B2") == (None, False)
+    assert vote.winner("B2") == (None, False)            # last 3: unknown, red, empty
+    vote.add("B2", ())                                    # last 3: red, empty, empty
+    assert vote.winner("B2") == ((), True)

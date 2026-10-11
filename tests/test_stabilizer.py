@@ -36,8 +36,8 @@ def test_emits_after_stable_frames_or_stable_seconds():
     assert stab.feed(gs(A, t=10.0)) is None
     assert stab.feed(gs(A, t=11.0)) == A
     assert Stabilizer().feed(gs(A, t=0.0)) is None  # one frame alone never settles
-    fast = Stabilizer()  # 10 Hz: 0.6 s takes 7 frames, so the 5-frame count still decides first
-    assert [fast.feed(gs(A, t=i * 0.1)) for i in range(STABLE_FRAMES)][-1] == A
+    fast = Stabilizer()  # 10 Hz: 0.3 s is reached on the 4th frame, before the 5-frame count
+    assert [fast.feed(gs(A, t=i * 0.1)) for i in range(STABLE_FRAMES)][3] == A
 
 
 def test_emits_once_while_board_stays_stable():

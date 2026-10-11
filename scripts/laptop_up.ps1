@@ -3,8 +3,8 @@ Demo startup on the Windows laptop: SSH tunnel to the Jetson, colors.json, brain
 
     powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Mode human
     powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Mode robot
-    powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -StartJetson -Lesson lessons\stack-test-v1.json
-    powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Sim -Lesson lessons\stack-test-v1.json
+    powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -StartJetson -Lesson lessons\stack-test-v2.json
+    powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Sim -Lesson lessons\stack-test-v2.json
 
 -StartJetson: ssh in first, git pull on the Jetson, run scripts/jetson_up.sh there (--no-robot in
 human mode). Set JETSON_DISPLAY=:0 in jetson.env to get the perception debug window on the Jetson's

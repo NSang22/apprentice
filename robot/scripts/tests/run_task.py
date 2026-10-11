@@ -10,6 +10,8 @@ or <colour>->on:<reference>. Colours are names like red or "light blue".
 The camera checks the table before and after every step. A block that lands off target gets up
 to 2 retries; any other problem stops the task. Blocks must all start on the table; stacks the
 task builds are tracked (towers up to 3 blocks), so later steps can unstack or build on them.
+A colour the sheet doesn't have is taken from the cube bank beside the sheet (BANK_ZONE_MM in
+perception/config.py), so a task can build from an empty sheet. One block per colour on the sheet.
 Blocks crowding a target (under 8 mm edge to edge) or hemming in a block so no grip fits are moved
 to the nearest empty cell first; the step's reference block and later steps' target cells are left alone.
 """
@@ -47,6 +49,19 @@ def parse_step(text):
     return {"object": obj.strip(), "goal": g}
 
 
+def open_camera(tries=3):
+    """The camera sometimes needs a moment after another program let go of it."""
+    err = None
+    for _ in range(tries):
+        try:
+            return Camera()
+        except RuntimeError as e:
+            err = e
+            print(f"  camera: {e}; trying again in 1 s")
+            time.sleep(1.0)
+    raise SystemExit(f"camera: {err}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("steps", nargs="*")
@@ -59,7 +74,7 @@ def main():
     for i, s in enumerate(steps, 1):
         print(f"  {i}. {describe(s)}")
 
-    ws, loc, cam, arm = Workspace(), SheetLocalizer(), Camera(), Arm()
+    ws, loc, cam, arm = Workspace(), SheetLocalizer(), open_camera(), Arm()
     rec = RunRecorder(cam, loc, ws, arm, label="task")
     sk = Skills(arm, ws, log=lambda m: print(f"  [{time.strftime('%H:%M:%S')}] {m}"), on_phase=rec,
                 correct=Correction())

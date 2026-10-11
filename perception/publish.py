@@ -154,7 +154,7 @@ def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note:
 
 def debug_lines(result: FrameResult) -> list[str]:
     """The status, then one line per occupied or unknown cell (this frame's reading, what is
-    published after stack memory and the 5-frame vote) and per hand."""
+    published after stack memory and the 3-frame vote) and per hand."""
     lines = [result.status + (f"; hands_clear false: {result.reason}" if result.reason else "")]
     a = result.analysis
     if a is None:
