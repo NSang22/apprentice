@@ -15,8 +15,9 @@ or {"ok": false, "error": ...}. A second command while one runs gets {"ok": fals
                                     blocks of that color off the grid first, then blocks in a cell
                                     where the lesson does not want that color (never a block that
                                     already sits right in the lesson, --lesson).
-  POST /pick {cell, level}          the top block of that cell goes to a free supply spot below the
-                                    grid (on the sheet, so the camera can still see it as supply).
+  POST /pick {cell, level}          the top block of that cell goes to a free spot in the cube bank (the
+                                    green box right of the sheet): off the grid and out of perception's
+                                    hand zone, so a removed block never reads as a hand on the board.
   POST /hover {cell}                jaws above the cell centre at travel height, then hold.
   POST /home                        park beside the sheet, out of the camera's view of the grid.
   GET  /status                      {busy, at_home, last_error}; at_home only when parked and no
@@ -66,7 +67,10 @@ from robot.workspace import Workspace
 API_HOST, API_PORT = "127.0.0.1", 8770
 FRAME_URL = "http://127.0.0.1:8771/frame"
 MAX_FRAME_AGE_S = 0.5
-SUPPLY_SPOTS = [(80.0, 250.0), (136.0, 250.0)]  # sheet mm: below the grid, between tags 3 and 2
+# Where /pick puts a block: down the middle of the cube bank (BANK_ZONE_MM, sheet mm), top to bottom.
+# The old spots below the grid (y 250) overlapped perception's hand zone (grid + 15 mm), so a
+# removed block read as "unknown object on the sheet" and the scan after Fix never saw hands clear.
+SUPPLY_SPOTS = [(274.0, 62.0), (274.0, 122.0), (274.0, 182.0), (274.0, 236.0)]
 MIN_GAP_MM = 8.0
 LOG_PATH = ROOT / "outputs" / "api_log.jsonl"
 DEFAULT_LESSON = ROOT.parent / "lessons" / "sample-flat-v1.json"
@@ -127,6 +131,9 @@ class FrameClientCamera:
 # ---------------------------------------------------------------- executor naming
 
 
+VISION_LABEL_MM = 30.0     # a vision-model label stays with the block within this distance (sheet mm)
+
+
 class ApiExecutor(Executor):
     """Executor whose blocks are named by perception's calibrated colors (never the vision model),
     with `focus` deciding which block of a color gets the plain "<color>_cube" name."""
@@ -135,8 +142,14 @@ class ApiExecutor(Executor):
         super().__init__(*args, **kwargs)
         self.refs = refs
         self.focus: dict[str, list] = {}  # executor color -> sheet points; the nearest block is "<color>_cube"
+        # Blocks the vision model named (sheet mm, executor color): for colors perception's calibration
+        # cannot separate under this light (sky blue reads teal). observe() keeps the label on the
+        # block at that spot, so the executor's own looks during a move don't rename it.
+        self.vision_labels: list[tuple[np.ndarray, str]] = []
 
-    def observe(self):
+    def observe(self, source=None):
+        # Executor.observe(source) calls this with the block a step moves; the API picks its own
+        # supply (RobotAPI._supply), so the argument is accepted and ignored.
         frame = self.cam.read()
         scene, _, detections = build_scene(frame, self.loc, naming="off")
         if scene is None:
@@ -147,7 +160,51 @@ class ApiExecutor(Executor):
             if o["score"] < 0:
                 continue  # merged blobs can't be grasped (as Executor.observe)
             blocks.append({**o, "colour": self._colour(frame, d.contour)})
+        for b in blocks:
+            xy = np.asarray(b["center_mm"], float)
+            for p, colour in self.vision_labels:
+                if float(np.hypot(*(xy - p))) <= VISION_LABEL_MM:
+                    b["colour"] = colour
         return self._name(blocks)
+
+    def label(self, xy, colour: str) -> None:
+        """The block at sheet point xy is `colour` (replaces any label within VISION_LABEL_MM)."""
+        p = np.asarray(xy, float)
+        self.vision_labels = [(q, c) for q, c in self.vision_labels if float(np.hypot(*(q - p))) > VISION_LABEL_MM]
+        self.vision_labels.append((p, colour))
+
+    def ask_vision(self, colour: str) -> bool:
+        """No block of `colour` in the supply by calibrated color: ask the vision model (OpenAI,
+        robot/perception/vision_namer.py) to name the graspable blocks off the grid, and label the
+        ones it calls `colour`. True when it found at least one."""
+        try:
+            from robot.perception import vision_namer
+        except ImportError:  # a checkout without the vision model: keep robot.api's own answer
+            return False
+        from robot.perception.naming import normalize
+        if not vision_namer.available():
+            return False
+        frame = self.cam.read()
+        scene, _, detections = build_scene(frame, self.loc, naming="off")
+        if scene is None:
+            return False
+        off_grid = [(d, o) for d, o in zip(detections, scene["objects"])
+                    if o["score"] >= 0 and mm_to_cell(*o["center_mm"]) is None]
+        if not off_grid:
+            return False
+        try:
+            names = vision_namer.name_segments(frame, [d.contour for d, _ in off_grid])
+        except vision_namer.NamerUnavailable as e:
+            self.log(f"[robot.api] vision model unavailable for the supply ({e})")
+            return False
+        found = [o["center_mm"] for i, (_, o) in enumerate(off_grid) if normalize(names.get(i, "")) == colour]
+        for xy in found:
+            self.label(xy, colour)
+        info = getattr(vision_namer.name_segments, "last", {})
+        self.log(f"[robot.api] {colour} not found by calibrated color; the vision model ({info.get('model', '?')}, "
+                 f"{info.get('seconds', '?')} s) named the supply {[normalize(n) for n in names.values()]}: "
+                 f"{len(found)} {colour} block(s)")
+        return bool(found)
 
     def _colour(self, frame: np.ndarray, contour: np.ndarray) -> Optional[str]:
         """Executor color name of a blob, from the central part of it, or None."""
@@ -313,9 +370,19 @@ class RobotAPI:
             target = self.ex.pos(top, objs)
             self.ex.focus[ref_colour] = [target]
             goal = {"type": "on_top", "reference": ref_colour}
-        source = self._supply(colour, objs, target)
+        try:
+            source = self._supply(colour, objs, target)
+        except TaskError:
+            # perception's calibration may not separate this color here (sky blue reads teal): the
+            # vision model names the supply, and the block it calls `colour` is used
+            if not self.ex.ask_vision(colour):
+                raise
+            objs = self.ex.observe()
+            source = self._supply(colour, objs, target)
         self.ex.focus[colour] = [self.ex.pos(source, objs), target]
         self.ex.run([{"object": colour, "goal": goal}])
+        if any(c == colour for _, c in self.ex.vision_labels):
+            self.ex.label(target, colour)  # the label moves with the block, for a step that stacks on it
 
     def pick(self, cell: str, level: int = 0) -> None:
         cell = self._cell(cell)
@@ -331,7 +398,7 @@ class RobotAPI:
             raise TaskError(f"can't tell the color of the block on {cell}, so it can't be addressed")
         spot = self._free_supply_spot(top, objs)
         if spot is None:
-            raise TaskError("no free supply spot below the grid to put it")
+            raise TaskError("no free spot in the cube bank to put it (clear some blocks out of the green box)")
         self.ex.focus = {colour: [self.ex.pos(top, objs), spot]}
         self.ex.run([{"object": colour, "goal": {"type": "spot", "xy": spot}}])
 

@@ -77,6 +77,8 @@ class FakeTable:
 
 
 class FakeEyes:
+    info = {}          # no vision model: a failed place goes straight to asking for the color
+
     def warm(self):
         pass
 
@@ -164,4 +166,4 @@ def test_arm_cannot_find_a_block_in_the_supply(tmp_path, monkeypatch):
     pip.busy = True
     pip.finish(error="no red block in the supply")
     t.tick()
-    assert t.phase == "need_supply" and "red block below the grid" in t.say
+    assert t.phase == "need_supply" and "red block in my bank" in t.say

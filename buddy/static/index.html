@@ -201,8 +201,9 @@
   .power-row b.on { color: var(--green-d); } .power-row b.off { color: #afafaf; } .power-row b.outside { color: var(--orange-d); }
   #power .note { min-height: 18px; }
   .side { font-size: 12px; font-weight: 800; color: #afafaf; text-transform: uppercase; letter-spacing: .08em; margin: -6px 0; }
-  #dbgBtn { position: fixed; right: 12px; bottom: 12px; z-index: 20; border: 2px solid var(--line); background: #fff; color: #777;
-            font: 800 12px/1 inherit; font-family: inherit; padding: 9px 12px; border-radius: 12px; opacity: .8; }
+  #dbgBtn { position: fixed; right: 12px; bottom: 76px; z-index: 20; border: 2px solid var(--line); background: #fff; color: #777;
+            font-family: inherit; font-weight: 800; font-size: 13px; line-height: 1; padding: 9px 12px; border-radius: 12px;
+            box-shadow: 0 3px 0 var(--line); cursor: pointer; }
   #dbg { position: fixed; inset: auto 0 0 0; height: 70vh; z-index: 19; background: #1f2430; color: #d7dde8; display: none;
          flex-direction: column; border-radius: 16px 16px 0 0; }
   #dbg.on { display: flex; }
@@ -365,12 +366,15 @@
     <div class="power-row"><span>Pip's eyes</span><b id="pw-eyes">...</b></div>
     <div class="power-row"><span>Last scan</span><b id="pw-sync">none yet</b></div>
   </div>
+  <button class="btn ghost" id="pw-cam-btn" style="margin:4px 0 8px">👁 Show Pip's eyes</button>
+  <img id="pw-cam" alt="What Pip sees" style="display:none;width:100%;border-radius:14px;background:#000;margin-bottom:8px">
   <p class="note" id="pw-step"></p>
   <div class="two" style="margin-bottom:12px">
     <button class="btn" id="pw-on">Turn on table</button>
     <button class="btn orange" id="pw-off">Turn off table</button>
   </div>
   <button class="btn ghost" id="pw-stop" style="color:var(--red-d)">Shut down app</button>
+  <a class="btn ghost" href="/buddy/debug" style="margin-top:12px;text-decoration:none">Open debug page</a>
   <p class="note" style="margin-top:10px">Turning on wakes the arm, and it moves: clear the area first. Turning off sets the arm
     down at its rest spot, then releases it. The 12 V plug is always the hard stop.</p>
 </div></div>
@@ -753,7 +757,7 @@ function renderPower(p) {
   $("pw-step").textContent = p.error ? `⚠ ${p.error}` : p.step;
   if (S) {
     const e = S.eyes || {}, y = S.sync;
-    $("pw-eyes").textContent = e.ready ? `ready${e.gemini ? " · Gemini on" : " · no Gemini"}` : e.error ? "not working" : "starts with a table game";
+    $("pw-eyes").textContent = e.ready ? `ready${e.model ? " · " + e.model : " · no vision model"}` : e.error ? "not working" : "starts with a table game";
     $("pw-eyes").className = e.ready ? "on" : "off";
     $("pw-sync").textContent = !y ? "none yet"
       : y.source !== "robot" ? `camera only (${y.error || "robot eyes down"})`
@@ -779,6 +783,14 @@ async function powerAct(path, confirmText) {
   try { renderPower(await api(path, {})); } catch (e) { toast(e.message); }
 }
 $("gear").onclick = () => { sfx.tap(); openPower(true); };
+// Pip's eyes in the grown-ups panel: the live camera, refreshed while shown
+let pwCam = null;
+$("pw-cam-btn").onclick = () => {
+  const img = $("pw-cam"), on = img.style.display === "none";
+  img.style.display = on ? "block" : "none"; $("pw-cam-btn").textContent = on ? "Hide Pip's eyes" : "👁 Show Pip's eyes";
+  clearInterval(pwCam);
+  if (on) { const load = () => { if (!powerOpen) { clearInterval(pwCam); return; } img.src = `/buddy/camera.jpg?t=${Date.now()}`; }; load(); pwCam = setInterval(load, 700); }
+};
 $("pw-on").onclick = () => powerAct("/api/table/on", "Pip's arm will wake up and move. Is the area around the arm clear?");
 $("pw-off").onclick = () => powerAct("/api/table/off", "Pip will set the arm down and the camera will turn off. Continue?");
 $("pw-stop").onclick = async () => {
@@ -815,9 +827,9 @@ async function dbgPoll() {
     if (d.sync) {
       const n = d.sync.naming;
       out.push(`last scan: source=${d.sync.source} agree=${d.sync.agree} ms=${JSON.stringify(d.sync.ms)} diffs=${JSON.stringify(d.sync.diffs)}`);
-      out.push(n === "model" ? "  colours: >>> GEMINI CALLED (traditional vision was unsure)"
-             : n === "prior" ? "  colours: >>> TRADITIONAL VISION FAILED and Gemini gave no answer: hue guess used"
-             : `  colours: ${n || "-"} (traditional vision, no Gemini)`);
+      out.push(n === "model" ? "  colours: >>> VISION MODEL CALLED (traditional vision was unsure)"
+             : n === "prior" ? "  colours: >>> TRADITIONAL VISION FAILED and the vision model gave no answer: hue guess used"
+             : `  colours: ${n || "-"} (traditional vision, no vision model)`);
       (d.sync.notes || []).forEach((m) => out.push("    " + m));
       if (d.sync.error) out.push("  robot vision error: " + d.sync.error);
     }
@@ -831,7 +843,7 @@ async function dbgPoll() {
   } catch (e) { $("dbgOut").textContent = "debug failed: " + e.message; }
   setTimeout(dbgPoll, 1000);
 }
-$("dbgBtn").onclick = () => { dbgOn = true; $("dbg").classList.add("on"); dbgPoll(); };
+$("dbgBtn").onclick = () => { location.href = "/buddy/debug"; };   // the full debug page
 $("dbgClose").onclick = () => { dbgOn = false; $("dbg").classList.remove("on"); };
 $("dbgCopy").onclick = () => { try { navigator.clipboard.writeText($("dbgOut").textContent); toast("Copied"); } catch (e) { toast("Select the text to copy"); } };
 

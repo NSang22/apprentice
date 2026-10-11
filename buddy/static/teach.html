@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#ffffff">
+<title>Teach the Robot · Apprentice Buddy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  /* Same look as buddy/static/index.html (copied, like turns.html). */
+  :root {
+    --green: #58cc02; --green-d: #58a700; --green-l: #d7ffb8;
+    --blue: #1cb0f6; --blue-d: #1899d6; --blue-l: #ddf4ff;
+    --yellow: #ffc800; --yellow-d: #e5a400; --yellow-l: #fff5cc;
+    --red: #ff4b4b; --red-d: #ea2b2b;
+    --orange: #ff9600; --orange-d: #d97c00; --orange-l: #fff0d9;
+    --ink: #3c3c3c; --dim: #777; --line: #e5e5e5; --soft: #f7f7f7;
+    --c-red: #ff4b4b; --c-red-d: #d63434; --c-yellow: #ffc800; --c-yellow-d: #d9a400;
+    --c-teal: #14c4a8; --c-teal-d: #0e9a84; --c-purple: #a560e8; --c-purple-d: #7d3fc0;
+    --c-orange: #ff9600; --c-orange-d: #d97c00; --c-skyblue: #1cb0f6; --c-skyblue-d: #1590ca;
+    --c-unknown: #bbb; --c-unknown-d: #999;
+    --pip: #14c4a8; --pip-d: #0e9a84;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body { background: #fff; color: var(--ink); font-family: "Nunito", ui-rounded, system-ui, sans-serif; font-weight: 700;
+         -webkit-user-select: none; user-select: none; overscroll-behavior: none; }
+  .app { max-width: 480px; margin: 0 auto; min-height: 100%; display: flex; flex-direction: column; }
+  .screen { display: none; flex: 1; flex-direction: column; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .screen.on { display: flex; }
+  .btn { font: inherit; font-weight: 800; font-size: 17px; letter-spacing: .06em; text-transform: uppercase; border: 0; border-radius: 16px;
+         padding: 15px 20px; width: 100%; color: #fff; background: var(--green); box-shadow: 0 4px 0 var(--green-d); cursor: pointer;
+         display: flex; align-items: center; justify-content: center; gap: 8px; transition: transform .05s, box-shadow .05s; }
+  .btn:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 var(--green-d); }
+  .btn:disabled { background: var(--line); color: #afafaf; box-shadow: 0 4px 0 #d0d0d0; }
+  .btn.blue { background: var(--blue); box-shadow: 0 4px 0 var(--blue-d); }
+  .btn.orange { background: var(--orange); box-shadow: 0 4px 0 var(--orange-d); }
+  .icon-btn { background: none; border: 0; padding: 6px; cursor: pointer; color: #afafaf; }
+  .pip { width: 110px; height: 120px; flex: none; animation: bob 2.6s ease-in-out infinite; }
+  .pip.small { width: 72px; height: 80px; }
+  .pip .body { fill: var(--pip); } .pip .body-d { fill: var(--pip-d); }
+  .pip .eye { transform-box: fill-box; transform-origin: center; animation: blink 4.2s infinite; }
+  .pip .mouth { display: none; } .pip .arm-up { display: none; }
+  .pip[data-mood="happy"] .m-happy, .pip[data-mood="encourage"] .m-happy, .pip[data-mood="look"] .m-oh,
+  .pip[data-mood="think"] .m-flat, .pip[data-mood="cheer"] .m-big { display: inline; }
+  .pip[data-mood="cheer"] .arm-down { display: none; } .pip[data-mood="cheer"] .arm-up { display: inline; }
+  .pip[data-mood="cheer"] { animation: hop .6s ease-in-out infinite; }
+  .pip[data-mood="think"] .pupils { transform: translate(2px, -3px); }
+  .pip[data-mood="encourage"] { animation: tilt 2.4s ease-in-out infinite; }
+  .pip .antenna-bulb { animation: glow 1.6s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-5px) } }
+  @keyframes hop { 0%,100% { transform: translateY(0) } 40% { transform: translateY(-14px) } }
+  @keyframes tilt { 0%,100% { transform: rotate(-4deg) } 50% { transform: rotate(4deg) } }
+  @keyframes blink { 0%, 92%, 100% { transform: scaleY(1) } 95% { transform: scaleY(.1) } }
+  @keyframes glow { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+  .pip-wrap { display: flex; align-items: flex-end; gap: 10px; margin: 10px 0 6px; width: 100%; }
+  .bubble { position: relative; background: #fff; border: 2px solid var(--line); border-radius: 18px; padding: 11px 14px; font-size: 17px;
+            line-height: 1.3; flex: 1; margin-bottom: 22px; min-height: 48px; }
+  .bubble::before { content: ""; position: absolute; left: -11px; bottom: 16px; width: 18px; height: 18px; background: #fff;
+                    border-left: 2px solid var(--line); border-bottom: 2px solid var(--line); transform: rotate(45deg); }
+  .game-top { display: flex; align-items: center; gap: 12px; padding: 4px 0 6px; }
+  .bar { flex: 1; height: 16px; background: var(--line); border-radius: 99px; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--green); border-radius: 99px; transition: width .4s; }
+  .stat { display: flex; align-items: center; gap: 5px; font-weight: 900; font-size: 16px; color: var(--yellow-d); }
+  .stat svg { width: 26px; height: 26px; }
+  .turns { display: flex; gap: 10px; margin: 6px 0 2px; }
+  .who { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; border: 2px solid var(--line);
+         color: #afafaf; font-weight: 900; font-size: 15px; text-transform: uppercase; letter-spacing: .05em; transition: all .2s; }
+  .who svg { width: 30px; height: 30px; flex: none; }
+  .who.on { border-color: #84d8ff; background: var(--blue-l); color: var(--blue-d); box-shadow: 0 3px 0 #84d8ff; }
+  .who .you { width: 30px; height: 30px; border-radius: 50%; background: var(--yellow); display: flex; align-items: center; justify-content: center; color: #fff; font-size: 15px; }
+  .stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 4px 0; }
+  .side { font-size: 12px; font-weight: 800; color: #afafaf; text-transform: uppercase; letter-spacing: .08em; margin: -4px 0; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: min(80vw, 330px); padding: 12px; background: var(--soft);
+          border: 2px solid var(--line); border-radius: 22px; }
+  .cell { aspect-ratio: 1; border-radius: 16px; background: #fff; border: 2px solid var(--line); box-shadow: 0 4px 0 var(--line);
+          position: relative; display: flex; align-items: center; justify-content: center; }
+  .cell.tappable { cursor: pointer; }
+  .cell.tappable:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--line); }
+  .cell.glow { border-color: var(--yellow); box-shadow: 0 0 0 5px var(--yellow-l), 0 4px 0 var(--yellow-d); animation: pulse 1s ease-in-out infinite; z-index: 1; }
+  @keyframes pulse { 0%,100% { transform: scale(1) } 50% { transform: scale(1.07) } }
+  .blk { position: absolute; inset: 7%; border-radius: 13px; background: var(--c); box-shadow: 0 6px 0 var(--cd), inset 0 -6px 0 rgba(0,0,0,.08);
+         animation: pop .22s cubic-bezier(.3,1.6,.6,1); }
+  .blk::after { content: ""; position: absolute; left: 14%; top: 12%; width: 34%; height: 18%; border-radius: 9px; background: rgba(255,255,255,.4); }
+  .blk.ghost { background: transparent; box-shadow: none; border: 4px dashed var(--c); animation: none; opacity: .75; }
+  .blk.ghost::after { display: none; }
+  @keyframes pop { from { transform: scale(.4) } to { transform: scale(1) } }
+  .badge { position: absolute; right: -7px; top: -7px; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center;
+           justify-content: center; color: #fff; z-index: 2; border: 3px solid #fff; }
+  .badge svg { width: 13px; height: 13px; } .badge.ok { background: var(--green); } .badge.no { background: var(--red); }
+  .palette { display: flex; gap: 12px; justify-content: center; }
+  .chip { width: 56px; height: 56px; border-radius: 16px; border: 3px solid transparent; background: #fff; padding: 5px; cursor: pointer;
+          box-shadow: 0 4px 0 var(--line); outline: 2px solid var(--line); }
+  .chip i { display: block; width: 100%; height: 100%; border-radius: 10px; background: var(--c); box-shadow: inset 0 -5px 0 var(--cd); }
+  .chip.on { outline: 3px solid var(--blue); background: var(--blue-l); transform: translateY(-3px); box-shadow: 0 7px 0 #84d8ff; }
+  .footer { padding-top: 10px; min-height: 70px; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; transform: translateY(105%); transition: transform .28s cubic-bezier(.2,.9,.3,1.1);
+           padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); background: var(--green-l); }
+  .sheet.on { transform: translateY(0); }
+  .sheet .inner { max-width: 448px; margin: 0 auto; }
+  .sheet h3 { margin: 0 0 4px; font-size: 24px; font-weight: 900; color: var(--green-d); display: flex; align-items: center; gap: 10px; }
+  .sheet p { margin: 0 0 14px; font-size: 16px; }
+  .stars { display: inline-flex; gap: 2px; margin-left: auto; } .stars svg { width: 26px; height: 26px; }
+  .xp { color: var(--blue); font-weight: 900; }
+  h1 { font-size: 30px; font-weight: 900; margin: 6px 0; text-align: center; }
+  .lead { text-align: center; color: var(--dim); font-size: 17px; line-height: 1.4; margin: 0 8px 18px; }
+  .field label { display: block; font-size: 14px; color: var(--dim); font-weight: 800; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+  .seg { display: flex; gap: 8px; }
+  .seg button { flex: 1; font: inherit; font-weight: 800; font-size: 15px; padding: 10px 4px; border-radius: 14px; border: 2px solid var(--line);
+                background: #fff; color: var(--ink); box-shadow: 0 3px 0 var(--line); cursor: pointer; line-height: 1.15; }
+  .seg button small { display: block; font-size: 12px; color: var(--dim); font-weight: 700; }
+  .seg button.on { border-color: #84d8ff; background: var(--blue-l); color: var(--blue-d); box-shadow: 0 3px 0 #84d8ff; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #ccc; margin-right: 4px; vertical-align: middle; }
+  .dot.ok { background: var(--green); }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 18px 0; width: 100%; }
+  .card { border-radius: 16px; border: 2px solid var(--c); overflow: hidden; text-align: center; }
+  .card small { display: block; background: var(--c); color: #fff; font-size: 11px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; padding: 5px 2px; }
+  .card b { display: block; font-size: 22px; font-weight: 900; color: var(--c); padding: 12px 2px; }
+  .toast { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px;
+           border-radius: 14px; font-size: 15px; z-index: 9; display: none; max-width: 90vw; text-align: center; }
+  canvas#confetti { position: fixed; inset: 0; pointer-events: none; z-index: 8; }
+
+  /* Teach the Robot */
+  .rec { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--red); font-weight: 900; font-size: 16px;
+         text-transform: uppercase; letter-spacing: .08em; }
+  .rec i { width: 14px; height: 14px; border-radius: 50%; background: var(--red); animation: glow 1s ease-in-out infinite; }
+  .timer { width: 76px; height: 76px; position: relative; }
+  .timer svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .timer b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 900; color: var(--red); }
+  .row { display: flex; gap: 12px; align-items: center; justify-content: center; width: 100%; }
+  .btn.ghost { background: #fff; color: var(--blue); border: 2px solid var(--line); box-shadow: 0 4px 0 var(--line); }
+  .btn.red { background: var(--red); box-shadow: 0 4px 0 var(--red-d); }
+  .tall { position: absolute; left: 4px; bottom: 2px; font-size: 12px; font-weight: 900; color: #fff; background: rgba(0,0,0,.45);
+          border-radius: 8px; padding: 0 5px; z-index: 2; }
+  .think { text-align: center; }
+  .think .word { font-size: 32px; font-weight: 900; color: var(--blue-d); margin: 10px 0 4px; min-height: 44px; }
+  .think .word::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.2s steps(4) infinite; }
+  @keyframes dots { 0% { content: "" } 25% { content: "." } 50% { content: ".." } 75% { content: "..." } }
+  .load { height: 22px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 14px 0 8px; }
+  .load i { display: block; height: 100%; width: 0; background: var(--blue); border-radius: 99px; transition: width .5s ease;
+            background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 10px, transparent 10px 20px); animation: slide 1s linear infinite; }
+  @keyframes slide { from { background-position: 0 0 } to { background-position: 28px 0 } }
+  .stage-list { list-style: none; padding: 0; margin: 12px 0 0; text-align: left; }
+  .stage-list li { padding: 5px 0; color: #afafaf; font-size: 15px; display: flex; gap: 8px; align-items: center; }
+  .stage-list li.done { color: var(--green-d); } .stage-list li.now { color: var(--blue-d); font-weight: 900; }
+  .stage-list li span { width: 22px; text-align: center; }
+  .spin { animation: spin 1.6s linear infinite; display: inline-block; } @keyframes spin { to { transform: rotate(360deg) } }
+  .steps { list-style: none; padding: 0; margin: 10px 0; width: 100%; max-height: 38vh; overflow: auto; }
+  .steps li { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 2px solid var(--line); border-radius: 14px; margin-bottom: 8px; font-size: 16px; }
+  .steps li.now { border-color: var(--yellow); background: var(--yellow-l); }
+  .steps li.done { opacity: .5; }
+  .num { width: 28px; height: 28px; border-radius: 50%; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 14px; flex: none; }
+  .sw { width: 26px; height: 26px; border-radius: 8px; background: var(--c); box-shadow: inset 0 -4px 0 var(--cd); flex: none; }
+  .name-input { font: inherit; font-size: 20px; font-weight: 800; width: 100%; padding: 14px 16px; border-radius: 16px; border: 2px solid var(--line);
+                background: var(--soft); color: var(--ink); outline: none; -webkit-user-select: text; user-select: text; }
+  .name-input:focus { border-color: var(--blue); background: #fff; }
+  .lessons { width: 100%; margin-top: 8px; }
+  .lesson { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 2px solid var(--line); border-radius: 16px; margin-bottom: 8px; box-shadow: 0 3px 0 var(--line); }
+  .lesson .t { flex: 1; min-width: 0; } .lesson .t b { display: block; font-size: 16px; } .lesson .t small { color: var(--dim); font-size: 13px; }
+  .lesson .dots { display: flex; gap: 3px; margin-top: 4px; } .lesson .dots i { width: 12px; height: 12px; border-radius: 4px; background: var(--c); }
+  .lesson button { font: inherit; font-weight: 900; font-size: 13px; text-transform: uppercase; border: 0; border-radius: 12px; padding: 9px 12px;
+                   background: var(--green); color: #fff; box-shadow: 0 3px 0 var(--green-d); cursor: pointer; }
+  .bankcard { width: 100%; border: 2px dashed var(--orange); background: var(--orange-l); border-radius: 18px; padding: 12px; text-align: center; }
+  .bankcard b { display: block; color: var(--orange-d); text-transform: uppercase; letter-spacing: .06em; font-size: 13px; margin-bottom: 8px; }
+  .bankcard .sws { display: flex; gap: 12px; justify-content: center; } .bankcard .sw { width: 46px; height: 46px; border-radius: 12px; }
+  .vid { width: 100%; border-radius: 16px; background: #000; display: block; aspect-ratio: 16/9; }
+  .vid-cap { font-size: 13px; color: var(--dim); font-weight: 800; text-transform: uppercase; letter-spacing: .06em; margin: 8px 0 4px; width: 100%; }
+  .lesson button.watch { background: var(--blue); box-shadow: 0 3px 0 var(--blue-d); margin-right: 6px; }
+  .player { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 9; display: none; flex-direction: column; justify-content: center; padding: 16px; }
+  .player.on { display: flex; }
+  .player .inner { max-width: 640px; width: 100%; margin: 0 auto; }
+  .player b { color: #fff; display: block; font-size: 18px; margin-bottom: 10px; }
+  h2 { font-size: 20px; font-weight: 900; margin: 16px 0 4px; width: 100%; }
+  .eye-btn { background: var(--blue-l); border: 2px solid #84d8ff; border-radius: 12px; padding: 4px 8px; cursor: pointer; color: var(--blue-d);
+             font: inherit; font-weight: 900; font-size: 13px; display: flex; align-items: center; gap: 4px; }
+  .eye-btn.on { background: var(--blue); color: #fff; border-color: var(--blue-d); }
+  .cam { width: 100%; border-radius: 14px; background: #000; display: none; aspect-ratio: 16/9; object-fit: contain; }
+  .cam.on { display: block; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <section class="screen" id="s-intro">
+    <div class="game-top"><a class="icon-btn" href="/buddy" aria-label="Back"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></a></div>
+    <div style="display:flex;justify-content:center"><svg class="pip" data-mood="cheer" style="width:130px;height:143px"><use href="#pip"/></svg></div>
+    <h1>Teach the Robot</h1>
+    <p class="lead">Build something while Pip watches. Pip learns your steps and can build it again!</p>
+    <div class="field"><label>Play on</label><div class="seg" id="source"></div></div>
+    <div class="footer" style="min-height:0;margin-top:14px"><button class="btn" id="start">Start teaching</button></div>
+    <h2 id="mine-h">My lessons</h2>
+    <div class="lessons" id="lessons"></div>
+  </section>
+
+  <section class="screen" id="s-game">
+    <div class="game-top">
+      <button class="icon-btn" id="quit" aria-label="Stop"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>
+      <div class="bar"><i id="bar"></i></div>
+      <div class="rec" id="rec"><i></i>Rec</div>
+      <button class="eye-btn" id="eye" aria-label="Pip's eyes">👁 Eyes</button>
+    </div>
+    <div class="stage">
+      <div class="pip-wrap"><svg class="pip small" id="pip" data-mood="happy"><use href="#pip"/></svg><div class="bubble" id="say"></div></div>
+      <div class="bankcard" id="bankcard"><b>Put in Pip's bank</b><div class="sws" id="bank"></div></div>
+      <img class="cam" id="cam" alt="What Pip sees">
+      <div class="side">Pip's side</div>
+      <div class="grid" id="grid"></div>
+      <div class="side">Your side</div>
+      <div class="row" id="rec-row"><div class="timer"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17" fill="none" stroke="#e5e5e5" stroke-width="5"/>
+        <circle id="t-ring" cx="20" cy="20" r="17" fill="none" stroke="#ff4b4b" stroke-width="5" stroke-linecap="round" stroke-dasharray="106.8" stroke-dashoffset="0"/></svg><b id="t-num">60</b></div></div>
+      <div class="palette" id="palette"></div>
+    </div>
+    <div class="footer" id="footer"></div>
+  </section>
+
+  <section class="screen" id="s-think">
+    <div style="flex:1;display:flex;flex-direction:column;justify-content:center" class="think">
+      <div style="display:flex;justify-content:center"><svg class="pip" data-mood="think" style="width:140px;height:154px"><use href="#pip"/></svg></div>
+      <div class="word" id="word">Thinking</div>
+      <div class="sub" id="think-sub">Pip is learning what you built</div>
+      <div class="load"><i id="load"></i></div>
+      <ul class="stage-list" id="stage-list"></ul>
+    </div>
+  </section>
+
+  <section class="screen" id="s-review">
+    <div style="display:flex;justify-content:center;margin-top:6px"><svg class="pip" id="rv-pip" data-mood="cheer" style="width:110px;height:120px"><use href="#pip"/></svg></div>
+    <h1 id="rv-title">I learned it!</h1>
+    <p class="lead" id="rv-say"></p>
+    <div id="rv-video" style="width:100%;display:none"><div class="vid-cap">What Pip watched</div><video class="vid" id="rv-vid" controls playsinline muted></video></div>
+    <div id="rv-heard" class="bankcard" style="display:none;border-color:var(--blue);background:var(--blue-l);text-align:left;margin-bottom:8px">
+      <b style="color:var(--blue-d)">What you said</b><div id="rv-transcript" style="font-size:15px"></div><div id="rv-notes" style="font-size:14px;color:var(--orange-d);margin-top:6px"></div></div>
+    <ul class="steps" id="rv-steps"></ul>
+    <div id="rv-name-box" style="width:100%"><input class="name-input" id="rv-name" maxlength="24" placeholder="Name your lesson" autocomplete="off"></div>
+    <div style="flex:1"></div>
+    <div class="footer" id="rv-footer"></div>
+  </section>
+</div>
+
+<div class="player" id="player"><div class="inner"><b id="player-title"></b><video class="vid" id="player-vid" controls playsinline autoplay muted></video>
+  <button class="btn" id="player-close" style="margin-top:14px">Close</button></div></div>
+<div class="toast" id="toast"></div>
+<canvas id="confetti"></canvas>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <symbol id="pip" viewBox="0 0 120 132">
+    <line x1="60" y1="22" x2="60" y2="9" stroke="var(--pip-d)" stroke-width="4" stroke-linecap="round"/>
+    <circle class="antenna-bulb" cx="60" cy="8" r="6" fill="#ffc800"/>
+    <g class="arm-down"><rect class="body-d" x="16" y="94" width="14" height="28" rx="7" transform="rotate(14 23 96)"/><rect class="body-d" x="90" y="94" width="14" height="28" rx="7" transform="rotate(-14 97 96)"/></g>
+    <g class="arm-up"><rect class="body-d" x="14" y="70" width="14" height="30" rx="7" transform="rotate(-28 21 98)"/><rect class="body-d" x="92" y="70" width="14" height="30" rx="7" transform="rotate(28 99 98)"/></g>
+    <rect class="body-d" x="32" y="88" width="56" height="38" rx="16"/><rect class="body" x="32" y="86" width="56" height="36" rx="16"/>
+    <circle cx="60" cy="104" r="7" fill="#fff" opacity=".85"/>
+    <rect class="body-d" x="16" y="26" width="88" height="68" rx="28"/><rect class="body" x="16" y="22" width="88" height="68" rx="28"/>
+    <rect x="27" y="34" width="66" height="44" rx="19" fill="#fff"/>
+    <g class="pupils" style="transition:transform .3s"><ellipse class="eye" cx="47" cy="54" rx="7" ry="9" fill="#2b2b2b"/><ellipse class="eye" cx="73" cy="54" rx="7" ry="9" fill="#2b2b2b"/>
+      <circle cx="49.5" cy="50.5" r="2.4" fill="#fff"/><circle cx="75.5" cy="50.5" r="2.4" fill="#fff"/></g>
+    <ellipse cx="36" cy="66" rx="5" ry="3.2" fill="#ff8fa3" opacity=".7"/><ellipse cx="84" cy="66" rx="5" ry="3.2" fill="#ff8fa3" opacity=".7"/>
+    <path class="mouth m-happy" d="M51 66 Q60 74 69 66" fill="none" stroke="#2b2b2b" stroke-width="3.2" stroke-linecap="round"/>
+    <path class="mouth m-big" d="M49 64 Q60 80 71 64 Z" fill="#2b2b2b"/>
+    <path class="mouth m-flat" d="M54 69 L67 67" fill="none" stroke="#2b2b2b" stroke-width="3.2" stroke-linecap="round"/>
+    <ellipse class="mouth m-oh" cx="60" cy="68" rx="4" ry="4.6" fill="#2b2b2b"/>
+  </symbol>
+  <symbol id="pip-head" viewBox="16 4 88 90">
+    <line x1="60" y1="22" x2="60" y2="9" stroke="var(--pip-d)" stroke-width="4" stroke-linecap="round"/><circle cx="60" cy="8" r="6" fill="#ffc800"/>
+    <rect x="16" y="22" width="88" height="68" rx="28" fill="var(--pip)"/><rect x="27" y="34" width="66" height="44" rx="19" fill="#fff"/>
+    <ellipse cx="47" cy="54" rx="7" ry="9" fill="#2b2b2b"/><ellipse cx="73" cy="54" rx="7" ry="9" fill="#2b2b2b"/>
+    <path d="M51 66 Q60 74 69 66" fill="none" stroke="#2b2b2b" stroke-width="3.2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-star-fill" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4l-5.9 3.1 1.2-6.5L2.5 9.4l6.6-.9z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></symbol>
+</defs></svg>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const PIP = { teal: ["#14c4a8", "#0e9a84"], purple: ["#a560e8", "#7d3fc0"], red: ["#ff4b4b", "#d63434"], yellow: ["#ffc800", "#d9a400"] };
+// Cells as printed on the sheet: letter = row (A on Pip's edge), number = column (1-3 left to right for the child).
+const ROWS = ["A", "B", "C"], COLS = ["1", "2", "3"];
+let S = null, chosen = null, busy = false, lastPhase = null, deadline = 0;
+
+let ac = null;
+function tone(f, dur = .12, type = "triangle", gap = .09, vol = .16) {
+  try { ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    f.forEach((fr, i) => { const o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime + i * gap;
+      o.type = type; o.frequency.value = fr; g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+      o.connect(g).connect(ac.destination); o.start(t); o.stop(t + dur); }); } catch (e) {}
+}
+const sfx = { tap: () => tone([660], .06), good: () => tone([660, 880, 1320], .16), rec: () => tone([880, 660], .1),
+              oops: () => tone([392, 330], .18, "triangle", .14), win: () => tone([523, 659, 784, 1047, 1319], .2, "triangle", .11),
+              blip: () => tone([520 + Math.random() * 200], .05, "sine", 0, .06) };
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || "Something went wrong");
+  return d;
+}
+function toast(m) { const t = $("toast"); t.textContent = m; t.style.display = "block"; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.display = "none", 3200); }
+async function act(path, body) {
+  if (busy) return false; busy = true;
+  try { S = await api(path, body || {}); render(); return true; } catch (e) { toast(e.message); return false; } finally { busy = false; }
+}
+const sw = (c) => `<div class="sw" style="--c:var(--c-${c});--cd:var(--c-${c}-d)"></div>`;
+const blockHtml = (c, cls = "") => `<div class="blk ${cls}" style="--c:var(--c-${c});--cd:var(--c-${c}-d)"></div>`;
+function show(id) { document.querySelectorAll(".screen").forEach((s) => s.classList.toggle("on", s.id === "s-" + id)); }
+const building = () => ["bank", "building", "build_check", "build_fix", "build_done"].includes(S.phase);
+
+function finalBoard() {   // the lesson's board, from its steps (a rebuild shows it as dashed outlines)
+  const b = {};
+  for (const s of S.steps) (b[s.cell] = b[s.cell] || []).push(s.color);
+  return b;
+}
+
+function renderGrid() {
+  const practice = S.source === "practice", rec = S.phase === "recording";
+  const target = building() ? finalBoard() : {};
+  let html = "";
+  for (const r of ROWS) for (const c of COLS) {
+    const cell = r + c, have = S.board[cell] || [], want = target[cell] || [];
+    let inner = "";
+    if (have.length) inner = blockHtml(have[have.length - 1]) + (have.length > 1 ? `<span class="tall">×${have.length}</span>` : "");
+    else if (want.length) inner = blockHtml(want[want.length - 1], "ghost") + (want.length > 1 ? `<span class="tall">×${want.length}</span>` : "");
+    html += `<div class="cell ${S.glow === cell ? "glow" : ""} ${practice && rec ? "tappable" : ""}" data-cell="${cell}">${inner}</div>`;
+  }
+  if ($("grid").dataset.k !== html) { $("grid").dataset.k = html; $("grid").innerHTML = html; }
+}
+
+function renderPalette() {
+  const p = $("palette");
+  if (!(S.source === "practice" && S.phase === "recording")) { p.style.display = "none"; return; }
+  p.style.display = "flex";
+  if (!chosen || !S.colors.includes(chosen)) chosen = S.colors[0];
+  const html = S.colors.map((c) => `<button class="chip ${c === chosen ? "on" : ""}" data-color="${c}" aria-label="${c}"><i style="--c:var(--c-${c});--cd:var(--c-${c}-d)"></i></button>`).join("");
+  if (p.dataset.k !== html) { p.dataset.k = html; p.innerHTML = html; }
+}
+
+function footer(key, html) {
+  if ($("footer").dataset.k === key) return;
+  $("footer").dataset.k = key; $("footer").innerHTML = html;
+  const on = (id, path, snd) => { if ($(id)) $(id).onclick = () => { (snd || sfx.tap)(); act(path); }; };
+  on("f-done", "/api/buddy/teach/done", sfx.rec); on("f-undo", "/api/buddy/teach/undo");
+  on("f-ready", "/api/buddy/teach/ready");
+}
+
+function renderGame() {
+  const ph = S.phase, rec = ph === "recording" || ph === "finishing";
+  $("pip").dataset.mood = S.mood; $("say").textContent = S.say;
+  $("rec").style.visibility = rec ? "visible" : "hidden";
+  $("rec-row").style.display = rec ? "flex" : "none";
+  $("bankcard").style.display = ph === "bank" || ph === "bank_check" ? "block" : "none";
+  if (ph === "bank") $("bank").innerHTML = S.bank.map(sw).join("");
+  $("bar").style.width = building() ? `${(S.build.i / Math.max(1, S.build.total)) * 100}%` : rec ? `${(1 - S.record_left / S.record_s) * 100}%` : "0%";
+  renderGrid(); renderPalette();
+  if (ph === "recording") footer("rec" + (S.source === "practice"), S.source === "practice"
+      ? `<div class="row"><button class="btn ghost" id="f-undo" style="flex:1">Undo</button><button class="btn red" id="f-done" style="flex:2">I'm done!</button></div>`
+      : `<button class="btn red" id="f-done">I'm done!</button>`);
+  else if (ph === "finishing") footer("finishing", `<button class="btn" disabled>Hands away! Taking one last look...</button>`);
+  else if (ph === "bank") footer("bank", `<button class="btn orange" id="f-ready">Ready!</button>`);
+  else if (ph === "bank_check") footer("bank_check", `<button class="btn" disabled>Pip is looking in the bank...</button>`);
+  else if (ph === "build_fix") footer("fix", `<button class="btn" id="f-ready">${S.pip.arm ? "Fixed it!" : "Done"}</button>`);
+  else if (ph === "build_check" && S.scan_stuck) footer("stuck", `<button class="btn blue" id="f-ready">Scan again</button>`);
+  else if (ph === "build_done") footer("done", `<button class="btn" id="f-home">Yay!</button>`);
+  else footer("wait-" + ph, `<button class="btn" disabled>${ph === "clear" ? "Clear the board" : "Pip is building..."}</button>`);
+  if ($("f-home")) $("f-home").onclick = () => act("/api/buddy/teach/quit");
+}
+
+function renderThink() {
+  const st = S.stage, i = S.stages.indexOf(st.label);
+  $("word").textContent = st.label || "Thinking";
+  $("load").style.width = `${Math.round((st.progress || 0) * 100)}%`;
+  $("stage-list").innerHTML = S.stages.map((l, k) => `<li class="${k < i ? "done" : k === i ? "now" : ""}"><span>${k < i ? "✓" : k === i ? '<span class="spin">✦</span>' : "•"}</span>${l}</li>`).join("");
+  if (st.label !== renderThink.last) { renderThink.last = st.label; sfx.blip(); }
+}
+
+function renderReview() {
+  const ph = S.phase;
+  $("rv-pip").dataset.mood = S.mood;
+  $("rv-title").textContent = ph === "problem" ? "Oops!" : ph === "saved" ? "Saved!" : "I learned it!";
+  $("rv-say").textContent = S.say;
+  $("rv-steps").innerHTML = ph === "problem" ? "" : S.steps.map((s, k) =>
+    `<li><span class="num">${k + 1}</span>${sw(s.color)}<span>${s.color} on <b>${s.cell}</b>${s.level ? " (on top)" : ""}${s.narration ? `<br><small style="color:var(--dim)">"${s.narration}"</small>` : ""}</span></li>`).join("");
+  $("rv-name-box").style.display = ph === "review" ? "block" : "none";
+  const h = S.heard || {};
+  $("rv-heard").style.display = ph === "review" && h.ok && (h.transcript || (h.notes || []).length) ? "block" : "none";
+  $("rv-transcript").textContent = h.transcript ? `"${h.transcript}"` : "";
+  $("rv-notes").innerHTML = (h.notes || []).map((n) => `• ${n}`).join("<br>");
+  const v = ph !== "problem" && S.video;
+  $("rv-video").style.display = v ? "block" : "none";
+  if (v && $("rv-vid").dataset.src !== S.video) { $("rv-vid").dataset.src = S.video; $("rv-vid").src = S.video; }
+  const key = ph;
+  if ($("rv-footer").dataset.k === key) return;
+  $("rv-footer").dataset.k = key;
+  $("rv-footer").innerHTML = ph === "review" ? `<button class="btn" id="rv-save">Save my lesson</button>`
+    : ph === "saved" ? `<div class="row"><button class="btn ghost" id="rv-later" style="flex:1">Later</button><button class="btn" id="rv-build" style="flex:2">Build it, Pip!</button></div>`
+    : `<div class="row"><button class="btn ghost" id="rv-later" style="flex:1">Back</button><button class="btn" id="rv-again" style="flex:2">Teach it again</button></div>
+       <a href="/buddy/debug?game=teach" style="display:block;text-align:center;margin-top:12px;color:var(--blue-d);font-size:14px">Grown-ups: see what happened</a>`;
+  if ($("rv-save")) $("rv-save").onclick = () => {
+    const name = $("rv-name").value.trim(); if (!name) { toast("Give your lesson a name!"); $("rv-name").focus(); return; }
+    sfx.good(); act("/api/buddy/teach/save", { name });
+  };
+  if ($("rv-build")) $("rv-build").onclick = () => { sfx.tap(); act("/api/buddy/teach/build", {}); };
+  if ($("rv-later")) $("rv-later").onclick = () => act("/api/buddy/teach/quit");
+  if ($("rv-again")) $("rv-again").onclick = () => { sfx.tap(); act("/api/buddy/teach/start"); };
+}
+
+function renderIntro() {
+  const cam = S.table.connected && S.table.fresh;
+  const seg = [["table", "Table", `<span class="dot ${cam ? "ok" : ""}"></span>${cam ? "camera on" : "camera off"}`], ["practice", "Practice", "tap the phone"]]
+    .map(([v, t, s]) => `<button class="${v === S.source ? "on" : ""}" data-source="${v}">${t}<small>${s}</small></button>`).join("");
+  if ($("source").dataset.k !== seg) { $("source").dataset.k = seg; $("source").innerHTML = seg; }
+  $("mine-h").style.display = S.lessons.length ? "block" : "none";
+  const html = S.lessons.map((l) => `<div class="lesson"><div class="t"><b>${l.title}</b><small>${l.steps} steps${l.taught_by ? " · by " + l.taught_by : ""}</small>
+      <div class="dots">${l.colors.map((c) => `<i style="--c:var(--c-${c})"></i>`).join("")}</div></div>${l.video ? `<button class="watch" data-watch="${l.video}" data-title="${l.title}">Watch</button>` : ""}<button data-build="${l.id}">Build it</button></div>`).join("");
+  if ($("lessons").dataset.k !== html) { $("lessons").dataset.k = html; $("lessons").innerHTML = html; }
+}
+
+function render() {
+  if (!S) return;
+  const [c, d] = PIP[S.profile.avatar] || PIP.teal;
+  document.documentElement.style.setProperty("--pip", c); document.documentElement.style.setProperty("--pip-d", d);
+  if (!S.profile.name) { location.href = "/buddy"; return; }
+  const ph = S.phase;
+  if (ph === "home") { renderIntro(); show("intro"); }
+  else if (ph === "processing") { renderThink(); show("think"); }
+  else if (["review", "problem", "saved"].includes(ph)) { renderReview(); show("review"); }
+  else { renderGame(); show("game"); }
+  if (ph === "recording" && lastPhase !== "recording") { deadline = performance.now() + S.record_left * 1000; sfx.rec(); }
+  if (ph !== "recording") deadline = 0;
+  if (ph !== lastPhase) {
+    if (ph === "review" || ph === "saved") { sfx.good(); confetti(ph === "saved" ? 120 : 60); }
+    if (ph === "problem" || ph === "build_fix") sfx.oops();
+    if (ph === "build_done") { sfx.win(); confetti(150); }
+  }
+  lastPhase = ph;
+}
+
+function frame() {
+  if (S && S.phase === "recording" && deadline) {
+    const left = Math.max(0, (deadline - performance.now()) / 1000);
+    $("t-ring").style.strokeDashoffset = `${106.8 * (1 - left / S.record_s)}`;
+    $("t-num").textContent = Math.ceil(left);
+  }
+  requestAnimationFrame(frame);
+}
+
+function confetti(n) {
+  const cv = $("confetti"), ctx = cv.getContext("2d"), W = cv.width = innerWidth, H = cv.height = innerHeight;
+  const cols = ["#58cc02", "#1cb0f6", "#ffc800", "#ff4b4b", "#a560e8", "#ff9600"];
+  const parts = Array.from({ length: n }, () => ({ x: W / 2 + (Math.random() - .5) * 80, y: H * .35, vx: (Math.random() - .5) * 12, vy: -Math.random() * 12 - 4,
+    s: 6 + Math.random() * 6, r: Math.random() * 6, vr: (Math.random() - .5) * .4, c: cols[(Math.random() * cols.length) | 0] }));
+  let t = 0;
+  (function step() { ctx.clearRect(0, 0, W, H);
+    for (const p of parts) { p.vy += .35; p.x += p.vx; p.y += p.vy; p.r += p.vr; ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.fillStyle = p.c; ctx.fillRect(-p.s / 2, -p.s / 3, p.s, p.s * .66); ctx.restore(); }
+    if (++t < 140) requestAnimationFrame(step); else ctx.clearRect(0, 0, W, H); })();
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-cell],[data-color],[data-source],[data-build],[data-watch]");
+  if (!t) return;
+  if (t.dataset.cell && S.phase === "recording" && S.source === "practice") { sfx.tap(); act("/api/buddy/teach/tap", { cell: t.dataset.cell, color: chosen }); }
+  else if (t.dataset.color) { chosen = t.dataset.color; sfx.tap(); renderPalette(); }
+  else if (t.dataset.source) { sfx.tap(); api("/api/buddy/settings", { source: t.dataset.source }).then(poll1); }
+  else if (t.dataset.watch) { $("player-title").textContent = t.dataset.title; $("player-vid").src = t.dataset.watch; $("player").classList.add("on"); }
+  else if (t.dataset.build) { sfx.tap(); act("/api/buddy/teach/build", { lesson_id: t.dataset.build }); }
+});
+$("player-close").onclick = () => { $("player-vid").pause(); $("player-vid").removeAttribute("src"); $("player").classList.remove("on"); };
+$("start").onclick = () => { sfx.tap(); act("/api/buddy/teach/start"); };
+$("quit").onclick = () => { if (confirm("Stop?")) act("/api/buddy/teach/quit"); };
+
+
+// "Pip's eyes": the live camera (perception's frame server), refreshed while it is open
+let camOn = false, camTimer = null;
+function toggleCam() {
+  camOn = !camOn; $("eye").classList.toggle("on", camOn); $("cam").classList.toggle("on", camOn);
+  clearInterval(camTimer);
+  const load = () => { const img = new Image(); img.onload = () => { $("cam").src = img.src; }; img.onerror = () => { if (camOn) toast("The camera is off. Turn on the table (⚙ on the home screen)."); camOn && toggleCam(); }; img.src = `/buddy/camera.jpg?t=${Date.now()}`; };
+  if (camOn) { load(); camTimer = setInterval(load, 700); }
+}
+$("eye").onclick = toggleCam;
+
+async function poll1() { try { if (!busy) { S = await api("/api/buddy/teach/state"); render(); } } catch (e) {} }
+async function poll() { await poll1(); setTimeout(poll, S && S.phase !== "home" ? 300 : 1000); }
+poll(); frame();
+</script>
+</body>
+</html>

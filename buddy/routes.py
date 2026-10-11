@@ -26,6 +26,9 @@ Take Turns (buddy/turns_session.py), same table, camera and arm; one game runs a
     POST /api/buddy/turns/next
     POST /api/buddy/turns/quit
 
+Teach the Robot (buddy/teach_session.py): GET /buddy/teach, GET /api/buddy/teach/state, POST
+/api/buddy/teach/{start, tap, undo, done, save, build, ready, quit}.
+
 The dashboard runs table_task() for the camera board (perception ws :8765).
 """
 
@@ -39,6 +42,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from buddy.session import BuddySession
+from buddy.teach_session import TeachSession
 from buddy.turns_session import TurnsSession
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -47,6 +51,7 @@ UI_DIR = Path(__file__).resolve().parent.parent / "ui"   # the monitor; Buddy bo
 router = APIRouter()
 game = BuddySession()
 turns = TurnsSession(table=game.table, eyes=game.eyes, pip=game.pip, profile=game.profile)
+teach = TeachSession(table=game.table, eyes=game.eyes, pip=game.pip, profile=game.profile)
 
 
 def table_task():
@@ -129,6 +134,7 @@ def settings(body: SettingsBody):
 def start(body: StartBody):
     try:
         turns.quit()  # one game at a time: there is one table
+        teach.quit()
         game.start(body.game)
     except ValueError as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
@@ -187,6 +193,7 @@ def turns_state():
 def turns_start():
     try:
         game.quit()  # one game at a time: there is one table
+        teach.quit()
         turns.start()
     except ValueError as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
@@ -221,3 +228,161 @@ def turns_next():
 def turns_quit():
     turns.quit()
     return turns.state()
+
+
+# ---------------------------------------------------------------- Teach the Robot
+
+class TapBody(BaseModel):
+    cell: str
+    color: str
+
+
+class SaveBody(BaseModel):
+    name: str = ""
+
+
+class BuildBody(BaseModel):
+    lesson_id: Optional[str] = None
+
+
+def _teach(fn):
+    try:
+        fn()
+    except (ValueError, FileNotFoundError) as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    return teach.state()
+
+
+@router.get("/buddy/teach")
+def teach_page():
+    return FileResponse(STATIC / "teach.html", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/buddy/camera.jpg")
+def camera_view():
+    """What the overhead camera sees right now (perception's frame server), for "Pip's eyes"."""
+    from fastapi.responses import Response
+    from buddy.table import camera_jpeg
+    jpg = camera_jpeg()
+    if jpg is None:
+        return JSONResponse({"ok": False, "error": "the camera is off"}, status_code=503)
+    return Response(content=jpg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/buddy/video/{name}")
+def teach_video(name: str):
+    """A Teach the Robot recording (data/buddy/videos), so the child can watch what Pip saw."""
+    from buddy.teach import video_file
+    path = video_file(name)
+    if path is None:
+        return JSONResponse({"ok": False, "error": "no video"}, status_code=404)
+    return FileResponse(path, media_type="video/webm")
+
+
+@router.get("/api/buddy/teach/state")
+def teach_state():
+    return teach.state()
+
+
+@router.post("/api/buddy/teach/start")
+def teach_start():
+    game.quit()  # one game at a time: there is one table
+    turns.quit()
+    return _teach(teach.start_teaching)
+
+
+@router.post("/api/buddy/teach/tap")
+def teach_tap(body: TapBody):
+    return _teach(lambda: teach.tap(body.cell, body.color))
+
+
+@router.post("/api/buddy/teach/undo")
+def teach_undo():
+    return _teach(teach.undo)
+
+
+@router.post("/api/buddy/teach/done")
+def teach_done():
+    return _teach(teach.done_teaching)
+
+
+@router.post("/api/buddy/teach/save")
+def teach_save(body: SaveBody):
+    return _teach(lambda: teach.save(body.name))
+
+
+@router.post("/api/buddy/teach/build")
+def teach_build(body: BuildBody):
+    game.quit()
+    turns.quit()
+    return _teach(lambda: teach.build(body.lesson_id))
+
+
+@router.post("/api/buddy/teach/ready")
+def teach_ready():
+    return _teach(teach.ready)
+
+
+@router.post("/api/buddy/teach/quit")
+def teach_quit():
+    return _teach(teach.quit)
+
+
+# ---------------------------------------------------------------- debug page
+
+SESSION_PREFIX = {"recall": "b-", "turns": "t-", "teach": "teach-"}
+
+
+def _session_files(kind: str) -> list:
+    from buddy.session import SESSIONS_DIR
+    prefix = SESSION_PREFIX.get(kind, "teach-")
+    files = SESSIONS_DIR.glob(f"{prefix}*.jsonl") if SESSIONS_DIR.is_dir() else []
+    return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+@router.get("/buddy/debug")
+def debug_page():
+    return FileResponse(STATIC / "debug.html", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/buddy/sessions")
+def debug_sessions(game: str = "teach"):
+    """The newest sessions of one game, for the debug page's picker."""
+    import json as _json
+    out = []
+    for f in _session_files(game)[:30]:
+        first = f.open(encoding="utf-8").readline()
+        try:
+            t = _json.loads(first)["t"]
+        except (ValueError, KeyError):
+            t = f.stat().st_mtime
+        out.append({"id": f.stem, "t": t, "bytes": f.stat().st_size})
+    return {"sessions": out}
+
+
+@router.get("/api/buddy/trace")
+def debug_trace(game: str = "teach", session: str = ""):
+    """Every event of one session (the newest when none is named), oldest first: what was asked,
+    what each step did, how long it took, and why it ended the way it did."""
+    import json as _json
+    files = _session_files(game)
+    f = next((x for x in files if x.stem == session), files[0] if files else None)
+    if f is None:
+        return {"session": None, "events": []}
+    events = []
+    for line in f.open(encoding="utf-8"):
+        try:
+            events.append(_json.loads(line))
+        except ValueError:
+            continue
+    return {"session": f.stem, "events": events}
+
+
+@router.get("/api/buddy/status")
+def debug_status():
+    """Camera, arm, the robot's eyes and the vision model, for the debug page's status strip."""
+    eyes = game.eyes
+    return {"table": game.table.status(), "pip": {"busy": game.pip.busy, "step": game.pip.step, "error": game.pip.error},
+            "eyes": {"ready": bool(eyes.info.get("ready")), "model": eyes.info.get("model"), "error": eyes.error,
+                     "log": eyes.log[-40:]},
+            "phases": {"recall": game.phase, "turns": turns.phase, "teach": teach.phase}}

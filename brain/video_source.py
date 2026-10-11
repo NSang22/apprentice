@@ -401,7 +401,7 @@ class VideoSource:
         return frame[v0:v1, u0:u1].copy()
 
     def crop_jpeg(self, frame_id: int, cell: str) -> Optional[bytes]:
-        """That cell's crop from a settled frame, as JPEG (what Gemini is shown), None if not kept."""
+        """That cell's crop from a settled frame, as JPEG (what the vision model is shown), None if not kept."""
         crop = self._crops.get(frame_id, {}).get(cell)
         if crop is None or crop.size == 0:
             return None

@@ -1,7 +1,7 @@
 """One look at the table: hands up, the camera sees a settled board, then the robot's eyes read it.
 
 The same steps buddy/session.py (Picture Recall) runs inline, as a reusable piece for the other
-games. poll() never blocks: the robot's eyes run on a worker thread (a Gemini call can take a few
+games. poll() never blocks: the robot's eyes run on a worker thread (a vision-model call can take a few
 seconds), so the phone keeps getting fresh state the whole time.
 
 Statuses from poll():

@@ -604,6 +604,88 @@ def table_off(request: Request):
     return power.status()
 
 
+class BlankCalibration:
+    """Debug page "Calibrate blank": the robot vision helper saves the empty board (grid lock and
+    empty-board reference, as perception.calibrate's first step does), then the camera restarts so
+    perception.publish loads them. Refused while a game runs or the arm moves."""
+
+    def __init__(self) -> None:
+        self.busy = False
+        self.step = ""
+        self.error: str | None = None
+        self.result: dict | None = None
+
+    def start(self) -> None:
+        if self.busy or power.busy:
+            raise ValueError("Already busy, one moment")
+        if buddy_game.pip.busy:
+            raise ValueError("Pip's arm is moving. Wait until it is home.")
+        if not port_open(FRAME_PORT):
+            raise ValueError("The camera is off. Turn on the table first.")
+        self.busy, self.error, self.result = True, None, None
+
+        def job():
+            cam = SERVICES["perception"]
+            try:
+                self.step = "Looking at the empty board..."
+                r = buddy_game.eyes.blank()
+                if not r.get("ok"):
+                    raise RuntimeError(r.get("error") or "no answer from the robot vision helper")
+                self.result = r
+                if cam.external():
+                    self.step = "Saved. The camera runs outside the app: restart it to use the new board."
+                    return
+                self.step = "Saved. Restarting the camera so it uses the new board..."
+                cam.stop()
+                cam.start({})
+                if not TablePower._wait(lambda: port_open(GRID_WS_PORT) and port_open(FRAME_PORT), cam, 90):
+                    raise RuntimeError("Saved, but the camera did not start again. Turn the table on.")
+                self.step = "Done: the camera uses the new empty board"
+            except Exception as e:
+                self.error, self.step = str(e), ""
+            finally:
+                self.busy = False
+        threading.Thread(target=job, daemon=True).start()
+
+    def status(self) -> dict:
+        ref = TABLE_REPO / "perception" / "calib" / "empty_board.png"
+        lock = TABLE_REPO / "perception" / "calib" / "grid_lock.json"
+        created = None
+        try:
+            created = json.loads(lock.read_text(encoding="utf-8")).get("created")
+        except (OSError, ValueError):
+            pass
+        return {"busy": self.busy, "step": self.step, "error": self.error, "result": self.result,
+                "camera": port_open(FRAME_PORT), "lock_created": created,
+                "reference_mtime": ref.stat().st_mtime if ref.exists() else None}
+
+
+blank_calib = BlankCalibration()
+
+
+@app.get("/api/buddy/calibrate/blank")
+def calibrate_blank_status():
+    return blank_calib.status()
+
+
+@app.post("/api/buddy/calibrate/blank")
+def calibrate_blank(request: Request):
+    note(f"calibrate blank requested from {request.client.host if request.client else 'unknown'}")
+    try:
+        blank_calib.start()
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=409)
+    return blank_calib.status()
+
+
+@app.get("/api/buddy/calibrate/blank.png")
+def calibrate_blank_image():
+    ref = TABLE_REPO / "perception" / "calib" / "empty_board.png"
+    if not ref.exists():
+        return JSONResponse({"ok": False, "error": "no empty board saved yet"}, status_code=404)
+    return FileResponse(ref, headers={"Cache-Control": "no-store"})
+
+
 @app.post("/api/server/stop")
 def server_stop(request: Request):
     """Shut the whole app down. The lifespan exit stops every service, so the arm rests first."""

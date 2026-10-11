@@ -51,7 +51,7 @@ PRACTICE_REMOVE_S = 1.2     # ... and how long each removal takes
 GAMES = [
     {"id": "recall", "title": "Picture Recall", "desc": "Look, remember, build it!", "ready": True},
     {"id": "turns", "title": "Take Turns", "desc": "Build it together with Pip", "ready": True, "page": "/buddy/turns"},
-    {"id": "teach", "title": "Teach the Robot", "desc": "You build, Pip learns", "ready": False},
+    {"id": "teach", "title": "Teach the Robot", "desc": "You build, Pip learns", "ready": True, "page": "/buddy/teach"},
 ]
 
 
@@ -213,7 +213,7 @@ class BuddySession:
         self.until = self.clock() + SCAN_STUCK_S
 
     def _look_with_robot_eyes(self) -> None:
-        """The robot's own vision reads the board on a worker thread (a Gemini call can take seconds)."""
+        """The robot's own vision reads the board on a worker thread (a vision-model call can take seconds)."""
         self.eyes_busy, self.eyes_result = True, None
 
         def job():
@@ -489,7 +489,7 @@ class BuddySession:
                            | {"streak": self.profile.streak(), "days": len(p["days"])},
                 "table": self.table.status(),
                 "sync": self.last_sync,
-                "eyes": {"ready": bool(self.eyes.info.get("ready")), "gemini": self.eyes.info.get("gemini"),
+                "eyes": {"ready": bool(self.eyes.info.get("ready")), "model": self.eyes.info.get("model"),
                          "error": self.eyes.error, "looking": self.eyes_busy},
                 "pip": {"busy": self.pip.busy, "step": self.pip.step, "arm": self.arm_used},
                 "round": self.round,

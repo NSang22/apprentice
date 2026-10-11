@@ -7,7 +7,7 @@ Two readings of the board, kept in sync:
   TableBoard  perception's GridState stream (ws :8765) through brain.stabilizer, unchanged. It
               answers "are hands off?" and "has the board settled?" ten times a second.
   RobotEyes   the arm's own vision (buddy/eyes_worker.py, run in the main checkout): robot
-              segmentation, colour memory, Gemini when unsure. It decides what the child built,
+              segmentation, colour memory, the vision model (OpenAI) when unsure. It decides what the child built,
               so the board Buddy grades is the board the arm acts on.
 Each scan records both, and where they disagree (buddy/session.py logs it, the phone shows it).
 
@@ -46,7 +46,7 @@ HOVER_HOLD_S = 3.0        # Pip points this long, then goes home
 EDGE_MM = 8.0             # a block centre closer than this to a cell line reads "unknown" (nudge it)
 CELL_MATCH_MM = 1.0       # a cell-map pair must name the same sheet point to within this
 EYES_START_S = 90.0       # the robot-vision helper's first import of torch/lerobot is slow
-EYES_SCAN_S = 45.0        # one scan, including a Gemini call when the colour memory is unsure
+EYES_SCAN_S = 45.0        # one scan, including a vision-model call when the colour memory is unsure
 WORKER = Path(__file__).resolve().parent / "eyes_worker.py"
 
 
@@ -75,6 +75,39 @@ def local_cell_map() -> dict[str, str]:
         if float(np.linalg.norm(np.array(robot_cell_center(best)) - target)) > CELL_MATCH_MM:
             raise RuntimeError(f"no robot cell at perception's {cell}: the two grids disagree")
         out[cell] = best
+    return out
+
+
+FRAME_URL = "http://127.0.0.1:8771/frame"   # perception.publish's frame server (it owns the camera)
+
+
+def camera_jpeg(width: int = 640, quality: int = 70) -> Optional[bytes]:
+    """The camera's newest frame as a small JPEG (the app's "Pip's eyes" view), or None when
+    perception is not sharing frames."""
+    import urllib.request
+    import cv2
+    import numpy as np
+    try:
+        with urllib.request.urlopen(FRAME_URL, timeout=2) as r:
+            shape = tuple(int(v) for v in r.headers["X-Shape"].split(","))
+            img = np.frombuffer(r.read(), np.uint8).reshape(shape)
+    except Exception:
+        return None
+    h, w = img.shape[:2]
+    small = cv2.resize(img, (width, int(h * width / w)), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return buf.tobytes() if ok else None
+
+
+def missing_from_bank(need: list[str], seen: list[str]) -> list[str]:
+    """Colors still needed after matching what the vision model saw in the bank, counting repeats."""
+    left = list(seen)
+    out = []
+    for c in need:
+        if c in left:
+            left.remove(c)
+        else:
+            out.append(c)
     return out
 
 
@@ -115,6 +148,16 @@ class TableBoard:
         self.latest: Optional[dict] = None   # raw board of the last frame
         self.stable: Optional[dict] = None   # last board the stabilizer emitted
         self.stable_t = 0.0
+        self.recording: Optional[list[dict]] = None   # Teach the Robot: every GridState while recording
+
+    def record_start(self) -> None:
+        with self.lock:
+            self.recording = []
+
+    def record_stop(self) -> list[dict]:
+        with self.lock:
+            frames, self.recording = self.recording or [], None
+            return frames
 
     async def run(self) -> None:
         while True:
@@ -130,10 +173,13 @@ class TableBoard:
 
     def _feed(self, msg) -> None:
         try:
-            gs = GridState.from_dict(json.loads(msg))
+            raw = json.loads(msg)
+            gs = GridState.from_dict(raw)
         except Exception:
             return
         with self.lock:
+            if self.recording is not None:
+                self.recording.append(raw)
             self.last_t = time.time()
             self.hands_clear, self.latest = gs.hands_clear, gs.board
             board = self.stabilizer.feed(gs)
@@ -172,7 +218,7 @@ class RobotEyes:
         self.proc: Optional[subprocess.Popen] = None
         self.lines: "queue.Queue[str]" = queue.Queue()
         self.lock = threading.Lock()
-        self.info: dict = {}                 # the worker's start-up report (cell map, gemini)
+        self.info: dict = {}                 # the worker's start-up report (cell map, model)
         self.log: list[str] = []             # the robot code's own output, newest last
         self.error: Optional[str] = None
 
@@ -216,17 +262,37 @@ class RobotEyes:
                 self.error = str(e)
         threading.Thread(target=job, daemon=True).start()
 
-    def scan(self) -> dict:
-        """{ok, blocks: [{cell, color, center_mm, edge_mm, score}], naming} or {ok: False, error}."""
+    def _ask(self, command: str, timeout_s: float) -> dict:
         with self.lock:
             try:
                 self._ensure()
-                self.proc.stdin.write("scan\n")
+                self.proc.stdin.write(command + "\n")
                 self.proc.stdin.flush()
-                return self._reply(EYES_SCAN_S)
+                return self._reply(timeout_s)
             except Exception as e:
                 self.error = str(e)
                 return {"ok": False, "error": str(e)}
+
+    def scan(self, all_colors: bool = False) -> dict:
+        """{ok, blocks: [{cell, color, center_mm, edge_mm, score}], naming} or {ok: False, error}.
+        all_colors: name every color the robot knows (Teach the Robot), not only the colors in play."""
+        return self._ask("scan all" if all_colors else "scan", EYES_SCAN_S)
+
+    def bank(self) -> dict:
+        """The vision model's list of the block colors in the robot's cube bank: {ok, colors: [...]}."""
+        return self._ask("bank", EYES_SCAN_S)
+
+    def board(self, video: Path) -> dict:
+        """The vision model's reading of a recording's final board: {ok, blocks: [{cell, stack}]}."""
+        return self._ask(f"board {Path(video).resolve()}", 90.0)
+
+    def blank(self) -> dict:
+        """Calibrate the empty board (grid lock + empty-board reference): {ok, created, reference}."""
+        return self._ask("blank", EYES_SCAN_S)
+
+    def narration(self, audio: Path) -> dict:
+        """The recording's narration as text (OpenAI speech to text) and the placements said in it."""
+        return self._ask(f"narration {Path(audio).resolve()}", 90.0)
 
     def cell_map(self) -> dict[str, str]:
         m = self.info.get("cell_map") or {}
@@ -301,14 +367,15 @@ class Pip:
             self.step = "homing"
         self._run(job)
 
-    def place(self, cell: str, color: str, should_stop: Callable[[], bool] = lambda: False) -> None:
-        """Take Turns: pick a block of `color` from the supply below the grid and put it on `cell`."""
+    def place(self, cell: str, color: str, should_stop: Callable[[], bool] = lambda: False, level: int = 0) -> None:
+        """Pick a block of `color` from the supply beside the grid and put it on `cell` at `level`
+        (Take Turns: always 0; Teach the Robot rebuilds: 1 stacks on the block already there)."""
         def job():
             if not self._wait_hands(should_stop):
                 self.error = "hands"
                 return
             self.step = "placing"
-            reply = self.client.place(color, self.to_robot_cell(cell), 0)
+            reply = self.client.place(color, self.to_robot_cell(cell), level)
             if not reply.get("ok"):
                 self.error = reply.get("error", "place failed")
                 return

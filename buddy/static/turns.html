@@ -120,6 +120,11 @@
   .toast { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px;
            border-radius: 14px; font-size: 15px; z-index: 9; display: none; max-width: 90vw; text-align: center; }
   canvas#confetti { position: fixed; inset: 0; pointer-events: none; z-index: 8; }
+  .eye-btn { background: var(--blue-l); border: 2px solid #84d8ff; border-radius: 12px; padding: 4px 8px; cursor: pointer; color: var(--blue-d);
+             font: inherit; font-weight: 900; font-size: 13px; display: flex; align-items: center; gap: 4px; }
+  .eye-btn.on { background: var(--blue); color: #fff; border-color: var(--blue-d); }
+  .cam { width: 100%; border-radius: 14px; background: #000; display: none; aspect-ratio: 16/9; object-fit: contain; }
+  .cam.on { display: block; }
 </style>
 </head>
 <body>
@@ -141,6 +146,7 @@
     <div class="game-top">
       <button class="icon-btn" id="quit" aria-label="Stop"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>
       <div class="bar"><i id="bar"></i></div>
+      <button class="eye-btn" id="eye" aria-label="Pip's eyes">👁 Eyes</button>
       <div class="stat"><svg><use href="#i-star-fill"/></svg><span id="stars">0</span></div>
     </div>
     <div class="turns">
@@ -149,6 +155,7 @@
     </div>
     <div class="stage">
       <div class="pip-wrap"><svg class="pip small" id="pip" data-mood="happy"><use href="#pip"/></svg><div class="bubble" id="say"></div></div>
+      <img class="cam" id="cam" alt="What Pip sees">
       <div class="side">Pip's side</div>
       <div class="grid" id="grid"></div>
       <div class="side">Your side</div>
@@ -266,7 +273,7 @@ function renderPalette() {
 
 function renderFooter() {
   const ph = S.phase;
-  const key = ph === "child_turn" ? "pip" : ph === "need_supply" ? "retry" : S.scan_stuck ? "rescan" : ["pip_turn", "pip_check", "pointing", "child_check", "clear"].includes(ph) ? "wait" : "";
+  const key = ph === "child_turn" ? "pip" : ph === "need_supply" ? "retry" : S.scan_stuck ? "rescan" : ["pip_turn", "pip_check", "pointing", "child_check", "clear", "bank_check"].includes(ph) ? "wait" : "";
   if ($("footer").dataset.k === key) return;
   $("footer").dataset.k = key;
   $("footer").innerHTML = key === "pip" ? `<button class="btn blue" id="f-pip">Your turn, Pip!</button>`
@@ -344,6 +351,17 @@ $("go").onclick = () => { sfx.tap(); act("/api/buddy/turns/start"); };
 $("next").onclick = () => { sfx.tap(); act("/api/buddy/turns/next"); };
 $("quit").onclick = () => { if (confirm("Stop building?")) act("/api/buddy/turns/quit"); };
 $("done").onclick = async () => { await act("/api/buddy/turns/quit"); location.href = "/buddy"; };
+
+
+// "Pip's eyes": the live camera (perception's frame server), refreshed while it is open
+let camOn = false, camTimer = null;
+function toggleCam() {
+  camOn = !camOn; $("eye").classList.toggle("on", camOn); $("cam").classList.toggle("on", camOn);
+  clearInterval(camTimer);
+  const load = () => { const img = new Image(); img.onload = () => { $("cam").src = img.src; }; img.onerror = () => { if (camOn) toast("The camera is off. Turn on the table (⚙ on the home screen)."); camOn && toggleCam(); }; img.src = `/buddy/camera.jpg?t=${Date.now()}`; };
+  if (camOn) { load(); camTimer = setInterval(load, 700); }
+}
+$("eye").onclick = toggleCam;
 
 async function poll1() { try { if (!busy) { S = await api("/api/buddy/turns/state"); render(); } } catch (e) {} }
 async function poll() { await poll1(); setTimeout(poll, S && S.phase !== "home" && S.phase !== "over" ? 400 : 1000); }

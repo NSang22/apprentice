@@ -6,7 +6,7 @@ of a block barely moves with lighting (red 23-30 deg, yellow 102-105) while ligh
 chroma do, so matching leans on hue.
 
 ColorMemory remembers what each colour name looked like in the current setup. Names come from
-a vision model (gemini_namer) when available; PRIOR is only a rough last-resort guess.
+a vision model (vision_namer, OpenAI) when available; PRIOR is only a rough last-resort guess.
 """
 
 import json
