@@ -1,19 +1,19 @@
 {
   "joint_offsets_deg": {
-    "shoulder_pan": 3.141,
-    "shoulder_lift": -3.705,
-    "elbow_flex": -9.494,
-    "wrist_flex": -1.735
+    "shoulder_pan": 7.158,
+    "shoulder_lift": -4.331,
+    "elbow_flex": -10.076,
+    "wrist_flex": 0.34
   },
   "sheet_to_base": {
-    "theta_deg": 107.194,
-    "tx_mm": 115.39,
-    "ty_mm": -96.88,
+    "theta_deg": 101.042,
+    "tx_mm": 79.59,
+    "ty_mm": -102.46,
     "mirror_y": true
   },
-  "table_z_mm": -6.7,
-  "tip_extension_mm": 9.06,
-  "fit_rms_mm": 1.94,
-  "n_points": 8,
-  "mode": "quick+middle"
+  "table_z_mm": 17.82,
+  "tip_extension_mm": -11.14,
+  "fit_rms_mm": 2.05,
+  "n_points": 16,
+  "mode": "full"
 }

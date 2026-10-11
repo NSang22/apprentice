@@ -15,7 +15,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from .config import CAMERA_HEIGHT_MM, ROOT, SHEET_SPEC
+from .config import CAMERA_HEIGHT_MM, CAMERA_XYZ_MM, ROOT, SHEET_SPEC
 
 # The camera is fixed, so the sheet only needs one good view. With only the 2 bottom tags (top
 # ones lost to glare or covered by blocks) the pixel->mm map extrapolated the top corners 20-50 px
@@ -118,6 +118,8 @@ class SheetLocalizer:
                     print(f"  (only {len(ids)} sheet tags visible and no earlier 3-tag view of this setup: positions "
                           "in the upper rows may be off by 10+ mm. Get 3 tags in view once to fix this.)")
                     self.warned = True
+        if CAMERA_XYZ_MM is not None:  # measured once: steadier than any single frame's estimate
+            camera_xyz = np.float64(CAMERA_XYZ_MM)
         resid = cv2.perspectiveTransform(img.reshape(-1, 1, 2), H).reshape(-1, 2) - obj
         return SheetPose(H, ids, float(np.linalg.norm(resid, axis=1).mean()), camera_xyz)
 
