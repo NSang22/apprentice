@@ -9,8 +9,8 @@ from brain.session import Session
 from brain.settings import DEMO_LESSON
 from shared.schemas import Lesson, empty_board
 
-FIXTURES = Path(__file__).parent / "fixtures"
-HUMAN, ROBOT = "s-20261011-003036", "s-20261011-003021"  # session ids inside the brain fixtures
+FIXTURES = Path(__file__).parent / "fixtures"  # re-recorded by python -m analytics.record_fixtures, never by hand
+HUMAN, ROBOT = (read_journal(FIXTURES / f"brain_journal_{m}.jsonl")[0][0]["session"] for m in ("human", "robot"))
 
 
 def test_step_back_counts_one_pass_per_step_and_restarts_the_step_clock(tmp_path):
@@ -98,17 +98,23 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
         assert 0 <= s.steps_completed <= s.n_steps
         assert s.outcome != "complete" or s.steps_completed == s.n_steps
 
-    # Hand-checked against the fixture lines.
+    # Hand-checked against the fixture lines (scenarios in analytics/record_fixtures.py).
     human = [a for a in t.attempts if a.session == HUMAN]
-    assert len(human) == 7  # 6 passes + 1 mistake; the 6 "still placing" checks are skipped
-    assert [(a.verdict, a.attempt_no, a.hint_level_before, a.fault_cell) for a in human if a.step == 2] == [
-        ("WRONG_CELL", 1, 0, "C2"), ("PASS", 2, 1, None)]
-    assert (human[0].step_color, human[0].step_cell, human[0].step_level) == ("red", "A1", 0)  # tests/fixtures lesson
+    assert len(human) == 10  # 6 first passes + 4 mistakes; still placing, the unreadable block, re-passes skipped
+    assert [(a.verdict, a.attempt_no, a.hint_level_before, a.fault_cell) for a in human if a.step == 1] == [
+        ("WRONG_CELL", 1, 0, "B1"), ("WRONG_CELL", 2, 1, "C2"), ("WRONG_COLOR", 3, 2, "C1"),
+        ("WRONG_CELL", 4, 3, "B1"), ("PASS", 5, 4, None)]
+    assert (human[0].step_color, human[0].step_cell, human[0].step_level) == ("red", "A1", 0)  # lessons/sample-flat-v1.json
     robot = [a for a in t.attempts if a.session == ROBOT]
-    assert len(robot) == 7  # 6 passes + 1 wrong cell; the first "still placing" check comes before any place, so it is skipped
+    assert len(robot) == 8  # 3 first passes, 1 retry that passes, the judge's moved cube, 3 misses on A3
     assert [(a.verdict, a.retry, a.fault_cell) for a in robot if a.step == 1] == [
         ("WRONG_CELL", 0, "B1"), ("PASS", 1, None)]
-    assert robot[0].step_color == "red"  # lessons/sample-flat-v1.json
+    assert [(a.verdict, a.attempt_no, a.fault_cell) for a in robot if a.step == 0] == [
+        ("PASS", 1, None), ("WRONG_CELL", 2, "A2")]  # the judge slid red to A2: a revisit, then a re-pass (skipped)
+    assert [(a.verdict, a.retry) for a in robot if a.step == 3] == [("WRONG_CELL", 0), ("WRONG_CELL", 1), ("WRONG_CELL", 2)]
+    rows = {s.session: s for s in t.sessions}
+    assert (rows[HUMAN].steps_completed, rows[HUMAN].outcome) == (6, "complete")
+    assert (rows[ROBOT].steps_completed, rows[ROBOT].outcome) == (3, "robot_stopped")
     # After a failed place, "still placing" is a failed robot attempt, as in the brain.
     assert any(a.mode == "robot" and a.verdict == "MISSING" and a.fault_cell is None for a in t.attempts)
 
