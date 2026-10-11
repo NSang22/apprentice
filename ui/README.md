@@ -47,7 +47,9 @@ or the module fails, the 2D board takes over automatically.
 | socket closed | last state dimmed, "Reconnecting to Apprentice...", retries every 0.5 to 3 s |
 
 The board is drawn from the student's side, `human_side` in each SessionState (set in
-`brain/settings.py`). For `row3`: column A on the left, row 3 nearest, robot side at the top.
+`brain/settings.py`). Cells follow the printed sheet: the letter is the row, the number the column.
+For `row3` (the default, student opposite the robot): row A at the top (robot side), row C nearest,
+column 1 on the left.
 
 The ghost (2D and 3D) sits at `expected_cell` / `expected_level`, colored from `final_board`.
 `phase` and `robot_status` values are defined once, in `shared/schemas.py`; the monitor does

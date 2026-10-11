@@ -6,9 +6,11 @@
 // app.js; any failure (no WebGL) keeps the 2D board. All assets are drawn here at runtime.
 import * as THREE from "./vendor/three.module.min.js";
 
-const COLUMNS = ["A", "B", "C"];
-const ROWS = ["1", "2", "3"];
-const CELLS = COLUMNS.flatMap((c) => ROWS.map((r) => c + r));
+// Cells follow the printed sheet: letter = row (A along the robot's edge), number = column.
+const ROW_LETTERS = ["A", "B", "C"];
+const COLUMN_NUMBERS = ["1", "2", "3"];
+const CELLS = ROW_LETTERS.flatMap((r) => COLUMN_NUMBERS.map((c) => r + c));
+const TAG_CORNERS = ["A1", "A3", "C3", "C1"];   // tag id -> the corner cell it sits at
 
 // 1 unit = one cell (57.15 mm). Cubes are 48 mm foam.
 const CUBE = 48 / 57.15;
@@ -107,7 +109,7 @@ function stripeTexture() {
 
 // Position of a cell as the student sees it: x left to right, z far (-) to near (+).
 function cellXZ(cell, side) {
-  const col = COLUMNS.indexOf(cell[0]), row = ROWS.indexOf(cell[1]);
+  const col = COLUMN_NUMBERS.indexOf(cell[1]), row = ROW_LETTERS.indexOf(cell[0]);
   const [sx, sy] = side === "row1" ? [2 - col, 2 - row] : [col, row];
   return [sx - 1, sy - 1];
 }
@@ -146,15 +148,16 @@ function paperTexture(side) {
     g.font = `700 ${0.4 * PX}px Segoe UI, system-ui, sans-serif`;
     g.textAlign = "center";
     g.textBaseline = "middle";
-    for (const col of COLUMNS) g.fillText(col, X(cellXZ(col + "1", side)[0]), Z(1.85));
-    for (const row of ROWS) g.fillText(row, X(-1.85), Z(cellXZ("A" + row, side)[1]));
+    for (const col of COLUMN_NUMBERS) g.fillText(col, X(cellXZ("A" + col, side)[0]), Z(1.85));
+    for (const row of ROW_LETTERS) g.fillText(row, X(-1.85), Z(cellXZ(row + "1", side)[1]));
     g.fillStyle = "#8a8a8a";
     g.font = `700 ${0.24 * PX}px Segoe UI, system-ui, sans-serif`;
     g.fillText("YOUR SIDE", X(0), Z(2.32));
 
     // Four corner tags: black square, white ring, a fixed 4x4 bit pattern per id.
     const patterns = [0b1011010011100101, 0b0110100111010011, 0b1100101101100110, 0b0011110010101101];
-    const corners = [[-1.82, 2.2], [1.82, 2.2], [1.82, -2.2], [-1.82, -2.2]];
+    // Each tag in the paper corner next to its cell (tag 0 at A1, 1 at A3, 2 at C3, 3 at C1).
+    const corners = TAG_CORNERS.map((c) => cellXZ(c, side)).map(([x, z]) => [Math.sign(x) * 1.82, Math.sign(z) * 2.2]);
     corners.forEach(([u, v], id) => {
       const s = 0.62 * PX, x0 = X(u) - s / 2, y0 = Z(v) - s / 2, cellPx = s / 8;
       g.fillStyle = "#111";
