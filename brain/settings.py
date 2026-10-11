@@ -34,7 +34,10 @@ SHOW_ME_POST_S = 1.0  # and ends this long after
 HOVER_HOLD_S = 3.0    # robot holds over the target cell this long, then returns home
 
 # Robot HTTP client. Calls block until the motion finishes, so motion timeouts are generous.
-ROBOT_MOTION_TIMEOUT_S = 30.0
+ROBOT_MOTION_TIMEOUT_S = 120.0  # one robot.api place can include the executor's own retries
+# The real arm (--robot http) retries inside robot/executor.py already, so the session allows one
+# more attempt on top of that; the fake robot keeps shared MAX_ROBOT_RETRIES (2).
+HTTP_ROBOT_MAX_RETRIES = 1
 ROBOT_STATUS_TIMEOUT_S = 2.0
 # With --robot http the server polls GET /status and treats arm_clear as false unless the
 # latest reply says at_home and is no older than ROBOT_STATUS_MAX_AGE_S.
