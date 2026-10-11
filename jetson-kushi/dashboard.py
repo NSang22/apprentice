@@ -56,6 +56,7 @@ from pydantic import BaseModel  # noqa: E402
 from websockets.asyncio.client import connect  # noqa: E402
 
 from buddy.routes import game as buddy_game, router as buddy_router, table_task as buddy_table_task  # noqa: E402
+from buddy.table import main_checkout  # noqa: E402
 from robot import web_control  # noqa: E402
 from robot.control_shared import ARM_SHEET_CALIB, PLACEMENT_CORR, file_age_str  # noqa: E402
 from robot.perception import config as cam_config  # noqa: E402
@@ -243,19 +244,8 @@ def int_list(text: str) -> list[int]:
     return [int(x) for x in re.findall(r"\d+", text or "")][:6]
 
 
-def main_checkout() -> Path:
-    """The repo's main checkout (first entry of git worktree list). The camera and the arm run from
-    there: the gitignored calibration (perception/calib, robot/outputs, placement_correction.json)
-    lives in that folder only, not in other worktrees such as apprentice-buddy."""
-    try:
-        out = subprocess.run(["git", "worktree", "list", "--porcelain"], capture_output=True, text=True,
-                             timeout=5, cwd=str(REPO_ROOT)).stdout
-        first = next(l[len("worktree "):] for l in out.splitlines() if l.startswith("worktree "))
-        return Path(first)
-    except Exception:
-        return REPO_ROOT
-
-
+# The camera and the arm run from the main checkout, where the gitignored calibration lives
+# (buddy.table.main_checkout, shared with Buddy's robot-vision helper).
 TABLE_REPO = main_checkout()
 FRAME_PORT = 8771          # perception.publish's local frame server, which robot.api reads
 REST_WAIT_S = 90.0         # how long the arm may take to set itself down before stop gives up
@@ -857,6 +847,7 @@ async def lifespan(_app):
             task.cancel()
         for svc in reversed(list(SERVICES.values())):  # the arm rests before its camera goes away
             await asyncio.to_thread(svc.stop)
+        buddy_game.eyes.close()
         hub.release()
 
 

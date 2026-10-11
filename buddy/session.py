@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Optional
 
 from buddy import recall
-from buddy.table import Pip, TableBoard
+from buddy.table import Pip, RobotEyes, TableBoard, blocks_to_board, board_diff
 from shared.config import CELLS, REPO_ROOT
 
 DATA_DIR = REPO_ROOT / "data" / "buddy"
@@ -102,14 +102,16 @@ class Profile:
 
 class BuddySession:
     def __init__(self, table: Optional[TableBoard] = None, pip: Optional[Pip] = None,
-                 clock=time.time, rng: Optional[random.Random] = None):
+                 eyes: Optional[RobotEyes] = None, clock=time.time, rng: Optional[random.Random] = None):
         self.clock = clock
         self.rng = rng or random.Random()
         self.lock = threading.RLock()
         self.profile = Profile()
         self.colors = default_colors()
         self.table = table or TableBoard()
-        self.pip = pip or Pip(self.table)
+        self.eyes = eyes or RobotEyes()
+        self.pip = pip or Pip(self.table, self.eyes)
+        self.last_sync: Optional[dict] = None    # the last scan: robot vs camera, for grown-ups
         self._reset()
 
     def _reset(self) -> None:
@@ -125,6 +127,9 @@ class BuddySession:
         self.until = 0.0                         # end of the current timed phase
         self.scan_since = 0.0
         self.scan_stuck = False
+        self.camera_board: Optional[dict] = None  # perception's settled board for this scan
+        self.eyes_busy = False
+        self.eyes_result: Optional[dict] = None
         self.grade: Optional[recall.Grade] = None
         self.hint: Optional[str] = None
         self.removing: list[str] = []
@@ -168,6 +173,8 @@ class BuddySession:
                 raise ValueError("I can't see the table yet. Start the camera first (scripts/jetson_up.sh), "
                                  "or switch to Practice.")
             self._reset()
+            if self.source == "table":
+                self.eyes.warm()  # load the robot's vision now, so the first scan is quick
             self.game = game
             self.session_id = time.strftime("b-%Y%m%d-%H%M%S")
             p = self.profile.data
@@ -195,9 +202,47 @@ class BuddySession:
 
     def rescan(self) -> None:
         with self.lock:
-            if self.phase == "scan":
-                self.scan_since, self.scan_stuck = self.table.begin_scan(), False
-                self.until = self.clock() + SCAN_STUCK_S
+            if self.phase == "scan" and not self.eyes_busy:
+                self._restart_scan()
+
+    def _restart_scan(self) -> None:
+        self.scan_since, self.scan_stuck = self.table.begin_scan(), False
+        self.camera_board, self.eyes_result = None, None
+        self.until = self.clock() + SCAN_STUCK_S
+
+    def _look_with_robot_eyes(self) -> None:
+        """The robot's own vision reads the board on a worker thread (a Gemini call can take seconds)."""
+        self.eyes_busy, self.eyes_result = True, None
+
+        def job():
+            try:
+                result = self.eyes.scan()
+            except Exception as e:
+                result = {"ok": False, "error": str(e)}
+            with self.lock:
+                self.eyes_result, self.eyes_busy = result, False
+        threading.Thread(target=job, daemon=True).start()
+
+    def _scanned(self) -> None:
+        """Both readings are in: grade the robot's, record where the camera disagrees."""
+        res, camera = self.eyes_result, self.camera_board
+        self.eyes_result = None
+        if res and res.get("ok"):
+            board, source = blocks_to_board(res["blocks"]), "robot"
+        else:  # the robot's vision is down: the camera's settled board still grades fairly
+            board, source = camera, "camera"
+        diffs = board_diff(board, camera) if source == "robot" else {}
+        self.last_sync = {"t": round(self.clock(), 1), "source": source, "agree": not diffs, "diffs": diffs,
+                          "naming": (res or {}).get("naming"), "error": None if source == "robot" else (res or {}).get("error"),
+                          "robot": board if source == "robot" else None, "camera": camera}
+        self._log("scan", {"round": self.round, "attempt": self.attempt, **self.last_sync,
+                           "blocks": (res or {}).get("blocks")})
+        if recall.has_unknown(board):
+            cell = next(c for c, s in board.items() if "unknown" in s)
+            self.mood, self.say = "think", f"I can't tell the block on {cell}. Nudge it to the middle of its square!"
+            self._restart_scan()
+            return
+        self._graded(board)
 
     def choose(self, kind: str) -> None:
         """The child's pick after a miss: "hint" (Pip points) or "fix" (Pip takes wrong blocks off)."""
@@ -263,23 +308,25 @@ class BuddySession:
                     self._graded(self.board)
                 else:
                     self.phase = "scan"
-                    self.scan_since, self.scan_stuck = self.table.begin_scan(), False
-                    self.until = now + SCAN_STUCK_S
+                    self._restart_scan()
                     self.mood, self.say = "look", "Time's up! Hands up so I can see!"
             elif self.phase == "scan":
-                board = self.table.scanned(self.scan_since)
-                if board is None:
-                    if not self.table.hands_away():
+                if self.eyes_result is not None:
+                    self._scanned()
+                elif self.eyes_busy:
+                    self.mood, self.say = "look", "Pip is looking closely..."
+                else:
+                    # the camera says hands are off and the board has settled: now the robot looks
+                    board = self.table.scanned(self.scan_since)
+                    if board is not None:
+                        self.camera_board = board
+                        self._look_with_robot_eyes()
+                        self.mood, self.say = "look", "Pip is looking closely..."
+                    elif not self.table.hands_away():
                         self.mood, self.say = "look", "Hands up! I need to see the board."
                     elif now >= self.until and not self.scan_stuck:
                         self.scan_stuck = True
                         self.mood, self.say = "think", "Hmm, I can't see the board well. Tap Scan again!"
-                elif recall.has_unknown(board):
-                    cell = next(c for c, s in board.items() if "unknown" in s)
-                    self.mood, self.say = "think", f"I can't tell the color on {cell}. Nudge it to the middle!"
-                    self.scan_since = self.table.begin_scan()
-                else:
-                    self._graded(board)
             elif self.phase == "helping":
                 done = (not self.pip.busy) if self.arm_used else now >= self.until
                 if done:
@@ -417,6 +464,9 @@ class BuddySession:
                 "profile": {k: p[k] for k in ("name", "avatar", "xp", "best_span", "lessons", "stars")}
                            | {"streak": self.profile.streak(), "days": len(p["days"])},
                 "table": self.table.status(),
+                "sync": self.last_sync,
+                "eyes": {"ready": bool(self.eyes.info.get("ready")), "gemini": self.eyes.info.get("gemini"),
+                         "error": self.eyes.error, "looking": self.eyes_busy},
                 "pip": {"busy": self.pip.busy, "step": self.pip.step, "arm": self.arm_used},
                 "round": self.round,
                 "rounds": len(recall.BLOCKS_PER_ROUND),

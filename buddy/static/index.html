@@ -200,6 +200,7 @@
   .power-row + .power-row { border-top: 2px solid var(--line); }
   .power-row b.on { color: var(--green-d); } .power-row b.off { color: #afafaf; } .power-row b.outside { color: var(--orange-d); }
   #power .note { min-height: 18px; }
+  .side { font-size: 12px; font-weight: 800; color: #afafaf; text-transform: uppercase; letter-spacing: .08em; margin: -6px 0; }
 </style>
 </head>
 <body>
@@ -263,7 +264,9 @@
         <div class="bubble" id="g-say"></div>
       </div>
       <div class="hands" id="hands">🙌</div>
+      <div class="side">Pip's side</div>
       <div class="grid" id="grid"></div>
+      <div class="side">Your side</div>
       <div class="timer" id="timer"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="17" fill="none" stroke="#e5e5e5" stroke-width="5"/>
         <circle id="t-ring" cx="20" cy="20" r="17" fill="none" stroke="#1cb0f6" stroke-width="5" stroke-linecap="round" stroke-dasharray="106.8" stroke-dashoffset="0"/></svg><b id="t-num"></b></div>
       <div class="palette" id="palette"></div>
@@ -325,6 +328,8 @@
   <div class="power-rows">
     <div class="power-row"><span>Camera</span><b id="pw-camera">...</b></div>
     <div class="power-row"><span>Pip's arm</span><b id="pw-arm">...</b></div>
+    <div class="power-row"><span>Pip's eyes</span><b id="pw-eyes">...</b></div>
+    <div class="power-row"><span>Last scan</span><b id="pw-sync">none yet</b></div>
   </div>
   <p class="note" id="pw-step"></p>
   <div class="two" style="margin-bottom:12px">
@@ -399,7 +404,9 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const PIP = { teal: ["#14c4a8", "#0e9a84"], purple: ["#a560e8", "#7d3fc0"], red: ["#ff4b4b", "#d63434"], yellow: ["#ffc800", "#d9a400"] };
-const ROWS = ["1", "2", "3"], COLS = ["A", "B", "C"];
+// Cells as printed on the sheet (perception/cells.py): letter = row, A on Pip's (the arm's) edge,
+// C on the child's edge; number = column, 1 to 3 left to right for the child. Drawn the child's way.
+const ROWS = ["A", "B", "C"], COLS = ["1", "2", "3"];
 const GAME_ICON = { recall: "i-brain", turns: "i-turns", teach: "i-teach" };
 let S = null, tab = "home", chosen = null, avatarPick = "teal", lastPhase = null, deadline = 0, busy = false, lastSheet = null, setupOpen = false;
 
@@ -459,7 +466,7 @@ function renderGrid() {
   const covered = (ph === "build" && !practice && S.attempt === 1) || ph === "scan";
   let html = "";
   for (const r of ROWS) for (const c of COLS) {
-    const cell = c + r, built = (board[cell] || [])[0];
+    const cell = r + c, built = (board[cell] || [])[0];
     let inner = "", cls = "";
     if (ph === "show") inner = pat[cell] ? blockHtml(pat[cell]) : "";
     else if (ph === "result" && grade) {
@@ -685,6 +692,16 @@ const PW_LABEL = { on: "On", off: "Off", outside: "On (started outside the app)"
 function renderPower(p) {
   for (const k of ["camera", "arm"]) { const el = $(`pw-${k}`); el.textContent = PW_LABEL[p[k]] || p[k]; el.className = p[k]; }
   $("pw-step").textContent = p.error ? `⚠ ${p.error}` : p.step;
+  if (S) {
+    const e = S.eyes || {}, y = S.sync;
+    $("pw-eyes").textContent = e.ready ? `ready${e.gemini ? " · Gemini on" : " · no Gemini"}` : e.error ? "not working" : "starts with a table game";
+    $("pw-eyes").className = e.ready ? "on" : "off";
+    $("pw-sync").textContent = !y ? "none yet"
+      : y.source !== "robot" ? `camera only (${y.error || "robot eyes down"})`
+      : y.agree ? `robot and camera agree${y.naming ? ` · colors from ${y.naming}` : ""}`
+      : "differ on " + Object.entries(y.diffs).map(([c, [r, k]]) => `${c} (robot ${r || "empty"}, camera ${k || "empty"})`).join(", ");
+    $("pw-sync").className = !y ? "off" : y.agree ? "on" : "outside";
+  }
   $("pw-on").disabled = p.busy || (p.camera !== "off" && p.arm !== "off");
   $("pw-off").disabled = p.busy || (p.camera !== "on" && p.arm !== "on");
 }

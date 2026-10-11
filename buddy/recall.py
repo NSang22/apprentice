@@ -44,8 +44,10 @@ def flat(board: dict[str, list[str]]) -> dict[str, str]:
 
 
 def mirror(cell: str) -> str:
-    """The same row, other side (A <-> C): a left-right mix-up."""
-    return {"A": "C", "B": "B", "C": "A"}[cell[0]] + cell[1]
+    """The same row, other side: a left-right mix-up for the child. Cells are named as printed on
+    the sheet (perception/cells.py): the letter is the row, the number the column (1 to 3, left to
+    right for a child opposite the arm), so left and right are columns 1 and 3."""
+    return cell[0] + {"1": "3", "2": "2", "3": "1"}[cell[1]]
 
 
 RIGHT, WRONG_COLOR, MISSING, EXTRA = "right", "wrong_color", "missing", "extra"

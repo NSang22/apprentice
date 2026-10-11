@@ -1,17 +1,20 @@
-"""The real table for Buddy: the camera's board (perception ws :8765) and Pip's arm (robot API :8770).
+"""The real table for Buddy: the camera's board, the robot's own eyes, and Pip's arm.
 
-Neither the camera nor the arm is opened here. scripts/jetson_up.sh starts perception.publish
-(which owns the webcam) and robot.api (which owns the servo bus); Buddy is one more client of
-each, like brain.server.
+Nothing here opens the camera or the servo bus. perception.publish owns the webcam (and shares
+frames on :8771), robot.api owns the arm (:8770); Buddy is one more client of each.
 
-Board: every GridState goes through brain.stabilizer, unchanged. scan() resets it, so the board
-it returns settled after the scan began: the child's final build, never one from before time ran
-out. Hands over the grid keep frames out of the stabilizer, so a scan waits for "hands up".
+Two readings of the board, kept in sync:
+  TableBoard  perception's GridState stream (ws :8765) through brain.stabilizer, unchanged. It
+              answers "are hands off?" and "has the board settled?" ten times a second.
+  RobotEyes   the arm's own vision (buddy/eyes_worker.py, run in the main checkout): robot
+              segmentation, colour memory, Gemini when unsure. It decides what the child built,
+              so the board Buddy grades is the board the arm acts on.
+Each scan records both, and where they disagree (buddy/session.py logs it, the phone shows it).
 
-Arm: robot/api.py names cells letter = row, number = column (robot/README.md, decision 1);
-shared/config.py and perception name them letter = column, number = row. Both index the same
-sheet frame (x along tag 0 -> 1, y along tag 0 -> 3), so the names are transposed: shared C1 is
-robot A3. to_robot_cell() is the only place Buddy crosses that boundary.
+Cell names: perception/cells.py and robot/api.py both name cells as printed on the sheet (letter
+= row from the arm's edge, number = column). Pip never assumes that: the cell map pairs each
+name with the robot cell whose centre is the same point on the sheet (eyes_worker.cell_map, or
+local_cell_map here), so a future convention change cannot send the arm to the wrong square.
 
 Safety: every arm move waits until the camera saw hands clear in a fresh frame, runs one at a
 time, and only points (hover) or takes a block off (pick). Pip announces each move on the phone.
@@ -21,26 +24,82 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import queue
+import subprocess
+import sys
 import threading
 import time
+from pathlib import Path
 from typing import Callable, Optional
 
 from websockets.asyncio.client import connect
 
 from brain.robot_client import HttpRobotClient
 from brain.stabilizer import Stabilizer
-from shared.config import GRID_WS_PORT, ROBOT_HTTP_PORT
+from shared.config import CELLS, GRID_WS_PORT, REPO_ROOT, ROBOT_HTTP_PORT, UNKNOWN
 from shared.schemas import GridState
 
 FRESH_S = 1.0             # a frame older than this does not count as "the camera sees it"
 HANDS_WAIT_S = 20.0       # how long an arm move waits for hands to leave the board
 HOVER_HOLD_S = 3.0        # Pip points this long, then goes home
+EDGE_MM = 8.0             # a block centre closer than this to a cell line reads "unknown" (nudge it)
+CELL_MATCH_MM = 1.0       # a cell-map pair must name the same sheet point to within this
+EYES_START_S = 90.0       # the robot-vision helper's first import of torch/lerobot is slow
+EYES_SCAN_S = 45.0        # one scan, including a Gemini call when the colour memory is unsure
+WORKER = Path(__file__).resolve().parent / "eyes_worker.py"
 
 
-def to_robot_cell(cell: str) -> str:
-    """shared/perception cell name -> robot/api.py cell name (a transpose, see module docstring)."""
-    col, row = "ABC".index(cell[0]), int(cell[1])
-    return "ABC"[row - 1] + str(col + 1)
+def main_checkout() -> Path:
+    """The repo's main checkout (first entry of git worktree list). The camera, the arm and the
+    robot's vision run from there: the gitignored calibration, colour memory and API keys live in
+    that folder only, not in other worktrees such as apprentice-buddy."""
+    try:
+        out = subprocess.run(["git", "worktree", "list", "--porcelain"], capture_output=True, text=True,
+                             timeout=5, cwd=str(REPO_ROOT)).stdout
+        return Path(next(l[len("worktree "):] for l in out.splitlines() if l.startswith("worktree ")))
+    except Exception:
+        return REPO_ROOT
+
+
+def local_cell_map() -> dict[str, str]:
+    """name -> robot cell name, by matching centres on the sheet (this checkout's code)."""
+    import numpy as np
+    from perception.cells import cell_center_mm
+    from robot.perception.sheet import cell_center as robot_cell_center
+
+    out = {}
+    for cell in CELLS:
+        target = np.array(cell_center_mm(cell))
+        best = min(CELLS, key=lambda r: float(np.linalg.norm(np.array(robot_cell_center(r)) - target)))
+        if float(np.linalg.norm(np.array(robot_cell_center(best)) - target)) > CELL_MATCH_MM:
+            raise RuntimeError(f"no robot cell at perception's {cell}: the two grids disagree")
+        out[cell] = best
+    return out
+
+
+def blocks_to_board(blocks: list[dict], edge_mm: float = EDGE_MM) -> dict[str, list[str]]:
+    """The robot's blocks -> a board. Off the grid (the supply spots) is ignored; a block near a
+    cell line reads "unknown" so the game asks for a nudge instead of guessing its square."""
+    board: dict[str, list[str]] = {c: [] for c in CELLS}
+    for b in blocks:
+        cell = b.get("cell")
+        if cell not in board:
+            continue
+        near_line = b.get("edge_mm") is not None and b["edge_mm"] < edge_mm
+        board[cell].append(UNKNOWN if near_line else b["color"])
+    return board
+
+
+def board_diff(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict[str, list]:
+    """Cells where two boards disagree: {cell: [what a has, what b has]} (bottom block, or None)."""
+    out = {}
+    for cell in CELLS:
+        x = a.get(cell)[0] if a.get(cell) else None
+        y = b.get(cell)[0] if b.get(cell) else None
+        if x != y:
+            out[cell] = [x, y]
+    return out
 
 
 class TableBoard:
@@ -53,7 +112,6 @@ class TableBoard:
         self.connected = False
         self.last_t = 0.0                    # when the last frame arrived (time.time)
         self.hands_clear = False
-        self.arm_clear = False
         self.latest: Optional[dict] = None   # raw board of the last frame
         self.stable: Optional[dict] = None   # last board the stabilizer emitted
         self.stable_t = 0.0
@@ -77,7 +135,7 @@ class TableBoard:
             return
         with self.lock:
             self.last_t = time.time()
-            self.hands_clear, self.arm_clear, self.latest = gs.hands_clear, gs.arm_clear, gs.board
+            self.hands_clear, self.latest = gs.hands_clear, gs.board
             board = self.stabilizer.feed(gs)
             if board is not None:
                 self.stable, self.stable_t = board, time.time()
@@ -106,16 +164,98 @@ class TableBoard:
         return {"connected": self.connected, "fresh": self.fresh(), "hands_clear": self.hands_away()}
 
 
+class RobotEyes:
+    """Client for buddy/eyes_worker.py, started once in the main checkout and kept warm."""
+
+    def __init__(self, repo: Optional[Path] = None):
+        self.repo = repo or main_checkout()
+        self.proc: Optional[subprocess.Popen] = None
+        self.lines: "queue.Queue[str]" = queue.Queue()
+        self.lock = threading.Lock()
+        self.info: dict = {}                 # the worker's start-up report (cell map, gemini)
+        self.log: list[str] = []             # the robot code's own output, newest last
+        self.error: Optional[str] = None
+
+    def _reader(self, proc: subprocess.Popen) -> None:
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            if line.startswith("@@"):
+                self.lines.put(line[2:])
+            else:
+                self.log = (self.log + [line])[-200:]
+
+    def _reply(self, timeout_s: float) -> dict:
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            try:
+                return json.loads(self.lines.get(timeout=0.5))
+            except queue.Empty:
+                if self.proc is None or self.proc.poll() is not None:
+                    raise RuntimeError("the robot vision helper stopped (see the robot log lines)")
+        raise RuntimeError(f"no answer from the robot vision helper in {timeout_s:.0f} s")
+
+    def _ensure(self) -> None:
+        if self.proc is not None and self.proc.poll() is None:
+            return
+        env = {**os.environ, "PYTHONPATH": str(self.repo), "PYTHONUNBUFFERED": "1"}
+        self.lines = queue.Queue()
+        self.proc = subprocess.Popen([sys.executable, str(WORKER)], cwd=str(self.repo), env=env, text=True,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     bufsize=1, start_new_session=True)
+        threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
+        self.info = self._reply(EYES_START_S)
+
+    def warm(self) -> None:
+        """Start the helper in the background (its imports take a while) so the first scan is quick."""
+        def job():
+            try:
+                with self.lock:
+                    self._ensure()
+                self.error = None
+            except Exception as e:
+                self.error = str(e)
+        threading.Thread(target=job, daemon=True).start()
+
+    def scan(self) -> dict:
+        """{ok, blocks: [{cell, color, center_mm, edge_mm, score}], naming} or {ok: False, error}."""
+        with self.lock:
+            try:
+                self._ensure()
+                self.proc.stdin.write("scan\n")
+                self.proc.stdin.flush()
+                return self._reply(EYES_SCAN_S)
+            except Exception as e:
+                self.error = str(e)
+                return {"ok": False, "error": str(e)}
+
+    def cell_map(self) -> dict[str, str]:
+        m = self.info.get("cell_map") or {}
+        if len(m) == len(CELLS) and all(v.get("error_mm", 99) <= CELL_MATCH_MM for v in m.values()):
+            return {c: v["robot"] for c, v in m.items()}
+        return local_cell_map()
+
+    def close(self) -> None:
+        if self.proc is not None and self.proc.poll() is None:
+            self.proc.terminate()
+
+
 class Pip:
     """Pip's arm moves, one at a time on a worker thread, so the phone never waits on a motion."""
 
-    def __init__(self, board: TableBoard, base_url: str = f"http://127.0.0.1:{ROBOT_HTTP_PORT}"):
+    def __init__(self, board: TableBoard, eyes: Optional[RobotEyes] = None,
+                 base_url: str = f"http://127.0.0.1:{ROBOT_HTTP_PORT}"):
         self.board = board
+        self.eyes = eyes
         self.client = HttpRobotClient(base_url)
         self.busy = False
         self.step = ""                       # what Pip is doing, for the phone
         self.error: Optional[str] = None
         self.left_over: list[str] = []       # cells Pip could not clear (the child takes those off)
+
+    def to_robot_cell(self, cell: str) -> str:
+        """The robot's name for the square the camera calls `cell` (same point on the sheet)."""
+        mapping = self.eyes.cell_map() if self.eyes else local_cell_map()
+        return mapping[cell]
 
     def reachable(self) -> bool:
         reply = self.client.status()  # {busy, at_home, last_error} on success, {"ok": False, ...} on failure
@@ -152,7 +292,7 @@ class Pip:
                 self.error = "hands"
                 return
             self.step = "moving"                    # hover blocks until the jaws are over the square
-            reply = self.client.hover(to_robot_cell(cell))
+            reply = self.client.hover(self.to_robot_cell(cell))
             if not reply.get("ok"):
                 self.error = reply.get("error", "hover failed")
                 return
@@ -168,7 +308,7 @@ class Pip:
                     self.error, self.left_over = "hands", cells[i:]
                     return
                 self.step = "removing"
-                reply = self.client.pick(to_robot_cell(cell), 0)
+                reply = self.client.pick(self.to_robot_cell(cell), 0)
                 if not reply.get("ok"):
                     self.error, self.left_over = reply.get("error", "pick failed"), cells[i:]
                     return
