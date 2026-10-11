@@ -12,7 +12,7 @@ import statistics
 from collections import Counter, defaultdict
 from typing import Any, Iterable, Optional
 
-from analytics.load import VALUES, Attempt, SessionRow, TaskStep
+from analytics.load import VALUES, Attempt, CameraChecks, SessionRow, TaskStep
 from shared.config import CELLS
 from shared.schemas import Verdict
 
@@ -136,9 +136,12 @@ def cell_error_map(attempts: list[Attempt], mode: str) -> dict[str, dict[str, di
 def hint_effectiveness(attempts: list[Attempt], by: tuple[str, ...] = ("failed_verdict", "hint_level")) -> list[dict]:
     """After a failed attempt, the share of next attempts (same session and step) that pass.
     hint_level is the hint showing at that next attempt. Robot attempts carry no hint level,
-    so they drop out. `by` may use failed_verdict, hint_level, step, mode."""
+    so they drop out. `by` may use failed_verdict, hint_level, step, mode.
+    Only tries up to the step's first pass count: a re-pass after a step_back is not an
+    attempt, so a mistake on a revisit has no next attempt to pair with."""
     pairs = []
     for tries in _by_session_step(attempts).values():
+        tries = tries[: next((i for i, a in enumerate(tries, 1) if a.passed), len(tries))]
         for failed, nxt in zip(tries, tries[1:]):
             if failed.passed or nxt.hint_level_before is None:
                 continue
@@ -249,6 +252,18 @@ def hints_file_effect(sessions: list[SessionRow], attempts: list[Attempt]) -> li
             "with_file": _step_summary([t for (sid, _), t in tries.items() if sid in with_file]),
             "without_file": _step_summary([t for (sid, _), t in tries.items() if sid not in with_file]),
         })
+    return out
+
+
+def camera_unreadable(rows: list[CameraChecks]) -> list[dict]:
+    """Per lesson_id and mode: stable boards graded, how many had a block the camera could not
+    read (WAITING with a fault_cell), and that share. A camera reliability number: the brain waits
+    on such a board instead of grading it, so each one costs time, never a wrong verdict."""
+    out = []
+    for k, group in _group(rows, ("mode",)).items():
+        boards, unreadable = sum(r.boards for r in group), sum(r.unreadable for r in group)
+        out.append({**_labels(k, ("mode",)), "boards": boards, "unreadable": unreadable,
+                    "share": None if boards == 0 else round(unreadable / boards, 4)})
     return out
 
 
