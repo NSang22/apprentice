@@ -458,8 +458,11 @@ async def run(args: argparse.Namespace) -> None:
                     for line in report:
                         print("  " + line, flush=True)
                     last_report = report
-            # "source" is an extra key GridState.from_dict ignores; brain.server records it as provenance.
-            broadcast(publisher.clients, json.dumps({**result.state.to_dict(), "source": "perception"}))
+            # "source", "grid" and "tags" are extra keys GridState.from_dict ignores. brain.server records
+            # "source" as provenance; scripts/check.py shows "grid" (not_locked, not_confirmed, locked, lost)
+            # and "tags" (tag ids seen this frame).
+            broadcast(publisher.clients, json.dumps({**result.state.to_dict(), "source": "perception",
+                                                     "grid": result.grid, "tags": result.tags}))
             if args.debug:
                 cv2.imshow("Apprentice perception",
                            annotate(frame, result, perceiver, note, f"{fps:.1f} fps   {step_ms:.0f} ms/frame",
