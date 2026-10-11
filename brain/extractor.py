@@ -16,6 +16,12 @@ A slot whose read changes (unknown to red, red to purple) with no empty board in
 the same cube. A cube that disappears deletes the step that placed it; a cube that moves is a
 removal plus a new step. t_video is when the board with the new cube first appeared.
 
+Transients: something that appeared in a slot, was removed before the end, and never had a known
+color from any source (camera or robot memory) while it was there, such as a hand read as a block.
+It is not a cube: no step, no correction, and one_cube_per_change does not count it. Each one is
+printed with a warning and listed in the extract file. Anything that ever had a known color, or
+is still on the board at the end, is a cube.
+
 Colors are never guessed. Three sources, in this order of trust (choose_color(), the one place
 a step's color is decided, so a color model can plug in there later):
   manual        --colors-file, per step (step numbers as printed in the step table):
@@ -105,6 +111,7 @@ class Extraction:
     steps: list[Cube]            # cubes still on the board at the end, in the order they appeared
     removed: list[Cube]          # cubes that appeared and later left (expert corrections)
     baseline: list[Cube]
+    transients: list[Cube] = field(default_factory=list)  # not cubes: see split_transients()
     frames: int = 0
     unusable: dict[str, int] = field(default_factory=dict)  # reason -> frames the stabilizer could not use
 
@@ -300,8 +307,45 @@ def manual_colors(entries: list[dict[str, Any]], cubes: list[Cube]) -> dict[int,
     return out
 
 
+RobotRead = Callable[[int, str], Optional[str]]
+
+
+def robot_reads_of(cube: Cube, robot_read: Optional[RobotRead]) -> list[str]:
+    """The robot-memory reads of a cube, one per settled board where it was the top of its cell."""
+    if robot_read is None:
+        return []
+    return [r for r in (robot_read(fid, cube.cell) for fid, top in cube.settles if top) if r is not None]
+
+
+def split_transients(ex: Extraction, robot_read: Optional[RobotRead] = None) -> None:
+    """A transient appeared in a slot, was removed before the end of the recording, and never had
+    a known color from any source while it was there (a hand or a sleeve read as a block). It is
+    not a cube: no step, no correction, and the gate does not count it (gate_boards). Anything
+    that ever had a known color, or is still on the board at the end, stays a cube."""
+    kept = []
+    for cube in ex.removed:
+        known = [r for r in cube.reads + robot_reads_of(cube, robot_read) if r != UNKNOWN]
+        (kept if known else ex.transients).append(cube)
+    ex.removed = kept
+
+
+def gate_boards(ex: Extraction) -> list[Board]:
+    """The settled boards with every transient taken out of the boards it sat on."""
+    masked: dict[int, list[tuple[str, int]]] = {}
+    for c in ex.transients:
+        for fid, _ in c.settles:
+            masked.setdefault(fid, []).append((c.cell, c.level))
+    out = []
+    for s in ex.settled:
+        board = copy_board(s.board)
+        for cell, level in masked.get(s.frame_id, []):
+            board[cell] = board[cell][:level]
+        out.append(board)
+    return out
+
+
 def step_rows(ex: Extraction, manual: Optional[dict[int, str]] = None,
-              robot_read: Optional[Callable[[int, str], Optional[str]]] = None) -> list[StepRow]:
+              robot_read: Optional[RobotRead] = None) -> list[StepRow]:
     """robot_read(frame id, cell): the robot-memory name of that cell's top block in a settled
     frame (None if not read). Each cube's robot reads follow the same agreement rule as the camera's."""
     manual = manual or {}
@@ -309,7 +353,7 @@ def step_rows(ex: Extraction, manual: Optional[dict[int, str]] = None,
     for i, cube in enumerate(ex.steps):
         robot_color = robot_counts = None
         if robot_read is not None:
-            reads = [r for r in (robot_read(fid, cube.cell) for fid, top in cube.settles if top) if r is not None]
+            reads = robot_reads_of(cube, robot_read)
             robot_color, robot_counts = agreed_color(reads), dict(sorted(Counter(reads).items()))
         color, source = choose_color(cube.camera_color(), robot_color, manual.get(i + 1))
         rows.append(StepRow(i + 1, cube.cell, cube.level, cube.t_video, color, source, cube.camera_color(),
@@ -328,7 +372,7 @@ def build_lesson(rows: list[StepRow], lesson_id: str, title: str, source_video: 
 
 
 def gate_lesson(lesson: Lesson, ex: Extraction, reference_empty: Optional[bool] = None) -> GateResult:
-    result = run_gate(lesson.steps, [s.board for s in ex.settled], [s.t for s in ex.settled], reference_empty)
+    result = run_gate(lesson.steps, gate_boards(ex), [s.t for s in ex.settled], reference_empty)
     lesson.gate = result.gate
     return result
 
@@ -388,8 +432,21 @@ def repo_relative(path: Path) -> str:
 
 
 def boards_json(ex: Extraction) -> list[dict[str, Any]]:
-    return [{"t": round(s.t, 3), "t_settled": round(s.t_settled, 3), "frame_id": s.frame_id,
-             "board": copy_board(s.board)} for s in ex.settled]
+    """The settled boards with their times; "gate_board" where transients were taken out."""
+    out = []
+    for s, g in zip(ex.settled, gate_boards(ex)):
+        out.append({"t": round(s.t, 3), "t_settled": round(s.t_settled, 3), "frame_id": s.frame_id,
+                    "board": copy_board(s.board), **({"gate_board": g} if g != s.board else {})})
+    return out
+
+
+def transient_dict(c: Cube, ex: Extraction, robot_read: Optional[RobotRead]) -> dict[str, Any]:
+    times = {s.frame_id: s.t for s in ex.settled}
+    seen = [{"t": round(times[fid], 3), "frame_id": fid, "camera": read,
+             "robot_memory": robot_read(fid, c.cell) if robot_read is not None and top else None}
+            for (fid, top), read in zip(c.settles, c.reads)]
+    return {"cell": c.cell, "level": c.level, "t_appeared": round(c.t_video, 3),
+            "t_removed": round(c.t_removed, 3), "seen": seen}
 
 
 def cube_dict(c: Cube) -> dict[str, Any]:
@@ -410,7 +467,8 @@ class Outcome:
 
 def write_outputs(ex: Extraction, rows: list[StepRow], lesson: Lesson, gate: GateResult, out: Path,
                   info: dict[str, Any], boards_out: Optional[Path] = None,
-                  pictures: Optional[Callable[[Path], list[str]]] = None) -> Outcome:
+                  pictures: Optional[Callable[[Path], list[str]]] = None,
+                  robot_read: Optional[RobotRead] = None) -> Outcome:
     """Write the lesson (only when every color is known), the extract file, and --boards-out."""
     extract_dir = out.parent / "extract"
     extract_dir.mkdir(parents=True, exist_ok=True)
@@ -438,6 +496,7 @@ def write_outputs(ex: Extraction, rows: list[StepRow], lesson: Lesson, gate: Gat
         "steps": [r.to_dict() for r in rows],
         "removed_cubes": [cube_dict(c) for c in ex.removed],
         "baseline_cubes": [cube_dict(c) for c in ex.baseline],
+        "transients": [transient_dict(c, ex, robot_read) for c in ex.transients],
         "gate": {**gate.gate.to_dict(), "reasons": gate.reasons},
         "pictures": [repo_relative(Path(p)) for p in pictures(extract_dir / lesson.lesson_id)] if pictures else [],
     }
@@ -510,7 +569,10 @@ def print_report(out: Outcome, ex: Extraction) -> None:
     if not out.rows:
         print("   (no steps)")
     for c in ex.removed:
-        print(f"  removed: cube on {c.cell} level {c.level}, appeared {c.t_video:.2f} s, gone {c.t_removed:.2f} s")
+        print(f"  correction: cube on {c.cell} level {c.level}, appeared {c.t_video:.2f} s, removed {c.t_removed:.2f} s")
+    for c in ex.transients:
+        print(f"  WARNING transient (not a cube, no known color from any source): {c.cell} level {c.level}, "
+              f"{c.t_video:.2f} s to {c.t_removed:.2f} s")
     disagree = [r for r in out.rows if len([c for c in r.reads if c != UNKNOWN]) > 1]
     for r in disagree:
         print(f"  step {r.number}: camera reads disagree {r.reads}")
@@ -622,6 +684,8 @@ def finish(args: argparse.Namespace, entries: list[dict[str, Any]], name: str, f
         print(f"[extract] flat mode: {len(flat.runs)} reading(s) taller than one block were read as one block"
               + "".join(f"\n  {r['cell']} {r['perception_said']} from {r['t_first']:.2f} s to {r['t_last']:.2f} s "
                         f"({r['frames']} frames)" for r in flat.runs))
+    robot_read = video.robot_read if video is not None and video.namer is not None else None
+    split_transients(ex, robot_read)
     try:
         manual = manual_colors(entries, ex.steps)
     except ColorsFileError as e:
@@ -633,13 +697,13 @@ def finish(args: argparse.Namespace, entries: list[dict[str, Any]], name: str, f
     if out.exists():
         print(f"[extract] {out} already exists; pick another --out (lessons are never overwritten)", file=sys.stderr)
         return EXIT_BAD_INPUT
-    rows = step_rows(ex, manual, video.robot_read if video is not None and video.namer is not None else None)
+    rows = step_rows(ex, manual, robot_read)
     lesson = build_lesson(rows, lesson_id, args.title or name.replace("_", " ").replace("-", " ").title(), source_video)
     gate = gate_lesson(lesson, ex, video.reference_empty if video is not None else None)
     pictures = None
     if video is not None:
         pictures = lambda folder: video.save_pictures(folder, [(r.number, r.cell, r.frame_id) for r in rows])  # noqa: E731
-    outcome = write_outputs(ex, rows, lesson, gate, out, info, args.boards_out, pictures)
+    outcome = write_outputs(ex, rows, lesson, gate, out, info, args.boards_out, pictures, robot_read)
     print_report(outcome, ex)
     return outcome.exit_code
 

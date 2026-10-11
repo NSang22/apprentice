@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from brain.extractor import (ColorsFileError, FlatLog, build_lesson, extract, flat_frames, gate_lesson, manual_colors,
-                             script_frames, step_rows, write_outputs)
+                             script_frames, split_transients, step_rows, write_outputs)
 from brain.fake_feed import HZ, make_frame, parse_script
 from brain.journal import Journal, read_journal
 from brain.session import COMPLETE, Session
@@ -150,6 +150,20 @@ def test_flat_mode_reads_a_tall_cell_as_one_block():
     assert placed(lesson) == [("red", "A1", 0), ("yellow", "C1", 0)]
     assert gate.gate.passed, gate.reasons
     assert [(r["cell"], r["perception_said"], r["t_first"]) for r in log.runs] == [("C1", ["unknown", "yellow"], 3.0)]
+
+
+def test_object_with_no_known_color_that_leaves_is_a_transient():
+    # B2 never reads a color and goes away again (a hand); it appears together with the real teal cube
+    ex = extract(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "B2": ["unknown"], "C1": ["teal"]}),
+                            seg({"A1": ["red"], "C1": ["teal"]})]))
+    split_transients(ex)
+    assert [(c.cell, c.t_video, c.t_removed) for c in ex.transients] == [("B2", 3.0, 4.5)]
+    assert ex.removed == []
+    rows = step_rows(ex)
+    lesson = build_lesson(rows, "test-lesson", "Test", None)
+    gate = gate_lesson(lesson, ex)
+    assert placed(lesson) == [("red", "A1", 0), ("teal", "C1", 0)]
+    assert gate.gate.passed, gate.reasons
 
 
 def test_colors_file_with_wrong_cell_is_refused():
