@@ -23,6 +23,14 @@ grid that is not locked (or moved). A tag hidden by a block is never a hand.
 
 On Linux the camera's exposure and white balance are locked at start-up (--exposure, --wb; see
 perception/camera_controls.py).
+
+Only one process can open the webcam, and the robot (robot/api.py) needs it too. So publish owns
+the camera and shares it: a reader thread keeps only the newest frame (MJPG 1920x1080, like
+robot/perception/camera.py), and a small HTTP server on 127.0.0.1:FRAME_PORT serves it:
+  GET /frame   the newest raw frame: body = uint8 bytes, headers X-Shape "h,w,c", X-Timestamp
+               (time.time() when captured), X-Frame (a counter). 503 before the first frame.
+  GET /health  {"ok", "age_s", "frames", "shape"}
+Requests only copy out the latest frame under a lock; they never wait on or slow the capture.
 """
 
 from __future__ import annotations
@@ -32,7 +40,9 @@ import asyncio
 import glob
 import json
 import tempfile
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Iterator, Optional
 
@@ -45,10 +55,12 @@ from perception.cells import cell_center_mm, grid_geometry, tag_corner_cells
 from perception.colors import CALIB_PATH, load_calibration, parse_colors
 from perception.robot_bridge import default_active_colors, set_block_mm
 from perception.perceive import FrameResult, Perceiver
+from robot.perception.config import FRAME_H, FRAME_W
 from robot.perception.sheet import SheetLocalizer, SheetPose
 from shared.config import GRID_WS_PORT, MIN_CONFIDENCE
 
 HZ = 10.0
+FRAME_PORT = 8771   # local frame server: robot/api.py reads the camera through it (one process owns the webcam)
 MIN_TAGS = 3     # --list-cameras: a camera that sees this many tags is pointed at the sheet
 BAND_H = 46      # status band height, px
 GOOD, BAD, HAND_BGR, CHANGE_BGR = (80, 220, 80), (60, 60, 255), (255, 0, 255), (255, 255, 0)
@@ -255,6 +267,111 @@ def print_camera_table(rows: list[dict]) -> None:
         print(f"no camera sees {MIN_TAGS}+ grid tags: check the camera points at the sheet")
 
 
+class FrameShare:
+    """The newest captured frame, for the local frame server. put() swaps a reference under a
+    lock; get() hands it out. Neither waits on the other for long."""
+
+    def __init__(self) -> None:
+        self.frame: Optional[np.ndarray] = None
+        self.t, self.count = 0.0, 0
+        self.lock = threading.Lock()
+
+    def put(self, frame: np.ndarray, t: Optional[float] = None) -> None:
+        with self.lock:
+            self.frame, self.t = frame, time.time() if t is None else t
+            self.count += 1
+
+    def get(self) -> tuple[Optional[np.ndarray], float, int]:
+        with self.lock:
+            return self.frame, self.t, self.count
+
+
+def serve_frames(share: FrameShare, port: int, host: str = "127.0.0.1") -> ThreadingHTTPServer:
+    """Start the frame server in a daemon thread (see the module docstring)."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            path = self.path.split("?")[0]
+            frame, t, n = share.get()
+            if path == "/health":
+                body = json.dumps({"ok": frame is not None, "age_s": None if frame is None else round(time.time() - t, 3),
+                                   "frames": n, "shape": None if frame is None else list(frame.shape)}).encode()
+                self._send(200, body, "application/json")
+            elif path == "/frame":
+                if frame is None:
+                    self._send(503, b"no frame yet", "text/plain")
+                    return
+                self._send(200, np.ascontiguousarray(frame).tobytes(), "application/octet-stream",
+                           {"X-Shape": ",".join(map(str, frame.shape)), "X-Dtype": "uint8",
+                            "X-Timestamp": repr(t), "X-Frame": str(n)})
+            else:
+                self._send(404, b"not found", "text/plain")
+
+        def _send(self, code: int, body: bytes, ctype: str, extra: Optional[dict] = None) -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            for k, v in (extra or {}).items():
+                self.send_header(k, v)
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        def log_message(self, fmt, *args) -> None:
+            pass  # quiet: the robot asks for frames all the time
+
+    server = ThreadingHTTPServer((host, port), Handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def live_camera_frames(index: int, backend: Optional[str] = None, share: Optional[FrameShare] = None) -> Iterator[np.ndarray]:
+    """The overhead camera, newest frame only. A reader thread keeps grabbing (as
+    robot/perception/camera.py does), so a slow perception loop never works on frames the driver
+    buffered a while ago, and the frame server always has the newest one. Each new frame is
+    yielded once."""
+    capture = cv2.VideoCapture(index, BACKENDS[backend]) if backend else cv2.VideoCapture(index)
+    if not capture.isOpened():
+        raise ValueError(f"could not open camera {index}")
+    capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    capture.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
+    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
+    latest: dict = {"frame": None, "n": 0}
+    cond = threading.Condition()
+    running = [True]
+
+    def reader() -> None:
+        while running[0]:
+            ok, frame = capture.read()
+            if not ok:
+                time.sleep(0.01)
+                continue
+            if share is not None:
+                share.put(frame)
+            with cond:
+                latest["frame"], latest["n"] = frame, latest["n"] + 1
+                cond.notify_all()
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+    seen = 0
+    try:
+        while True:
+            with cond:
+                cond.wait_for(lambda: latest["n"] > seen, timeout=5.0)
+                if latest["n"] == seen:
+                    raise ValueError(f"camera {index} stopped delivering frames")
+                frame, seen = latest["frame"], latest["n"]
+            yield frame
+    finally:
+        running[0] = False
+        thread.join(timeout=2)
+        capture.release()
+
+
 def capture_frames(source: int | str, loop: bool, backend: Optional[str] = None) -> Iterator[np.ndarray]:
     capture = cv2.VideoCapture(source, BACKENDS[backend]) if backend else cv2.VideoCapture(source)
     if not capture.isOpened():
@@ -287,13 +404,18 @@ class Publisher:
 
 async def run(args: argparse.Namespace) -> None:
     frames: Iterator[np.ndarray]
+    share = FrameShare()
     if args.images:
         frames = image_frames(args.images)
     elif args.video:
         frames = capture_frames(args.video, loop=True)
     else:
-        frames = capture_frames(args.camera, loop=False, backend=args.backend)
+        frames = live_camera_frames(args.camera, args.backend, share)
         lock_camera(args, frames)
+    if args.frame_port:
+        serve_frames(share, args.frame_port)
+        print(f"[perception] sharing the newest frame on http://127.0.0.1:{args.frame_port}/frame "
+              "(robot/api.py reads the camera through it)", flush=True)
     publisher = Publisher()
     calib = load_calibration(args.calib)
     if calib.calibrated:
@@ -320,6 +442,8 @@ async def run(args: argparse.Namespace) -> None:
         last_report: list[str] = []
         for frame_id, frame in enumerate(frames):
             started = time.monotonic()
+            if args.camera is None:
+                share.put(frame)  # video or images: share what perception sees (the live camera shares in its reader)
             result = perceiver.step(frame, frame_id)
             took = time.monotonic() - started
             step_ms = took * 1000 if not step_ms else 0.9 * step_ms + 0.1 * took * 1000
@@ -391,6 +515,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=GRID_WS_PORT)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--frame-port", type=int, default=FRAME_PORT,
+                        help="serve the newest raw frame on 127.0.0.1:PORT for robot/api.py (0 = off)")
     parser.add_argument("--calib", type=Path, default=CALIB_PATH, help="block color calibration from perception.calibrate")
     args = parser.parse_args(argv)
     if args.list_cameras:

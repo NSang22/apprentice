@@ -21,8 +21,10 @@ color. All of it runs on the sheet crop scaled to WORK_WIDTH pixels, with the lo
              "unknown". So does a block whose visible top face (the part nearer stacks leave in
              view) is too small, mostly unchanged, or not clearly one color.
   stacks     Under the top, each block's visible side band is classified (bottom first).
-  hands      Changed pixels that the final board does not explain, block-sized or bigger, are a
-             hand or object (perception/blocks._leftovers).
+  hands      Changed pixels over the grid (plus HAND_ZONE_MM) that the final board does not
+             explain, block-sized or bigger, are a hand or object (perception/blocks._leftovers).
+             Outside that zone the sheet is ignored: the robot keeps its supply blocks below the
+             grid (robot/api.py), and a hand that matters reaches over the grid anyway.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ import cv2
 import numpy as np
 
 from perception.blocks import HAND_FACES, Region, _leftovers, crop_box, crop_pose, px_per_mm, sheet_roi
-from perception.cells import cell_center_mm
+from perception.cells import cell_center_mm, grid_geometry
 from perception.change import change_mask, warp_matrix
 from perception.colors import ColorRef, chroma, classify, label_pixels, sample_stats, specular, to_lab
 from robot.perception import cubefit
@@ -51,6 +53,7 @@ BAND_MIN_MARGIN = 0.5
 COST_WRONG_COLOR = 0.6      # painted block color, observed another block color
 COST_COLORLESS = 0.5        # painted block, observed a changed but colorless pixel (sheen, shade)
 SEARCH_PASSES = 2
+HAND_ZONE_MM = 15.0         # hands and objects count only over the grid plus this margin
 FAR = len(COLORS)           # pixel label: changed and colorful, but no block color
 NONE = -1                   # pixel label: not changed, or colorless
 
@@ -259,10 +262,16 @@ def read_cells(frame_bgr: np.ndarray, pose: SheetPose, reference_sheet: np.ndarr
     ppm = px_per_mm(wpose)
     face_px = (block_mm * ppm) ** 2
     s_to_full = (scale, x0, y0)
-    found = _leftovers(changed.astype(np.uint8) * 255, explained.astype(np.uint8) * 255, face_px, ppm)
+    gx, gy, cell_mm = grid_geometry()
+    m, side = HAND_ZONE_MM, 3 * cell_mm
+    zone = np.zeros(shape, np.uint8)
+    cv2.fillPoly(zone, [wpose.to_image([(gx - m, gy - m), (gx + side + m, gy - m), (gx + side + m, gy + side + m),
+                                        (gx - m, gy + side + m)]).astype(np.int32)], 1)
+    in_zone = changed & (zone > 0)
+    found = _leftovers(in_zone.astype(np.uint8) * 255, explained.astype(np.uint8) * 255, face_px, ppm)
     # Too large: changed area no rendered block explains, bigger than any block, is a hand even
     # where the cells under it read unknown (a hand over the board makes them unreadable).
-    rest = (changed & ~cv2.dilate(by_blocks.astype(np.uint8), np.ones((7, 7), np.uint8)).astype(bool)).astype(np.uint8)
+    rest = (in_zone & ~cv2.dilate(by_blocks.astype(np.uint8), np.ones((7, 7), np.uint8)).astype(bool)).astype(np.uint8)
     for c in cv2.findContours(rest, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
         if cv2.contourArea(c) > HAND_FACES * face_px:
             found.append(Region("hand", c.reshape(-1, 2), cv2.contourArea(c) / ppm ** 2, "changed area bigger than any block"))

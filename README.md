@@ -322,6 +322,15 @@ python -m perception.calibrate --camera 1 --block-mm <edge mm>
 python -m perception.publish --camera 1 --block-mm <edge mm> --debug
 python -m perception.publish --list-cameras        # Windows: which index/backend sees the grid
 python -m perception.publish --video videos/demo.mp4
+# publish owns the webcam and shares it: GET http://127.0.0.1:8771/frame is the newest raw frame (headers
+# X-Shape, X-Timestamp), GET /health its age. robot/api.py reads the camera through it. --frame-port 0 turns it off.
+
+# Robot API on the Jetson (README 5.3), in the lerobot venv, started after perception.publish (it reads the
+# camera through publish's frame server, and refuses frames older than 0.5 s). One command at a time; every
+# command and result goes to robot/outputs/api_log.jsonl. --lesson keeps blocks already in their lesson cell
+# out of the supply; supply blocks wait below the grid. Then the brain on the Jetson (or over a tunnel):
+#   python -m robot.api
+#   python -m brain.server --mode robot --robot http://127.0.0.1:8770
 
 # Real setup: camera on the Jetson, brain + UI on the laptop (same network)
 #   Jetson:  v4l2-ctl --list-devices                                   # camera index N (/dev/videoN)
@@ -349,10 +358,6 @@ Planned, not built yet:
 
 ```bash
 python -m brain.extractor --video videos/expert_staircase.mp4 --out lessons/staircase-v1.json  # planned: lesson from an expert video
-python -m robot.api            # planned: robot HTTP API on :8770
-# planned full system: perception.publish + robot.api, then the brain (this flag already works;
-# with --robot http, arm_clear also requires the robot's GET /status at_home)
-#   python -m brain.server --mode robot --robot http://localhost:8770 --grid ws://<perception-host>:8765
 ```
 
 ---

@@ -49,7 +49,8 @@ from brain.journal import Journal
 from brain.provenance import git_info, grid_source, robot_source
 from brain.robot_client import HttpRobotClient, RobotClient
 from brain.session import COMPLETE, STOPPED, Session
-from brain.settings import DEMO_LESSON, FAKE_MOTION_S, ROBOT_STATUS_MAX_AGE_S, ROBOT_STATUS_POLL_HZ, SIM_FEED_HZ
+from brain.settings import (DEMO_LESSON, FAKE_MOTION_S, HTTP_ROBOT_MAX_RETRIES, ROBOT_STATUS_MAX_AGE_S,
+                            ROBOT_STATUS_POLL_HZ, SIM_FEED_HZ)
 from brain.stabilizer import Stabilizer
 from shared.config import BRAIN_WS_PORT, CELLS, GRID_WS_PORT
 from shared.schemas import Board, GridState, Lesson, SchemaError, SessionState
@@ -341,7 +342,8 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     def new_session() -> tuple[Session, Journal]:
         journal = Journal.open_new(args.mode)
-        return Session(lesson, args.mode, journal, robot=robot), journal
+        retries = {"max_retries": HTTP_ROBOT_MAX_RETRIES} if isinstance(robot, HttpRobotClient) else {}
+        return Session(lesson, args.mode, journal, robot=robot, **retries), journal
 
     session, journal = new_session()
     server = BrainServer(session, journal, robot_status=robot if isinstance(robot, HttpRobotClient) else None,
