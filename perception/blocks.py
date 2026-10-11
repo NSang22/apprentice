@@ -7,10 +7,11 @@ Per frame, with the locked sheet pose and the empty-board reference (perception/
   2. A blob counts only if at least CHANGED_SHARE of it changed since the empty board
      (perception/change.py), so print, tape, or anything already there when the board was
      empty is ignored. Changed area that no blob explains (a hand, a sleeve) is a hand or object.
-  3. The blob centre goes to sheet mm at the block's mid-height (pose.to_sheet(c, size/2), as
-     scene.build_scene does), then cubefit.fit_cube refines it into the position and yaw of a
-     real cube outline. That corrected centre names the cell (perception/cells.py).
-  4. The color is sampled only from the central TOP_CORE of the fitted top face (highlights
+  3. The blob is fitted as a column of 1, 2, and 3 blocks with cubefit (perception/stacks.py)
+     and the best-fitting height is kept (or none, if two heights are too close to call). The
+     column's footprint centre, corrected for that height, names the cell (perception/cells.py).
+     For a stack, the visible side band of each block under the top is classified too.
+  4. The top color is sampled only from the central TOP_CORE of the fitted top face (highlights
      dropped) and named by the nearest calibrated reference among the active colors. Anything
      else reads "unknown" (an unknown block, never a hand: the brain asks to nudge it). Only a
      blob bigger than ~3 blocks, or changed area no blob explains, is a hand or object.
@@ -32,7 +33,8 @@ from perception.change import change_mask, warp_matrix, warp_to_sheet
 from perception.colors import ColorRef, classify, sample_stats, to_lab
 from robot.perception import cubefit, segment
 from robot.perception.sheet import SheetPose
-from shared.config import CELLS, UNKNOWN
+from perception.stacks import band_color, choose_level, fit_column, segment_hull, side_bands
+from shared.config import CELLS, MAX_LEVEL, UNKNOWN
 
 SHEET_W_MM, SHEET_H_MM = 215.9, 279.4
 SHEET_MARGIN_MM = 5.0
@@ -65,6 +67,11 @@ class Block:
     margin_score: float
     cell: Optional[str] = None
     edge_mm: float = 0.0
+    level: Optional[int] = 0             # stack height index (0 = one block), None = unclear
+    level_reason: str = ""               # why the height is unclear
+    overlaps: tuple[float, ...] = ()     # column fit per level 0..MAX_LEVEL
+    sides: tuple[Optional[str], ...] = ()  # side-band colors under the top, bottom first
+    side_px: tuple[int, ...] = ()        # visible pixels per side band
 
     @property
     def fit_score(self) -> float:
@@ -123,6 +130,36 @@ def measure(frame_bgr: np.ndarray, pose: SheetPose, contour_px: np.ndarray, cent
     outline = cv2.convexHull(np.vstack([pose.to_image(sq, 0.0), pose.to_image(sq, block_mm)]).astype(np.float32))
     top = pose.to_image(cubefit.cube_corners(xy, yaw, size_mm=block_mm * TOP_CORE), block_mm)
     return (float(xy[0]), float(xy[1])), float(yaw), float(overlap), outline.reshape(-1, 2), top
+
+
+def _measure_stack(frame_bgr: np.ndarray, pose: SheetPose, contour: np.ndarray, center: tuple[float, float],
+                   block_mm: float, refs: dict[str, ColorRef]) -> Block:
+    """Fit 1-, 2-, and 3-high columns, keep the clear winner, then read the top and side colors."""
+    fits = [fit_column(pose, contour, center, block_mm, level) for level in range(MAX_LEVEL + 1)]
+    overlaps = tuple(float(f[2]) for f in fits)
+    level, why = choose_level(list(overlaps), FIT_MIN_OVERLAP)
+    use = level if level is not None else int(np.argmax(overlaps))
+    xy, yaw, overlap = fits[use]
+    height = (use + 1) * block_mm
+    if overlap < FIT_MIN_OVERLAP:
+        xy, yaw = pose.to_sheet([center], height / 2.0)[0], 0.0
+    xy = (float(xy[0]), float(xy[1]))
+    outline = segment_hull(pose, xy, yaw, block_mm, 0.0, height)
+    top = pose.to_image(cubefit.cube_corners(xy, yaw, size_mm=block_mm * TOP_CORE), height)
+    try:
+        median, _, _ = sample_stats(top_face_lab(frame_bgr, top))
+        color, margin, d1, d2 = classify(median, refs)
+    except ValueError:
+        median, color, margin, d1, d2 = (0.0, 0.0, 0.0), UNKNOWN, 0.0, 0.0, 0.0
+    sides, side_px = (), ()
+    if level:
+        bands = side_bands(frame_bgr, pose, xy, yaw, block_mm, level, contour)
+        sides = tuple(band_color(px, n, refs) for px, n in bands)
+        side_px = tuple(n for _, n in bands)
+    cx, cy = pose.to_image([xy], height)[0]
+    return Block(color, xy, (float(cx), float(cy)), contour, outline, top, float(yaw), float(overlap),
+                 median, d1, d2, margin, mm_to_cell(*xy), edge_margin_mm(*xy),
+                 level=level, level_reason=why, overlaps=overlaps, sides=sides, side_px=side_px)
 
 
 def top_face_lab(frame_bgr: np.ndarray, top_px: np.ndarray) -> np.ndarray:
@@ -187,15 +224,7 @@ def detect_blocks(frame_bgr: np.ndarray, pose: SheetPose, reference_sheet: np.nd
         if d.score < 0:  # segment.detect: much bigger than one cube
             others.append(Region("hand", contour, area_mm2, f"{area / face_px:.1f} block faces big"))
             continue
-        xy, yaw, overlap, outline, top = measure(frame_bgr, pose, contour, center, block_mm)
-        try:
-            median, _, _ = sample_stats(top_face_lab(frame_bgr, top))
-            color, margin, d1, d2 = classify(median, refs)
-        except ValueError:
-            median, color, margin, d1, d2 = (0.0, 0.0, 0.0), UNKNOWN, 0.0, 0.0, 0.0
-        cx, cy = pose.to_image([xy], block_mm)[0]
-        blocks.append(Block(color, xy, (float(cx), float(cy)), contour, outline, top, yaw, overlap,
-                            median, d1, d2, margin, mm_to_cell(*xy), edge_margin_mm(*xy)))
+        blocks.append(_measure_stack(frame_bgr, pose, contour, center, block_mm, refs))
     others += [Region(r.kind, r.contour_px + offset, r.area_mm2, r.why)
                for r in _leftovers(changed, explained, face_px, ppm)]
     return Analysis(blocks, others, mask, live_sheet)

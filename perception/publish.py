@@ -113,7 +113,11 @@ def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note:
             x, y = (int(v) for v in b.center_px)
             cv2.circle(out, (x, y), 7, (0, 0, 0), -1)
             cv2.circle(out, (x, y), 5, (255, 255, 255), -1)
-            _text(out, block_label(b, result.state.confidence), (x - 70, y - 16), 0.8)
+            stack, why = result.stacks.get(b.cell, (None, ""))
+            if b.cell is not None and stack is None:  # unknown: say why, in red
+                _text(out, f"{b.cell} ? {why}", (x - 70, y - 16), 0.7, (60, 60, 255))
+            else:
+                _text(out, stack_label(b, stack, result.state.confidence), (x - 70, y - 16), 0.8)
         for r in a.others:
             pts = _polyline(out, r.contour_px, HAND_BGR, 4)
             x, y = pts.mean(axis=0).astype(int)
@@ -132,6 +136,15 @@ def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note:
     return out
 
 
+def stack_label(block: Block, stack: Optional[list[str]], confidence: dict[str, float]) -> str:
+    """"B2 L2 [red, teal] 0.93": cell, stack height, colors bottom to top, confidence."""
+    if block.cell is None or not stack:
+        return block_label(block, confidence)
+    conf = confidence.get(block.cell, 0.0)
+    unsure = "?" if conf < MIN_CONFIDENCE else ""
+    return f"{block.cell} L{len(stack)} [{', '.join(stack)}]{unsure} {conf:.2f}"
+
+
 def debug_lines(result: FrameResult) -> list[str]:
     """The status, then one line per block (label, the three scores, color distances) and per hand."""
     lines = [result.status + (f"; hands_clear false: {result.reason}" if result.reason else "")]
@@ -139,9 +152,13 @@ def debug_lines(result: FrameResult) -> list[str]:
     if a is None:
         return lines
     for b in sorted(a.blocks, key=lambda b: (b.cell or "~", b.color)):
-        lines.append(f"{block_label(b, result.state.confidence):<22} centre ({b.center_mm[0]:.0f}, {b.center_mm[1]:.0f}) mm "
-                     f"edge={b.edge_mm:.1f}mm fit={b.fit_overlap:.2f} yaw={b.yaw_deg:.0f} "
-                     f"margin={b.margin_score:.2f} (dE {b.d_nearest:.1f} vs {b.d_second:.1f})")
+        stack, why = result.stacks.get(b.cell, (None, ""))
+        label = stack_label(b, stack, result.state.confidence) if stack else f"{b.cell} ? {why}"
+        fits = "/".join(f"{o:.2f}" for o in b.overlaps)
+        sides = " ".join(f"{c or '-'}({n}px)" for c, n in zip(b.sides, b.side_px))
+        lines.append(f"{label:<30} centre ({b.center_mm[0]:.0f}, {b.center_mm[1]:.0f}) mm edge={b.edge_mm:.1f}mm "
+                     f"fit L1/L2/L3={fits} sides=[{sides}] margin={b.margin_score:.2f} "
+                     f"(dE {b.d_nearest:.1f} vs {b.d_second:.1f})")
     for r in a.others:
         lines.append(f"{r.kind:<22} {r.area_mm2:.0f} mm2: {r.why}")
     return lines

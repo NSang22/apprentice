@@ -17,7 +17,7 @@ empty-board reference (slow light drift), once per empty spell.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -28,6 +28,7 @@ from perception.blocks import Analysis, board_from, detect_blocks
 from perception.change import warp_to_sheet
 from perception.colors import Calibration, active_refs
 from perception.robot_bridge import default_active_colors
+from perception.stacks import Reading, StackMemory, unknown_stack
 from robot.perception import segment
 from perception.grid_lock import (CALIB_DIR, LOCK_PATH, MIN_CONFIRM_TAGS, TAG_IDS, GridLock, TagCheck, check_tags,
                                   load_lock, lock_from_frame, save_lock, tag_centers)
@@ -50,6 +51,7 @@ class FrameResult:
     check: Optional[TagCheck] = None
     analysis: Optional[Analysis] = None
     reason: str = ""                # why hands_clear is false, if it is
+    stacks: dict = field(default_factory=dict)  # cell -> (stack bottom to top, or None, why unknown)
 
     @property
     def ok(self) -> bool:
@@ -83,6 +85,7 @@ class Perceiver:
         self.lost = False
         self.relock_count = 0
         self.empty_since: Optional[float] = None
+        self.memory = StackMemory()   # per-cell stack history (perception/stacks.py)
         self.refreshed = False
 
     # ------------------------------------------------------------ capture
@@ -139,9 +142,29 @@ class Perceiver:
         clear = hands_clear(analysis, crowded)
         reason = "" if clear else ("two blocks in one cell" if crowded and not analysis.others
                                    else f"{analysis.others[0].kind} on the sheet")
+        stacks = self._stacks(analysis, board, confidence, clear)
         self._maybe_refresh(live, analysis, clear)
         state = GridState(t=t, board=board, arm_clear=True, hands_clear=clear, confidence=confidence, frame_id=frame_id)
-        return FrameResult(state, LOCKED, f"GRID LOCKED ({check.visible}/4 tags)", check, analysis, reason)
+        return FrameResult(state, LOCKED, f"GRID LOCKED ({check.visible}/4 tags)", check, analysis, reason, stacks)
+
+    def _stacks(self, analysis: Analysis, board: dict, confidence: dict, usable: bool) -> dict:
+        """Replace each occupied cell's top color with its full stack (bottom to top), from the
+        stack height, side bands, and memory; "unknown" (confidence 0) when they disagree."""
+        best = {}
+        for b in sorted(analysis.blocks, key=lambda b: b.score, reverse=True):
+            if b.cell is not None and b.cell not in best:
+                best[b.cell] = b
+        readings = {cell: Reading(b.level, b.color, b.sides) for cell, b in best.items()}
+        self.memory.update(readings, usable)
+        out = {}
+        for cell, r in readings.items():
+            stack, why = self.memory.resolve(cell, r)
+            if stack is None:
+                board[cell], confidence[cell] = unknown_stack(r.level), 0.0
+            else:
+                board[cell] = stack
+            out[cell] = (stack, best[cell].level_reason if r.level is None else why)
+        return out
 
     def _try_relock(self, frame_bgr, t, frame_id, check, visible) -> FrameResult:
         status = "GRID LOST: moved (re-locks when all 4 tags show on an empty board)"
@@ -170,6 +193,7 @@ class Perceiver:
             self._save_reference()
 
     def _unusable(self, t, frame_id, grid, status, reason, check=None) -> FrameResult:
+        self.memory.update({}, usable=False)
         state = GridState(t=t, board=empty_board(), arm_clear=True, hands_clear=False,
                           confidence={c: 0.0 for c in CELLS}, frame_id=frame_id)
         return FrameResult(state, grid, status, check, None, reason)
