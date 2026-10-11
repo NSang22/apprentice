@@ -831,6 +831,11 @@ def dashboard_page():
     return FileResponse(HERE / "dashboard_static" / "index.html", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/app")
+def hub_page():
+    return FileResponse(HERE / "hub_static" / "index.html", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/calibrate")
 def calibrate_page():
     return FileResponse(REPO_ROOT / "robot" / "web_control_static" / "index.html")

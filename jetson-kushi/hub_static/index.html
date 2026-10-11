@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apprentice</title>
+<style>
+/* Colors and font from ui/style.css, so the hub matches the monitor. */
+:root {
+  --bg: #0d1015;
+  --panel: #161b23;
+  --panel-2: #1e2530;
+  --line: #2d3644;
+  --text: #f3f5f8;
+  --muted: #95a1b2;
+  --warn: #f5b041;
+  --red: #e2383f;
+  --yellow: #f6c933;
+  --teal: #16a59b;
+  --purple: #8a5cc7;
+  --font: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --radius: 18px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); line-height: 1.4; }
+main { max-width: 1280px; margin: 0 auto; padding: 32px 24px 48px; }
+a { color: inherit; }
+
+.hero { padding: 24px 0 32px; }
+.blocks { display: flex; gap: 8px; margin-bottom: 20px; }
+.blocks span { width: 28px; height: 28px; border-radius: 6px; }
+h1 { font-size: clamp(40px, 6vw, 64px); margin: 0; letter-spacing: 0.01em; }
+.tagline { font-size: clamp(22px, 3vw, 30px); font-weight: 600; margin: 8px 0 0; }
+.sub { font-size: 18px; color: var(--muted); margin: 10px 0 0; max-width: 46em; }
+
+.sections { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 20px; align-items: start; }
+.card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 24px; border-top: 6px solid var(--accent);
+}
+.kicker { font-size: 14px; font-weight: 700; letter-spacing: 0.14em; color: var(--accent); }
+h2 { font-size: 28px; margin: 4px 0 16px; }
+h3 { font-size: 18px; margin: 0; }
+.muted { color: var(--muted); }
+
+.btn {
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  min-height: 52px; padding: 10px 18px; margin-top: 10px; width: 100%;
+  font: 600 17px var(--font); color: var(--text); text-decoration: none; cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px;
+}
+.btn:hover, .btn:focus-visible { border-color: var(--accent); outline: none; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #0d1015; }
+.btn[disabled] { opacity: 0.5; cursor: default; }
+
+.panel { display: none; margin-top: 10px; padding: 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; }
+.panel.open { display: block; }
+.panel p { margin: 0 0 8px; font-size: 15px; }
+code { display: block; font: 14px/1.5 Consolas, "Courier New", monospace; color: var(--text); white-space: pre-wrap; word-break: break-all; }
+
+.learners { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.learner { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; }
+.learner p { margin: 6px 0 0; font-size: 15px; flex: 1; }
+
+.library { margin-top: 24px; }
+.library-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.lessons { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
+.lesson { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+.lesson .meta { font-size: 15px; color: var(--muted); margin: 4px 0 0; }
+.new { display: inline-block; margin-left: 8px; padding: 2px 10px; border-radius: 999px; font-size: 13px; font-weight: 700; background: var(--yellow); color: #0d1015; vertical-align: middle; }
+.lesson .err { color: var(--warn); font-size: 15px; margin: 10px 0 0; }
+.lesson .err:empty { display: none; }
+.empty { padding: 16px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); margin-top: 12px; }
+
+footer { margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; align-items: center; }
+footer .line { font-size: 20px; font-weight: 600; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px; }
+.facts span { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 15px; }
+
+/* Landscape tablet and small laptop: Learn spans the full width under Teach and Track. */
+@media (max-width: 1100px) {
+  .sections { grid-template-columns: 1fr 1fr; }
+  .learn { grid-column: 1 / -1; order: 3; }
+}
+@media (max-width: 700px) {
+  .sections, .learners { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div class="blocks" aria-hidden="true">
+      <span style="background: var(--red)"></span><span style="background: var(--purple)"></span>
+      <span style="background: var(--yellow)"></span><span style="background: var(--teal)"></span>
+    </div>
+    <h1>Apprentice</h1>
+    <p class="tagline">Show it once. Anyone can learn it.</p>
+    <p class="sub">One demonstration becomes a lesson that a person and a robot both learn, graded by the same camera.</p>
+  </header>
+
+  <div class="sections">
+    <section class="card" style="--accent: var(--red)">
+      <div class="kicker">TEACH</div>
+      <h2>Make a lesson</h2>
+      <a class="btn primary" href="/buddy">Kid teaches Pip</a>
+      <p class="muted" style="margin: 6px 0 0; font-size: 15px">Opens Buddy. Pick Teach the Robot.</p>
+
+      <button class="btn" data-panel="p-table">Build it on the table</button>
+      <div class="panel" id="p-table">
+        <p>Start Perception, then run this and build the lesson one cube at a time:</p>
+        <code>python -m brain.extractor --grid ws://localhost:8765 --title "My lesson"</code>
+        <button class="btn copy">Copy command</button>
+      </div>
+
+      <button class="btn" data-panel="p-video">From a video</button>
+      <div class="panel" id="p-video">
+        <p>Point it at an overhead video of someone building:</p>
+        <code>python -m brain.extractor --video &lt;file&gt; --calib perception/calib --colors red,purple,yellow,teal --block-mm 47</code>
+        <button class="btn copy">Copy command</button>
+      </div>
+    </section>
+
+    <section class="card learn" style="--accent: var(--teal)">
+      <div class="kicker">LEARN</div>
+      <h2>Pick a learner</h2>
+      <div class="learners">
+        <div class="learner">
+          <h3>You</h3>
+          <p class="muted">Guided practice with holograms and live hints.</p>
+          <a class="btn" href="#lessons">Choose a lesson</a>
+        </div>
+        <div class="learner">
+          <h3>The robot</h3>
+          <p class="muted">The arm builds it and checks its own work.</p>
+          <a class="btn" href="#lessons">Choose a lesson</a>
+        </div>
+        <div class="learner">
+          <h3>Together</h3>
+          <p class="muted">Games with Pip: Picture Recall, Take Turns.</p>
+          <a class="btn primary" href="/buddy">Play with Pip</a>
+        </div>
+      </div>
+
+      <div class="library" id="lessons">
+        <div class="library-head">
+          <h3>Lessons</h3>
+          <span class="muted" id="lib-status">Looking for the brain...</span>
+        </div>
+        <div id="lesson-list"></div>
+      </div>
+    </section>
+
+    <section class="card" style="--accent: var(--purple)">
+      <div class="kicker">TRACK</div>
+      <h2>See progress</h2>
+      <p class="muted" style="margin: 0">Every session, step, and hint, for people and the robot, side by side.</p>
+      <a class="btn primary" target="_blank" rel="noopener"
+         href="https://dbc-bcd88b06-db88.cloud.databricks.com/sql/dashboardsv3/01f1c51dfb2119eb9f71f3f2d15f9dd2">Open the dashboard</a>
+    </section>
+  </div>
+
+  <footer>
+    <div class="line">Same camera. Same rules. Two students.</div>
+    <div class="facts"><span>Jetson</span><span>Overhead camera</span><span>SO-101 arm</span><span>Databricks</span></div>
+  </footer>
+</main>
+
+<script>
+// Brain address: ?ws=ws://host:8766 overrides; otherwise the brain on this page's host.
+const params = new URLSearchParams(location.search);
+const WS_URL = params.get("ws") || `ws://${location.hostname || "localhost"}:8766`;
+const UI_URL = params.get("ws") ? `/ui/?ws=${encodeURIComponent(WS_URL)}` : "/ui/";
+const NEW_SECONDS = 10 * 60;
+const SWITCH_WAIT_MS = 2500;   // load and mode send no reply on success, only {"error"} on failure
+
+for (const b of document.querySelectorAll("[data-panel]")) {
+  b.addEventListener("click", () => document.getElementById(b.dataset.panel).classList.toggle("open"));
+}
+
+// navigator.clipboard needs https or localhost; the Jetson serves plain http on the LAN.
+for (const b of document.querySelectorAll(".copy")) {
+  b.addEventListener("click", () => {
+    const text = b.parentElement.querySelector("code").textContent;
+    const done = () => { b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy command"), 1500); };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text) && done());
+    } else if (fallbackCopy(text)) {
+      done();
+    } else {
+      b.textContent = "Select the text to copy";
+    }
+  });
+}
+function fallbackCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+const statusEl = document.getElementById("lib-status");
+const listEl = document.getElementById("lesson-list");
+let busy = false;
+
+function showOffline() {
+  statusEl.textContent = "";
+  listEl.innerHTML = '<div class="empty">Start the brain to see lessons.</div>';
+}
+
+function loadLessons() {
+  let ws;
+  try { ws = new WebSocket(WS_URL); } catch (e) { showOffline(); return; }
+  let answered = false;
+  ws.onopen = () => ws.send(JSON.stringify({ cmd: "list" }));
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (!Array.isArray(msg.lessons)) return;   // the brain also sends its latest SessionState on connect
+    answered = true;
+    renderLessons(msg.lessons);
+    ws.close();
+  };
+  ws.onerror = () => { if (!answered) showOffline(); };
+  ws.onclose = () => { if (!answered) showOffline(); };
+}
+
+function renderLessons(lessons) {
+  listEl.innerHTML = "";
+  if (!lessons.length) {
+    statusEl.textContent = "";
+    listEl.innerHTML = '<div class="empty">No lessons yet. Make one under Teach.</div>';
+    return;
+  }
+  statusEl.textContent = `${lessons.length} lesson${lessons.length === 1 ? "" : "s"}`;
+  const grid = document.createElement("div");
+  grid.className = "lessons";
+  const now = Date.now() / 1000;
+  for (const l of lessons) {
+    const card = document.createElement("div");
+    card.className = "lesson";
+    const h = document.createElement("h3");
+    h.textContent = l.title || l.lesson_id;
+    if (now - l.mtime < NEW_SECONDS) {
+      const tag = document.createElement("span");
+      tag.className = "new";
+      tag.textContent = "new";
+      h.appendChild(tag);
+    }
+    const meta = document.createElement("p");
+    meta.className = "meta";
+    meta.textContent = `${l.steps} step${l.steps === 1 ? "" : "s"}`;
+    const err = document.createElement("p");
+    err.className = "err";
+    const practice = document.createElement("button");
+    practice.className = "btn";
+    practice.textContent = "Practice it";
+    const robot = document.createElement("button");
+    robot.className = "btn";
+    robot.textContent = "Robot builds it";
+    practice.onclick = () => openLesson(l.lesson_id, "human", card, err);
+    robot.onclick = () => openLesson(l.lesson_id, "robot", card, err);
+    card.append(h, meta, practice, robot, err);
+    grid.appendChild(card);
+  }
+  listEl.appendChild(grid);
+}
+
+// Load the lesson, then set the mode, then open the monitor. Success has no reply, so wait for the
+// brain to publish a SessionState on this lesson and mode (or a short timeout); an {"error"} stops it.
+function openLesson(lessonId, mode, card, errEl) {
+  if (busy) return;
+  busy = true;
+  errEl.textContent = "";
+  const buttons = card.querySelectorAll("button");
+  buttons.forEach((b) => (b.disabled = true));
+  let finished = false;
+  let timer;
+  const ws = new WebSocket(WS_URL);
+  const stop = (error) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    try { ws.close(); } catch (e) { /* already closed */ }
+    if (error) {
+      errEl.textContent = error;
+      buttons.forEach((b) => (b.disabled = false));
+      busy = false;
+    } else {
+      location.href = UI_URL;
+    }
+  };
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ cmd: "load", lesson_id: lessonId }));
+    ws.send(JSON.stringify({ cmd: "mode", mode }));
+    timer = setTimeout(() => stop(null), SWITCH_WAIT_MS);
+  };
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (msg.error) stop(msg.error);
+    else if (msg.lesson_id === lessonId && msg.mode === mode && msg.phase === "ready") stop(null);
+  };
+  ws.onerror = () => stop("I can't reach the brain right now. Start it and try again.");
+}
+
+loadLessons();
+</script>
+</body>
+</html>
