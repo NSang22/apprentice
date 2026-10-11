@@ -1151,6 +1151,12 @@ def hub_page():
     return FileResponse(HERE / "hub_static" / "index.html", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/app/nav.js")
+def nav_js():
+    """The shared top bar: the hub, the monitor and every Buddy page include it with one script tag."""
+    return FileResponse(HERE / "hub_static" / "nav.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/api/metrics")
 def metrics():
     """data/analytics/metrics.json from python -m analytics.report (schema: analytics/METRICS_SCHEMA.md)."""

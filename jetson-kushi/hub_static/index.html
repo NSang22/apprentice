@@ -245,6 +245,7 @@
   @media (max-width: 820px) { .stats { grid-template-columns: 1fr; } }
   @media (max-width: 560px) { .corner-pip .bubble { display: none; } }
 </style>
+<script src="/app/nav.js" defer></script>
 </head>
 <body>
 <main id="hub">
@@ -294,7 +295,7 @@
     </div>
   </div>
 
-  <section class="section">
+  <section class="section" id="teach">
     <div class="label">Teach</div>
     <h2>Make a lesson</h2>
     <p class="sub">Show it once. Apprentice turns it into a lesson anyone can learn.</p>
@@ -313,16 +314,16 @@
     <div id="teach-job"></div>
   </section>
 
-  <section class="section">
+  <section class="section" id="lessons">
     <div class="label">Learn</div>
     <h2>Pick a learner</h2>
     <div class="row">
-      <a class="tile you" href="#lessons">
+      <a class="tile you" href="#library">
         <h3>You</h3>
         <p>Guided practice with holograms and live hints.</p>
         <span class="go">Choose a lesson</span>
       </a>
-      <a class="tile robot" href="#lessons">
+      <a class="tile robot" href="#library">
         <h3>The robot</h3>
         <p>The arm builds it and checks its own work.</p>
         <span class="go">Choose a lesson</span>
@@ -334,14 +335,14 @@
       </a>
     </div>
 
-    <div class="lib-head" id="lessons">
+    <div class="lib-head" id="library">
       <h2 style="margin: 0">Lessons</h2>
       <span class="label" id="lib-status">Looking for the brain</span>
     </div>
     <div id="lesson-list"></div>
   </section>
 
-  <section class="section">
+  <section class="section" id="track">
     <div class="label">Track</div>
     <div class="track">
       <div>
