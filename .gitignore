@@ -14,6 +14,7 @@ lessons/*.json
 
 # per-machine camera calibration, recalibrated at the demo table
 perception/calib/*.json
+perception/calib/*.png
 
 # Python
 __pycache__/

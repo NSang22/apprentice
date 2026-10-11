@@ -2,7 +2,7 @@ import pytest
 
 from perception.cells import edge_margin_mm
 from shared.config import MIN_CONFIDENCE
-from perception.publish import STRADDLE_CONFIDENCE, area_score, fill_score
+from perception.change import STRADDLE_CONFIDENCE, area_score, fill_score
 
 
 def test_fill_rescaled_so_angled_cubes_are_not_penalized():
