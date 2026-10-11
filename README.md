@@ -368,6 +368,9 @@ python -m perception.publish --video videos/demo.mp4
 
 # Monitor UI (ui/): reads SessionState from brain.server on ws :8766, no network needed
 python ui/serve.py      # then open http://localhost:8000 and press F11; keys 2 / 3 switch 2D / 3D board
+#   Space on the ready screen plays the intro preview (Space again skips it), then the lesson starts.
+#   L opens the lesson picker (newest on top, "new" if under 10 minutes old): arrows choose, Enter loads, L closes.
+#   B on a finished human lesson hands it to the robot (needs --robot). R starts over. Each load or switch is its own session.
 
 # Robot module on its own (LeRobot venv, see robot/README.md and docs/SETUP_NOTES.md)
 python -m robot.scripts.tests.scene_snapshot robot/samples/overhead_02.png   # offline, no hardware

@@ -2,7 +2,10 @@
 // Plain script, no dependencies: the 2D monitor must work even if nothing else loads.
 // The 3D view (view3d.js, three.js) is the main view; it loads lazily, and the 2D board takes
 // over (key 2, or automatically) if WebGL or the module is unavailable.
-// Keys: Space sends {"cmd":"start"} (ready screen), R sends {"cmd":"reset"}, 2 / 3 switch views.
+// Keys: Space plays the intro preview on the ready screen, then sends {"cmd":"start"} (Space again
+// skips the intro). R sends {"cmd":"reset"}. L opens the lesson picker ({"cmd":"list"} every 3 s,
+// Enter sends {"cmd":"load"}). B on a finished human lesson sends {"cmd":"mode","mode":"robot"}.
+// 2 / 3 switch views.
 (function () {
   "use strict";
 
@@ -10,6 +13,11 @@
   const params = new URLSearchParams(location.search);
   const WS_URL = params.get("ws") || `ws://${location.hostname || "localhost"}:${CFG.BRAIN_WS_PORT || 8766}`;
   const PASS_HOLD_MS = CFG.PASS_HOLD_MS || 1600;
+  const INTRO_STEP_MS = CFG.INTRO_STEP_MS || 800;
+  const INTRO_HOLD_MS = CFG.INTRO_HOLD_MS || 1200;
+  const INTRO_DROP_MS = 600, INTRO_FADE_MS = 500;   // match view3d.js
+  const LIST_POLL_MS = 3000;
+  const NEW_LESSON_S = 600;                          // a lesson file this recent is marked "new"
 
   // Cells follow the printed sheet: the letter is the row (A along the robot's edge, C along the
   // student's), the number is the column (1 on the left for a student opposite the robot).
@@ -31,6 +39,7 @@
     stripHuman: $("strip-human"), stripRobot: $("strip-robot"),
     screen: $("screen"), screenTitle: $("screen-title"), screenThumb: $("screen-thumb"),
     screenText: $("screen-text"), screenKey: $("screen-key"), toast: $("toast"),
+    screenAction: $("screen-action"), picker: $("picker"), pickerList: $("picker-list"),
   };
 
   const app = {
@@ -46,6 +55,11 @@
     ws: null,
     toastTimer: 0,
     blockHex: {},         // color -> measured hex from perception/calib/colors.json
+    intro: null,          // { steps, shown, fading, timers } while the intro preview plays
+    autoIntro: false,     // play the intro once when the lesson we asked for arrives in "ready"
+    turnText: null,       // "Your turn! ..." banner right after the intro
+    turnUntil: 0,
+    picker: { open: false, items: [], sel: 0, timer: 0 },
   };
 
   // The student's side comes from the brain (SessionState.human_side); "row3" (opposite the robot,
@@ -103,6 +117,10 @@
       expectedLevel: Number.isInteger(d.expected_level) ? d.expected_level : null,
       robotStatus: str(d.robot_status) || "idle",
       boardSeen: d.board_seen === true,              // false until the camera produced a stable board
+      lessonSteps: Array.isArray(d.lesson_steps)     // the whole lesson in order, for the intro preview
+        ? d.lesson_steps.filter((x) => x && cell(x.cell) && typeof x.color === "string")
+            .map((x) => ({ color: x.color, cell: x.cell, level: Number.isInteger(x.level) ? x.level : 0, narration: str(x.narration) }))
+        : null,
     };
   }
 
@@ -158,6 +176,9 @@
   function robotSentence(step) {
     return `${chip(step.color)} cube to <span class="cell">${esc(step.cell)}</span>`.replace(/^(<span[^>]*><\/span>)(\w)/, (m, c, ch) => c + ch.toUpperCase());
   }
+  function stepText(step) {   // the intro headline: the lesson's own words, else "Red on B2"
+    return step.narration || `${step.color[0].toUpperCase()}${step.color.slice(1)} on ${step.cell}`;
+  }
   function levelLine(step) {
     return step.level > 0 ? `On the ${LEVEL_WORDS[step.level] || "level " + (step.level + 1)} level` : "";
   }
@@ -168,6 +189,7 @@
     const s = app.state;
     const phase = phaseOf(s);
     ui.stage.dataset.phase = phase;
+    ui.stage.classList.toggle("intro", !!app.intro);
 
     // connection
     ui.conn.dataset.state = app.conn;
@@ -181,6 +203,7 @@
     guard(renderBoard, s, phase);
     guard(renderStrips, s);
     guard(renderScreen, s, phase);
+    guard(renderPicker, s);
   }
 
   function guard(fn, ...args) {
@@ -198,7 +221,13 @@
     let banner = null, kicker = "", instruction = "", subline = "";
     let fb = { kind: "waiting", icon: "", title: "Waiting for the camera", text: "" };
 
-    if (!s) {
+    if (app.intro) {
+      const n = app.intro.steps.length, k = app.intro.shown;
+      kicker = k ? `Preview: step ${k} of ${n}` : "Here is the whole build";
+      instruction = k ? esc(stepText(app.intro.steps[k - 1])) : esc(s ? s.lessonTitle || "Watch" : "Watch");
+      subline = "Press Space to skip";
+      fb = null;
+    } else if (!s) {
       instruction = "Waiting for the camera";
       subline = app.conn === "live" ? "The lesson starts in a moment." : "Starting Apprentice...";
       fb = null;
@@ -234,6 +263,7 @@
         fb = { kind: "watching", icon: "", title: "I'm watching the board", text: "" };
       }
       if (s.robotStatus === "pointing") banner = "The robot is pointing to the right spot.";
+      else if (now < app.turnUntil) banner = app.turnText;
     }
 
     ui.banner.hidden = !banner;
@@ -250,7 +280,7 @@
       ui.robotPanel.dataset.status = st.kind;
       ui.robotStatus.textContent = st.word;
       ui.robotText.textContent = s.hintText || "";
-      if (fb.kind === "mistake" || fb.kind === "waiting" || fb.kind === "watching") fb = null;
+      if (fb && (fb.kind === "mistake" || fb.kind === "waiting" || fb.kind === "watching")) fb = null;
     }
 
     ui.feedback.hidden = !fb;
@@ -333,7 +363,8 @@
   }
 
   function renderBoard(s, phase) {
-    const key = JSON.stringify(s ? [s.board, s.expected, s.stepIndex, s.faultCell, s.expectedCell, s.hintLevel, s.verdict, phase, side(), s.robotStatus] : null);
+    const intro = app.intro ? app.intro.shown : -1;
+    const key = JSON.stringify(s ? [s.board, s.expected, s.stepIndex, s.faultCell, s.expectedCell, s.hintLevel, s.verdict, phase, side(), s.robotStatus, intro] : null);
     if (key === app.boardKey) return;
     app.boardKey = key;
     const faultVisible = !!(s && phase === "running" && s.faultCell &&
@@ -363,11 +394,18 @@
       const b = cellBox(c);
       parts.push(`<rect class="b-cell" x="${b.x}" y="${b.y}" width="${G.size}" height="${G.size}" rx="16"/>`);
       parts.push(`<text class="b-name" x="${b.x + 8}" y="${b.y + 19}">${c}</text>`);
-      const stack = s ? s.board[c] : [];
+      const stack = app.intro ? [] : s ? s.board[c] : [];
       stack.forEach((color, level) => {
         const r = levelRect(c, level);
         parts.push(`<rect class="b-cube" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.w}" rx="10" style="fill:${fill(color)}"/>`);
         if (!COLORS.includes(color)) parts.push(`<text class="b-unknown" x="${r.x + r.w / 2}" y="${r.y + r.w / 2 + 14}" text-anchor="middle">?</text>`);
+      });
+    }
+
+    if (app.intro) {   // the intro preview: the lesson's cubes fill in, in order, as ghosts
+      app.intro.steps.slice(0, app.intro.shown).forEach((st) => {
+        const r = levelRect(st.cell, Math.min(st.level, 2));
+        parts.push(`<rect class="b-intro" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.w}" rx="10" style="fill:${fill(st.color)}"/>`);
       });
     }
 
@@ -437,6 +475,8 @@
     ws.onmessage = (ev) => {
       let d;
       try { d = JSON.parse(ev.data); } catch (err) { return; }
+      if (d && Array.isArray(d.lessons)) return onLessons(d.lessons);   // reply to {"cmd":"list"}
+      if (d && typeof d.error === "string") { app.autoIntro = false; return toast(d.error, 4000); }
       const s = normalize(d);
       if (!s) return;
       onState(s);
@@ -460,6 +500,12 @@
       setTimeout(render, PASS_HOLD_MS + 50);
     }
     app.state = s;
+    if (app.intro && phaseOf(s) !== "ready") cancelIntro();   // started or reset elsewhere
+    if (app.autoIntro && phaseOf(s) === "ready" && s.lessonSteps && s.lessonSteps.length) {
+      app.autoIntro = false;   // a lesson we just loaded (or the robot's turn): show the whole build once
+      playIntro();
+      return;
+    }
     render();
   }
 
@@ -488,20 +534,30 @@
   }
   document.addEventListener("keydown", (ev) => {
     if (ev.repeat) return;
+    if (app.picker.open && pickerKey(ev)) return;
+    if (ev.key === "l" || ev.key === "L") { openPicker(); return; }
+    if (ev.key === "b" || ev.key === "B") { nowTheRobot(); return; }
     if (ev.key === "3") setView("3d");
     else if (ev.key === "2") setView("2d");
     else if (ev.key === "v") setView(app.view === "3d" ? "2d" : "3d");
-    else if (ev.key === " " || ev.code === "Space") { ev.preventDefault(); startLesson(); }
+    else if (ev.key === " " || ev.code === "Space") { ev.preventDefault(); spaceKey(); }
     else if (ev.key === "r" || ev.key === "R") resetLesson();
   });
 
   // ------------------------------------------------------------ commands to the brain (ws :8766)
 
-  function send(cmd) {
+  function send(cmd, extra = {}, quiet = false) {
     const ws = app.ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) { toast("Not connected to Apprentice yet"); return false; }
-    ws.send(JSON.stringify({ cmd }));
+    if (!ws || ws.readyState !== WebSocket.OPEN) { if (!quiet) toast("Not connected to Apprentice yet"); return false; }
+    ws.send(JSON.stringify({ cmd, ...extra }));
     return true;
+  }
+  function spaceKey() {
+    if (app.intro) return finishIntro();   // Space during the intro skips it
+    const s = app.state;
+    if (!s || phaseOf(s) !== "ready") return;
+    if (s.lessonSteps && s.lessonSteps.length && isClear(s.board)) playIntro();
+    else startLesson();
   }
   function startLesson() {
     const s = app.state;
@@ -510,14 +566,121 @@
     if (send("start")) toast("Starting...");
   }
   function resetLesson() {
+    cancelIntro();
     if (send("reset")) toast("Starting over...");
   }
-  function toast(text) {
+  function toast(text, ms = 1600) {
     ui.toast.textContent = text;
     ui.toast.hidden = false;
     clearTimeout(app.toastTimer);
-    app.toastTimer = setTimeout(() => { ui.toast.hidden = true; }, 1600);
+    app.toastTimer = setTimeout(() => { ui.toast.hidden = true; }, ms);
   }
+
+  // ------------------------------------------------------------ intro preview (ready screen)
+
+  // Each step's cube drops in as a hologram, one every INTRO_STEP_MS, with that step's words as
+  // the headline. The finished hologram holds, fades, and then the lesson starts.
+  function playIntro() {
+    const s = app.state;
+    if (!s || !s.lessonSteps || !s.lessonSteps.length) return startLesson();
+    cancelIntro();
+    const steps = s.lessonSteps, n = steps.length;
+    const intro = { steps, shown: 0, timers: [] };
+    app.intro = intro;
+    if (app.view3d) guard(app.view3d.introStart, side());
+    steps.forEach((st, i) => intro.timers.push(setTimeout(() => {
+      intro.shown = i + 1;
+      if (app.view3d) guard(app.view3d.introDrop, st.color, st.cell, st.level);
+      render();
+    }, i * INTRO_STEP_MS)));
+    const fadeAt = (n - 1) * INTRO_STEP_MS + INTRO_DROP_MS + INTRO_HOLD_MS;
+    intro.timers.push(setTimeout(() => { if (app.view3d) guard(app.view3d.introFade); }, fadeAt));
+    intro.timers.push(setTimeout(finishIntro, fadeAt + INTRO_FADE_MS));
+    app.boardKey = null;
+    render();
+  }
+  function cancelIntro() {
+    if (!app.intro) return;
+    app.intro.timers.forEach(clearTimeout);
+    app.intro = null;
+    if (app.view3d) guard(app.view3d.introClear);
+    app.boardKey = null;
+  }
+  function finishIntro() {
+    const steps = app.intro ? app.intro.steps : null;
+    cancelIntro();
+    const s = app.state;
+    if (steps && s && phaseOf(s) === "ready" && send("start")) {
+      app.turnText = (s.mode === "robot" ? "The robot's turn! " : "Your turn! ") + stepText(steps[0]);
+      app.turnUntil = Date.now() + 3500;
+      setTimeout(render, 3550);
+    }
+    render();
+  }
+
+  // ------------------------------------------------------------ lesson picker (L) and the robot's turn (B)
+
+  function openPicker() {
+    if (app.picker.open) return closePicker();
+    app.picker.open = true;
+    send("list");
+    app.picker.timer = setInterval(() => send("list", {}, true), LIST_POLL_MS);
+    render();
+  }
+  function closePicker() {
+    app.picker.open = false;
+    clearInterval(app.picker.timer);
+    render();
+  }
+  function onLessons(list) {
+    const items = list.filter((d) => d && typeof d.lesson_id === "string")
+      .map((d) => ({ id: d.lesson_id, title: str(d.title) || d.lesson_id, steps: Number(d.steps) || 0, mtime: Number(d.mtime) || 0 }));
+    const was = app.picker.items[app.picker.sel];
+    app.picker.items = items;   // the brain sends them newest first
+    const keep = was ? items.findIndex((d) => d.id === was.id) : -1;
+    app.picker.sel = keep >= 0 ? keep : 0;
+    render();
+  }
+  function pickerKey(ev) {
+    const p = app.picker, n = p.items.length;
+    if (ev.key === "ArrowDown") { p.sel = n ? (p.sel + 1) % n : 0; }
+    else if (ev.key === "ArrowUp") { p.sel = n ? (p.sel - 1 + n) % n : 0; }
+    else if (ev.key === "Enter") { if (n) loadLesson(p.items[p.sel].id); return true; }
+    else if (ev.key === "Escape" || ev.key === "l" || ev.key === "L") { closePicker(); return true; }
+    else return false;
+    ev.preventDefault();
+    render();
+    return true;
+  }
+  function loadLesson(id) {
+    cancelIntro();
+    closePicker();
+    if (send("load", { lesson_id: id })) { app.autoIntro = true; toast("Loading the lesson..."); }
+  }
+  function renderPicker(s) {
+    ui.picker.hidden = !app.picker.open;
+    if (!app.picker.open) return;
+    const now = Date.now() / 1000;
+    const rows = app.picker.items.map((d, i) => {
+      const tags = [d.mtime && now - d.mtime < NEW_LESSON_S ? `<span class="tag new">new</span>` : "",
+                    s && s.lessonId === d.id ? `<span class="tag now">now</span>` : ""].join("");
+      return `<li class="${i === app.picker.sel ? "sel" : ""}" data-id="${esc(d.id)}"><span class="p-title">${esc(d.title)}</span>` +
+             `<span class="p-meta">${d.steps} steps</span>${tags}</li>`;
+    });
+    const html = rows.length ? rows.join("") : `<li class="empty">Looking for lessons...</li>`;
+    if (ui.pickerList.innerHTML !== html) ui.pickerList.innerHTML = html;
+  }
+  ui.pickerList.addEventListener("click", (ev) => {
+    const li = ev.target.closest("li[data-id]");
+    if (li) loadLesson(li.dataset.id);
+  });
+
+  function nowTheRobot() {
+    const s = app.state;
+    if (!s || s.mode !== "human" || phaseOf(s) !== "complete") return;
+    if (send("mode", { mode: "robot" })) { app.autoIntro = true; toast("Getting the robot ready..."); }
+  }
+  ui.screenAction.addEventListener("click", nowTheRobot);
 
   // ------------------------------------------------------------ ready / complete / stopped screens
 
@@ -538,7 +701,7 @@
   }
 
   function renderScreen(s, phase) {
-    let show = s && (phase === "ready" || phase === "complete" || phase === "stopped");
+    let show = s && !app.intro && (phase === "ready" || phase === "complete" || phase === "stopped");
     ui.screen.hidden = !show;
     ui.stage.classList.toggle("screened", !!show);
     if (!show) return;
@@ -564,6 +727,7 @@
     ui.screenText.textContent = text;
     ui.screenKey.textContent = key;
     ui.screenKey.hidden = !key;
+    ui.screenAction.hidden = !(phase === "complete" && s.mode === "human");   // B: the robot repeats it
     const thumb = board ? thumbSVG(board, side()) : "";
     if (ui.screenThumb.innerHTML !== thumb) ui.screenThumb.innerHTML = thumb;
     ui.screenThumb.hidden = !board;
