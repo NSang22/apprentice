@@ -12,6 +12,17 @@
     POST /api/buddy/next         next round (or the summary)
     POST /api/buddy/quit         back to the game picker
 
+Take Turns (buddy/turns_session.py), same table, camera and arm; one game runs at a time:
+
+    GET  /buddy/turns                 the Take Turns screen (buddy/static/turns.html)
+    GET  /api/buddy/turns/state
+    POST /api/buddy/turns/start
+    POST /api/buddy/turns/cell        {cell, color|null}   practice mode
+    POST /api/buddy/turns/pip         the child's "Your turn, Pip!"
+    POST /api/buddy/turns/retry       Pip could not place / the scan got stuck: try again
+    POST /api/buddy/turns/next
+    POST /api/buddy/turns/quit
+
 The dashboard runs table_task() for the camera board (perception ws :8765).
 """
 
@@ -25,11 +36,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from buddy.session import BuddySession
+from buddy.turns_session import TurnsSession
 
 STATIC = Path(__file__).resolve().parent / "static"
 
 router = APIRouter()
 game = BuddySession()
+turns = TurnsSession(table=game.table, eyes=game.eyes, pip=game.pip, profile=game.profile)
 
 
 def table_task():
@@ -86,6 +99,7 @@ def settings(body: SettingsBody):
 @router.post("/api/buddy/start")
 def start(body: StartBody):
     try:
+        turns.quit()  # one game at a time: there is one table
         game.start(body.game)
     except ValueError as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
@@ -126,3 +140,55 @@ def next_round():
 def quit_game():
     game.quit()
     return game.state()
+
+
+# ---------------------------------------------------------------- Take Turns
+
+@router.get("/buddy/turns")
+def turns_page():
+    return FileResponse(STATIC / "turns.html", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/api/buddy/turns/state")
+def turns_state():
+    return turns.state()
+
+
+@router.post("/api/buddy/turns/start")
+def turns_start():
+    try:
+        game.quit()  # one game at a time: there is one table
+        turns.start()
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    return turns.state()
+
+
+@router.post("/api/buddy/turns/cell")
+def turns_cell(body: CellBody):
+    turns.set_cell(body.cell, body.color)
+    return turns.state()
+
+
+@router.post("/api/buddy/turns/pip")
+def turns_pip():
+    turns.your_turn_pip()
+    return turns.state()
+
+
+@router.post("/api/buddy/turns/retry")
+def turns_retry():
+    turns.retry()
+    return turns.state()
+
+
+@router.post("/api/buddy/turns/next")
+def turns_next():
+    turns.next()
+    return turns.state()
+
+
+@router.post("/api/buddy/turns/quit")
+def turns_quit():
+    turns.quit()
+    return turns.state()

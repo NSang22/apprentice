@@ -49,7 +49,7 @@ PRACTICE_REMOVE_S = 1.2     # ... and how long each removal takes
 
 GAMES = [
     {"id": "recall", "title": "Picture Recall", "desc": "Look, remember, build it!", "ready": True},
-    {"id": "turns", "title": "Take Turns", "desc": "Build it together with Pip", "ready": False},
+    {"id": "turns", "title": "Take Turns", "desc": "Build it together with Pip", "ready": True, "page": "/buddy/turns"},
     {"id": "teach", "title": "Teach the Robot", "desc": "You build, Pip learns", "ready": False},
 ]
 
