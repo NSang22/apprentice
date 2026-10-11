@@ -1,6 +1,8 @@
 """HTTP routes for the Buddy phone app, mounted into the Jetson dashboard (jetson-kushi/dashboard.py).
 
     GET  /buddy                  the phone app (buddy/static/index.html)
+    GET  /buddy/static/<file>    the app's other files (board3d.js)
+    GET  /buddy/ui/<path>        read-only: the monitor's ui/view3d.js and ui/vendor/*, shared, not copied
     GET  /api/buddy/state        everything the screen needs; the phone polls it
     GET  /api/buddy/debug        logs for the debug panel: events, Pip, robot vision, board sync
     POST /api/buddy/profile      {name, avatar}
@@ -44,6 +46,7 @@ from buddy.teach_session import TeachSession
 from buddy.turns_session import TurnsSession
 
 STATIC = Path(__file__).resolve().parent / "static"
+UI_DIR = Path(__file__).resolve().parent.parent / "ui"   # the monitor; Buddy borrows its 3D board
 
 router = APIRouter()
 game = BuddySession()
@@ -83,6 +86,26 @@ class ChooseBody(BaseModel):
 @router.get("/buddy")
 def buddy_page():
     return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
+
+
+def _serve(base: Path, allowed: list[Path], path: str):
+    """A file under base, only if it is one of allowed (files) or inside one of them (folders)."""
+    target = (base / path).resolve()
+    ok = target.is_file() and any(target == a or a in target.parents for a in (p.resolve() for p in allowed))
+    if not ok:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    kind = "text/javascript" if target.suffix in (".js", ".mjs") else "text/plain"
+    return FileResponse(target, media_type=kind, headers={"Cache-Control": "no-cache"})
+
+
+@router.get("/buddy/static/{path:path}")
+def buddy_static(path: str):
+    return _serve(STATIC, [STATIC / "board3d.js"], path)
+
+
+@router.get("/buddy/ui/{path:path}")
+def shared_ui(path: str):
+    return _serve(UI_DIR, [UI_DIR / "view3d.js", UI_DIR / "vendor"], path)
 
 
 @router.get("/api/buddy/state")

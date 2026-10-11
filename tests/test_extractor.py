@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from brain.extractor import (ColorsFileError, build_lesson, extract, gate_lesson, gemini_fallback, manual_colors,
-                             script_frames, split_transients, step_rows, write_outputs)
+                             restore_hidden, script_frames, split_transients, step_rows, write_outputs)
 from brain.fake_feed import HZ, make_frame, parse_script
 from brain.journal import Journal, read_journal
 from brain.session import COMPLETE, Session
@@ -304,6 +304,31 @@ def test_new_cube_is_named_among_colors_not_on_the_board():
                  robot_read=lambda f, cell: robot[cell], robot_distance=lambda f, cell: dist[cell])
     rows = step_rows(ex)
     assert [(r.cell, r.color) for r in rows] == [("A1", "skyblue"), ("B2", "teal")]
+
+
+def test_cube_hidden_by_an_arm_keeps_its_step():
+    # red on A1, teal on B2; an arm hides A1 (it reads empty), then red is back on A1
+    ex = extract(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["red"], "B2": ["teal"]}),
+                            seg({"B2": ["teal"]}), seg({"A1": ["red"], "B2": ["teal"]})]))
+    split_transients(ex)
+    restore_hidden(ex)
+    rows = step_rows(ex)
+    lesson = build_lesson(rows, "test-lesson", "Test", None)
+    gate = gate_lesson(lesson, ex, rows=rows)
+    assert [(s.color, s.cell, s.level, s.t_video) for s in lesson.steps] == [("red", "A1", 0, 1.5), ("teal", "B2", 0, 3.0)]
+    assert ex.removed == [] and [(h["cell"], h["color"]) for h in ex.hidden] == [("A1", "red")]
+    assert gate.gate.passed, gate.reasons
+
+
+def test_two_cubes_at_once_pass_when_one_is_later_removed():
+    ex = extract(frames_of([seg({}), seg({"A1": ["red"], "B2": ["teal"]}), seg({"A1": ["red"]})]))
+    split_transients(ex)
+    rows = step_rows(ex)
+    lesson = build_lesson(rows, "test-lesson", "Test", None)
+    gate = gate_lesson(lesson, ex, rows=rows)
+    assert placed(lesson) == [("red", "A1", 0)] and [(c.cell, c.color()) for c in ex.removed] == [("B2", "teal")]
+    assert gate.gate.passed, gate.reasons
+    assert "B2 L0 was later removed" in gate.notes["one_cube_per_change"][0]
 
 
 def test_colors_file_with_wrong_cell_is_refused():

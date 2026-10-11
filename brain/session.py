@@ -197,6 +197,7 @@ class Session:
             expected_level=self.expected_level,
             robot_status=self.robot_status(),
             board_seen=self.board_seen,
+            lesson_steps=list(self.lesson.steps),
         )
 
     def robot_status(self) -> str:

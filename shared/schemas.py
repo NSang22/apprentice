@@ -309,6 +309,7 @@ class SessionState:
     expected_level: Optional[int] = None
     robot_status: str = "idle"             # one of ROBOT_STATUSES
     board_seen: bool = False               # brain has seen at least one stable board (camera is up)
+    lesson_steps: Optional[list[Step]] = None  # the whole lesson in order, for the UI's intro preview
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -331,6 +332,7 @@ class SessionState:
             "expected_level": self.expected_level,
             "robot_status": self.robot_status,
             "board_seen": self.board_seen,
+            "lesson_steps": None if self.lesson_steps is None else [s.to_dict() for s in self.lesson_steps],
         }
 
     @classmethod
@@ -359,6 +361,9 @@ class SessionState:
             _check_cell(expected_cell, f"{w}.expected_cell")
         final_board = d.get("final_board")
         expected_level = d.get("expected_level")
+        lesson_steps = d.get("lesson_steps")
+        if lesson_steps is not None and not isinstance(lesson_steps, list):
+            raise SchemaError(f"{w}: lesson_steps must be a list")
         return cls(
             mode=mode,
             lesson_id=str(_req(d, "lesson_id", w)),
@@ -379,4 +384,5 @@ class SessionState:
             expected_level=None if expected_level is None else int(expected_level),
             robot_status=robot_status,
             board_seen=bool(d.get("board_seen", False)),
+            lesson_steps=None if lesson_steps is None else [Step.from_dict(s) for s in lesson_steps],
         )

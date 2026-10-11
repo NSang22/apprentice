@@ -356,7 +356,7 @@ python -m perception.publish --video videos/demo.mp4
 # reasons, color reads, draft + colors-file template if a color is unknown) and step pictures. No --calib:
 # grid lock + empty board from the video's first second. Exit 0 gate passed, 1 gate failed, 3 colors unknown.
 # Stacks up to 3 come from history (a clear new top color on an occupied cell), never the camera's height read.
-# Defaults: --block-mm 48, --colors all shared colors, --color-memory robot/outputs/color_memory.json if present.
+# Defaults: --block-mm 48, --colors all shared colors, --sample-hz 5, --color-memory robot/outputs/color_memory.json if present.
 # A step no source can name is asked of Gemini (GEMINI_API_KEY, offline, answers reused on reruns); --no-gemini skips it.
 python -m brain.extractor --video videos/expert_take1.mp4 --color-memory videos/calib_oct11/color_memory.json --boards-out data/boards.json
 python -m brain.extractor --video videos/expert_take1.mp4 --colors red,yellow,orange,purple,skyblue --colors-file colors.json
@@ -379,6 +379,9 @@ python -m brain.extractor --script tests/scripts/staircase_with_mistake.json   #
 
 # Monitor UI (ui/): reads SessionState from brain.server on ws :8766, no network needed
 python ui/serve.py      # then open http://localhost:8000 and press F11; keys 2 / 3 switch 2D / 3D board
+#   Space on the ready screen plays the intro preview (Space again skips it), then the lesson starts.
+#   L opens the lesson picker (newest on top, "new" if under 10 minutes old): arrows choose, Enter loads, L closes.
+#   B on a finished human lesson hands it to the robot (needs --robot). R starts over. Each load or switch is its own session.
 
 # Robot module on its own (LeRobot venv, see robot/README.md and docs/SETUP_NOTES.md)
 python -m robot.scripts.tests.scene_snapshot robot/samples/overhead_02.png   # offline, no hardware

@@ -4,7 +4,7 @@ This is the only brain file that imports perception/ and robot/perception/, and 
 imports it only for --video, so the live brain never loads them. It calls perception's own
 functions (Perceiver, the grid lock, segment.detect); it adds no detection or color logic.
 
-Frames are decoded from the file, never a camera. About HZ frames per second of video are run
+Frames are decoded from the file, never a camera. About SAMPLE_HZ frames per second of video are run
 through perception.perceive.Perceiver, and every timestamp comes from the video: t is the frame's
 own position (CAP_PROP_POS_MSEC, or frame_index / fps if that reads 0), and the Perceiver's clock
 (its empty-board refresh timer) reads the same video time. Same video in, same frames out.
@@ -72,7 +72,10 @@ from robot.perception import segment, sheet
 from shared.config import CELLS, UNKNOWN
 from shared.schemas import GridState
 
-HZ = 10.0                     # frames per second of video run through perception (the live feed's rate)
+SAMPLE_HZ = 5.0               # frames per second of video run through perception. 5 gave the same steps,
+                              # corrections and gate as 10 on expert_take1/2 in about half the time
+# Perception counts some things in frames, not seconds, so they span more time at a lower rate:
+# CellVote's 5-frame majority, StackMemory's 3 stable frames, RELOCK_FRAMES 5.
 FIRST_FRAME_SEARCH_S = 1.0    # first-frame mode: look this far into the video for all 4 tags
 PROGRESS_EVERY_S = 5.0
 CROP_MARGIN = 0.15            # step pictures: this share of a cell around it on every side
@@ -104,11 +107,23 @@ def hand_band(pose: Any, block_mm: float) -> np.ndarray:
     return cv2.erode(band, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))) > 0
 
 
+# change_mask decides a pixel from pixels at most 14 px away (5x5 blur, 5x5 open, 9x9 close), so running it
+# on the band's bounding box grown by this much gives exactly the same band pixels as the whole sheet.
+BAND_PAD_PX = 24
+
+
 def band_change(live_sheet: np.ndarray, reference_sheet: np.ndarray, band: np.ndarray) -> Optional[float]:
     """Share of the band that changed since the empty board (perception's change_mask)."""
-    if not band.any():
+    ys, xs = np.nonzero(band)
+    if len(ys) == 0:
         return None
-    return float((change_mask(live_sheet, reference_sheet) > 0)[band].mean())
+    h, w = band.shape
+    y0, y1 = max(0, ys.min() - BAND_PAD_PX), min(h, ys.max() + 1 + BAND_PAD_PX)
+    x0, x1 = max(0, xs.min() - BAND_PAD_PX), min(w, xs.max() + 1 + BAND_PAD_PX)
+    if reference_sheet.shape[:2] != live_sheet.shape[:2]:  # change_mask would resize it to the live sheet first
+        reference_sheet = cv2.resize(reference_sheet, (live_sheet.shape[1], live_sheet.shape[0]))
+    changed = change_mask(live_sheet[y0:y1, x0:x1], reference_sheet[y0:y1, x0:x1]) > 0
+    return float(changed[band[y0:y1, x0:x1]].mean())
 
 
 class VideoSourceError(RuntimeError):
@@ -122,7 +137,7 @@ def _sha256(path: Path) -> str:
 class VideoSource:
     def __init__(self, path: Path, colors: Optional[str], block_mm: Optional[float],
                  calib_dir: Optional[Path] = None, color_memory: Optional[Path] = None,
-                 hz: float = HZ, log: Callable[[str], None] = print):
+                 hz: float = SAMPLE_HZ, log: Callable[[str], None] = print):
         self.path = Path(path)
         self.log = log
         if not self.path.is_file():
@@ -134,6 +149,7 @@ class VideoSource:
         self.size = (int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
         frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
         self.stride = max(1, round(self.fps / hz)) if self.fps > 0 else 1
+        log(f"[extract] sampling {hz:g} frames per second (every {self.stride} video frame(s))")
         self.active = parse_colors(colors) if colors else default_active_colors()
         self.block_mm, line = set_block_mm(block_mm)
         log(f"[extract] {line}")
@@ -241,6 +257,11 @@ class VideoSource:
         index, next_index, last_why, next_progress = -1, 0, "no frames", 0.0
         reasons: Counter[str] = Counter()
         while True:
+            if started and index + 1 < next_index:  # a frame between samples: move past it without decoding it
+                if not self.cap.grab():
+                    break
+                index += 1
+                continue
             ok, frame = self.cap.read()
             if not ok:
                 break

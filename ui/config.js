@@ -4,6 +4,8 @@
 window.APPRENTICE_CONFIG = {
   BRAIN_WS_PORT: 8766,
   PASS_HOLD_MS: 800,    // keep the green check up this long, even if the next step arrives at once
+  INTRO_STEP_MS: 800,   // intro preview: one holographic cube lands this often
+  INTRO_HOLD_MS: 1200,  // ... then the finished hologram holds this long before it fades
   RECONNECT_MIN_MS: 500,
   RECONNECT_MAX_MS: 3000,
 };
