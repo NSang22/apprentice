@@ -3,12 +3,12 @@ import shutil
 from pathlib import Path
 
 from analytics.fake_journal import generate, write_journals
-from analytics.load import DEFAULT_LESSON_DIRS, load_all, read_journal
+from analytics.load import DEFAULT_LESSON_DIRS, load_all, provenance, read_journal
 from brain.settings import DEMO_LESSON
 from shared.schemas import Lesson
 
 FIXTURES = Path(__file__).parent / "fixtures"
-HUMAN, ROBOT = "s-20261010-184735", "s-20261010-184653"  # session ids inside the brain fixtures
+HUMAN, ROBOT = "s-20261010-223829", "s-20261010-223808"  # session ids inside the brain fixtures
 
 
 def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
@@ -18,7 +18,7 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
         shutil.copy(p, sessions / p.name)
     # A crash mid-write, and a session that never left the "ready" phase (board lines only).
     with open(sessions / "brain_journal_human.jsonl", "a", encoding="utf-8") as f:
-        f.write('{"t": 1791650000.0, "session": "s-20261010-184735", "ki')
+        f.write('{"t": 1791650000.0, "session": "s-20261010-223829", "ki')
     (sessions / "s-ready.jsonl").write_text(
         '{"t":1.0,"session":"s-ready","mode":"human","kind":"board","data":{"step":0,"board":{}}}\n')
     # Synthetic journals are written by the real brain too, and add a robot place that fails.
@@ -31,7 +31,7 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
     assert t.skipped_lines == 2  # our cut line plus the generator's one cut-off session
     assert t.unknown_lessons == []
     prov = {s.session: s.provenance for s in t.sessions}
-    assert prov[HUMAN] == prov[ROBOT] == "simulation"  # robot "FakeRobot"
+    assert prov[HUMAN] == prov[ROBOT] == "simulation"  # grid_source fake_feed / sim, robot fake
     assert sum(p == "synthetic" for p in prov.values()) == 16
 
     # The invariant behind the "still placing" skip rule: for every step the brain advanced,
@@ -62,3 +62,13 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
     assert robot[0].step_color == "red"  # lessons/sample-flat-v1.json
     # After a failed place, "still placing" is a failed robot attempt, as in the brain.
     assert any(a.mode == "robot" and a.verdict == "MISSING" and a.fault_cell is None for a in t.attempts)
+
+    # Provenance from the brain's grid_source: a session started before the first frame says
+    # "unknown:<url>", and the server's later note says what it was. Mixed or unknown is unverified.
+    def ev(kind, **data):
+        return {"kind": kind, "t": 0.0, "data": data}
+    start = ev("session_start", grid_source="unknown:ws://jetson:8765", robot="none")
+    assert provenance(start) == "unverified"
+    assert provenance(start, [ev("note", grid_source="perception:ws://jetson:8765"), start]) == "real"
+    assert provenance(start, [ev("note", grid_source="perception:ws://jetson:8765"), ev("note", grid_source="fake_feed")]) == "unverified"
+    assert provenance(ev("session_start", grid_source="perception:ws://jetson:8765", robot="fake")) == "simulation"

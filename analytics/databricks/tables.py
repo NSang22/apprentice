@@ -110,7 +110,7 @@ def journal_raw_rows(source_file: str, text: str) -> list[dict]:
     lines = text.splitlines()
     events, _ = parse_journal_lines(lines)
     start = next((e for e in events if e["kind"] == "session_start"), None)
-    prov = None if start is None else provenance(start)
+    prov = None if start is None else provenance(start, events)
     return [
         conform("journal_raw", {"provenance": prov, "source_file": source_file, "line_no": i, "line": line})
         for i, line in enumerate(lines, 1) if line.strip()

@@ -28,11 +28,11 @@ FIELDS: dict[str, dict[str, Optional[str]]] = {
     "session_start": {
         "lesson_id": "lesson_id",
         "steps": "steps",                # a count today; a list of step dicts is used directly
-        "robot": "robot",                # "FakeRobot" / "HttpRobotClient" today; "none" / "fake" / "http:<url>" soon
-        "grid_source": "grid_source",
-        "human_side": "human_side",      # "row1" or "row3": which edge the human stands at    # coming: "sim", "fake_feed", "fake_feed_script:<name>", "perception:<url>"
-        "commit": None,                  # coming: git commit hash, name not set yet
-        "dirty": None,                   # coming: working tree dirty flag, name not set yet
+        "robot": "robot",                # "none", "fake", "http:<url>", "unknown"; older journals: "FakeRobot"
+        "grid_source": "grid_source",    # "sim", "fake_feed", "perception:<url>", "unknown:<url>", "unknown"
+        "human_side": "human_side",      # "row1" or "row3": which edge the human stands at
+        "commit": "git_commit",          # hash or "unknown"
+        "dirty": "git_dirty",            # bool or "unknown"
         "hints_file_hash": None,         # coming: sha256 of the hints file the session loaded, name not set yet
         "synthetic": "synthetic",        # analytics/fake_journal.py only
     },
@@ -47,6 +47,7 @@ FIELDS: dict[str, dict[str, Optional[str]]] = {
         "retry": "retry",                # robot mode: retries already made on this step
     },
     "hint": {"step": "step", "hint_level": "hint_level"},
+    "note": {"grid_source": "grid_source"},  # the server notes the real source once the first frame arrives
     "step_advance": {"from_step": "from_step", "to_step": "to_step", "first_try": "first_try"},
     "robot_cmd": {"step": "step", "cmd": "cmd"},
     "robot_result": {"step": "step", "cmd": "cmd", "ok": "ok", "error": "error"},
@@ -61,6 +62,7 @@ VALUES = {
     "place_cmd": "place",
     "fake_robots": ("FakeRobot", "fake"),
     "perception_prefix": "perception:",
+    "unknown_prefix": "unknown",
 }
 
 PROVENANCES = ("real", "unverified", "simulation", "synthetic")
@@ -236,16 +238,24 @@ def _after_start(events: list[dict]) -> list[dict]:
     return []
 
 
-def provenance(start: dict) -> str:
+def provenance(start: dict, events: Iterable[dict] = ()) -> str:
+    """synthetic, simulation, real, or unverified, for the session that start opens.
+
+    events is the whole journal: grid_source notes from the server (before or after start) count
+    too, because a session started before the first frame records "unknown:<url>" and the server
+    notes the real source later. No known source, or more than one, is unverified."""
     if field_of(start, "synthetic") is True:
         return "synthetic"
-    robot = field_of(start, "robot")
-    grid = field_of(start, "grid_source")
-    if robot in VALUES["fake_robots"]:
+    if field_of(start, "robot") in VALUES["fake_robots"]:
         return "simulation"
-    if not isinstance(grid, str):
+    sources = set()
+    for e in [start, *events]:
+        g = field_of(e, "grid_source") if e["kind"] in ("session_start", "note") else None
+        if isinstance(g, str) and not g.startswith(VALUES["unknown_prefix"]):
+            sources.add(g)
+    if len(sources) != 1:
         return "unverified"
-    return "real" if grid.startswith(VALUES["perception_prefix"]) else "simulation"
+    return "real" if sources.pop().startswith(VALUES["perception_prefix"]) else "simulation"
 
 
 def lesson_steps(start: dict, lessons: dict[str, Lesson]) -> Optional[list[dict]]:
@@ -267,11 +277,11 @@ def _step_info(steps: Optional[list[dict]], step: int) -> tuple[Any, Any, Any]:
 
 def build_attempts(events: list[dict], lessons: dict[str, Lesson]) -> list[Attempt]:
     """One Attempt per graded check in one session's events."""
-    events = _after_start(events)
+    all_events, events = events, _after_start(events)
     if not events:
         return []
     start = events[0]
-    sid, mode, prov = start.get("session", ""), start.get("mode", ""), provenance(start)
+    sid, mode, prov = start.get("session", ""), start.get("mode", ""), provenance(start, all_events)
     lesson_id = field_of(start, "lesson_id")
     steps = lesson_steps(start, lessons)
 
@@ -310,11 +320,11 @@ def build_attempts(events: list[dict], lessons: dict[str, Lesson]) -> list[Attem
 
 
 def build_hints(events: list[dict]) -> list[HintShown]:
-    events = _after_start(events)
+    all_events, events = events, _after_start(events)
     if not events:
         return []
     start = events[0]
-    sid, prov, lesson_id = start.get("session", ""), provenance(start), field_of(start, "lesson_id")
+    sid, prov, lesson_id = start.get("session", ""), provenance(start, all_events), field_of(start, "lesson_id")
     return [
         HintShown(sid, prov, lesson_id, field_of(e, "step"), field_of(e, "hint_level"), e["t"])
         for e in events if e["kind"] == "hint"
@@ -323,11 +333,11 @@ def build_hints(events: list[dict]) -> list[HintShown]:
 
 def build_robot_cmds(events: list[dict]) -> list[RobotCmd]:
     """Each robot_cmd, with ok/error from the next robot_result for the same command."""
-    events = _after_start(events)
+    all_events, events = events, _after_start(events)
     if not events:
         return []
     start = events[0]
-    sid, mode, prov = start.get("session", ""), start.get("mode", ""), provenance(start)
+    sid, mode, prov = start.get("session", ""), start.get("mode", ""), provenance(start, all_events)
     out: list[RobotCmd] = []
     for e in events:
         if e["kind"] == "robot_cmd":
@@ -342,7 +352,7 @@ def build_robot_cmds(events: list[dict]) -> list[RobotCmd]:
 
 
 def build_session(events: list[dict], lessons: dict[str, Lesson], path: str = "", skipped: int = 0) -> Optional[SessionRow]:
-    events = _after_start(events)
+    all_events, events = events, _after_start(events)
     if not events:
         return None
     start = events[0]
@@ -355,7 +365,7 @@ def build_session(events: list[dict], lessons: dict[str, Lesson], path: str = ""
     return SessionRow(
         session=start.get("session", ""),
         mode=start.get("mode", ""),
-        provenance=provenance(start),
+        provenance=provenance(start, all_events),
         path=path,
         lesson_id=field_of(start, "lesson_id"),
         n_steps=len(steps) if steps is not None else (n_steps if isinstance(n_steps, int) else None),

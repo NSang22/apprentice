@@ -40,14 +40,19 @@ def vertical_path(ws, xy, z_from, z_to, roll):
     return path
 
 
+ROLL_TEST = [("r2c2", 0.0), ("r2c2", 90.0), ("r2c2", -90.0)]
+
+
 def main():
     plan_only = "--plan" in sys.argv
     ws = Workspace()
-    roll = 0.0
     plans = {}
-    for name in CROSSINGS:
+    targets = ROLL_TEST if "--roll" in sys.argv else [(n, 0.0) for n in CROSSINGS]
+    for name, roll in targets:
         xy = crossing_mm(name)
-        plans[name] = (xy, vertical_path(ws, xy, HOVER_MM, LOW_MM, roll))
+        key = f"{name} at wrist roll {roll:+.0f}"
+        plans[key] = (xy, vertical_path(ws, xy, HOVER_MM, LOW_MM, roll))
+        name = key
         low = plans[name][1][-1]
         print(f"{name} at sheet ({xy[0]:.1f}, {xy[1]:.1f}) mm -> low pose "
               + "  ".join(f"{j} {v:6.1f}" for j, v in low.items()))
@@ -61,7 +66,7 @@ def main():
         start = arm.enable()
         input("Torque on. Let go, step back, hand near the 12V plug. ENTER to start...")
         gripper = {"gripper": start["gripper"]}
-        for name in CROSSINGS:
+        for name in plans:
             xy, path = plans[name]
             print(f"\n-> above {name} at {HOVER_MM:.0f} mm")
             arm.move_to({**path[0], **gripper})
