@@ -196,8 +196,9 @@ def _pick_mistake(rng: random.Random, before: Board, step: Step, last: Optional[
 
 
 def _settle(session: Session, board: Board, clock: FakeClock) -> None:
-    """One stable board into the session. Like brain/server.py:174-176, a robot move resets the
-    stabilizer, so the same board settles once more after any move (a hover, in human mode)."""
+    """One stable board into the session. Like brain/server.py:271-273 (BrainServer.process), a
+    robot move resets the stabilizer, so the same board settles once more after any move (a hover,
+    in human mode)."""
     moves = session.robot_moves
     session.on_board(copy_board(board))
     if session.robot_moves != moves and session.phase == RUNNING:

@@ -342,8 +342,9 @@ def build_attempts(events: list[dict], lessons: dict[str, Lesson]) -> list[Attem
                 passed.add(step)
             if verdict == VALUES["missing"] and field_of(e, "fault_cell") is None:
                 # "Still placing": the board is exactly as before this step. Human mode never counts
-                # it (brain/session.py:63-67, is_mistake). Robot mode counts it only once a place for
-                # this step was issued, i.e. the place failed (brain/session.py:274-282, placed_current).
+                # it (brain/session.py:84-88, is_mistake). Robot mode counts it only once a place for
+                # this step was issued, i.e. the place failed (brain/session.py:424-425, placed_current
+                # in Session._robot_on_board).
                 if mode != "robot" or step not in placed:
                     continue
             attempt_no[step] += 1
