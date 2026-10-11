@@ -288,6 +288,13 @@ scripts/jetson_up.sh                 # flags: --no-robot, --no-debug
 #    Frees ports 8765/8766/8770/8000, opens the SSH tunnel (8765, 8770), copies colors.json, waits for a
 #    GridState, starts brain.server and ui/serve.py in their own windows, opens http://localhost:8000.
 powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Mode human   # or -Mode robot
+#    One command for both machines: -StartJetson ssh-es in, git pulls and runs scripts/jetson_up.sh first.
+#    -Lesson picks the lesson. -Sim needs no Jetson: simulated board, fake arm, brain + UI.
+powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -StartJetson -Lesson lessons\stack-test-v1.json
+powershell -ExecutionPolicy Bypass -File scripts\laptop_up.ps1 -Sim -Lesson lessons\stack-test-v1.json
+#    SSH key once, so nothing asks for a password (PowerShell):
+#    ssh-keygen -t ed25519   (Enter through the prompts)
+#    type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh <user>@<jetson> "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
 
 # 3. Ready check (either machine): perception rate, hands/arm clear, board, brain phase and step, robot status.
 #    Prints READY TO DEMO (exit 0) or the list of problems (exit 1). Never sends a command.
