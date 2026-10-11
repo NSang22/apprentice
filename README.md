@@ -314,8 +314,11 @@ python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --
 # block edge (without it: the robot's CUBE_SIZE_MM, 48 mm foam, with a warning). --colors defaults to the
 # robot's ACTIVE_COLORS (red, purple, yellow, teal); other colors read unknown.
 python -m perception.calibrate --camera 1 --block-mm <edge mm>
-# --debug: status band (GRID LOCKED n/4 / GRID LOST: moved / GRID NOT LOCKED), each block "B2 teal 0.93"
-# ("?" = the brain will see unknown), hands in magenta. E re-takes the empty board. Blocks on the tags are fine.
+# --debug: status band (GRID LOCKED n/4 / GRID LOST: moved / GRID NOT LOCKED), each stack "B2 L2 [red, teal] 0.93"
+# (height, colors bottom to top), a red "B2 ? <reason>" when a stack can't be read (the brain sees unknown),
+# each cell's visible top face outlined, hands in magenta. R overlays the board the model believes; E
+# re-takes the empty board. The board is read cell by cell (perception/cellmodel.py: every cell and height is
+# rendered and compared with the camera view; a cell's reading is the majority of its last 5 frames).
 python -m perception.publish --camera 1 --block-mm <edge mm> --debug
 python -m perception.publish --list-cameras        # Windows: which index/backend sees the grid
 python -m perception.publish --video videos/demo.mp4

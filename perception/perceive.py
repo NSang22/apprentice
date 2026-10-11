@@ -17,17 +17,18 @@ empty-board reference (slow light drift), once per empty spell.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
 import cv2
 import numpy as np
 
-from perception.blocks import Analysis, board_from, detect_blocks
+from perception.cellmodel import CellAnalysis, CellVote, read_cells
 from perception.change import warp_to_sheet
 from perception.colors import Calibration, active_refs
 from perception.robot_bridge import default_active_colors
+from perception.stacks import Reading, StackMemory, unknown_stack
 from robot.perception import segment
 from perception.grid_lock import (CALIB_DIR, LOCK_PATH, MIN_CONFIRM_TAGS, TAG_IDS, GridLock, TagCheck, check_tags,
                                   load_lock, lock_from_frame, save_lock, tag_centers)
@@ -48,17 +49,18 @@ class FrameResult:
     grid: str                       # NOT_LOCKED, NOT_CONFIRMED, LOCKED, LOST
     status: str                     # one line for the status band
     check: Optional[TagCheck] = None
-    analysis: Optional[Analysis] = None
+    analysis: Optional[CellAnalysis] = None
     reason: str = ""                # why hands_clear is false, if it is
+    stacks: dict = field(default_factory=dict)  # cell -> (published stack or None if unknown, why)
 
     @property
     def ok(self) -> bool:
         return self.grid == LOCKED
 
 
-def hands_clear(analysis: Analysis, crowded: bool) -> bool:
-    """No hand or unknown object on the sheet and no cell with two blocks. Hidden tags play no part."""
-    return not analysis.others and not crowded
+def hands_clear(analysis: CellAnalysis) -> bool:
+    """No hand or unknown object on the sheet. Hidden tags play no part."""
+    return not analysis.others
 
 
 class Perceiver:
@@ -83,6 +85,9 @@ class Perceiver:
         self.lost = False
         self.relock_count = 0
         self.empty_since: Optional[float] = None
+        self.memory = StackMemory()   # per-cell stack history (perception/stacks.py)
+        self.vote = CellVote()        # published reading = majority of the last 5 frames
+        self.hypothesis: Optional[dict] = None  # last frame's board, where the next search starts
         self.refreshed = False
 
     # ------------------------------------------------------------ capture
@@ -133,22 +138,61 @@ class Perceiver:
             self.log(f"[perception] saved grid lock confirmed by {check.visible} tags "
                      f"(off by at most {check.max_error_px:.1f} px)")
 
-        analysis = detect_blocks(frame_bgr, self.lock.pose(), self.reference, self.refs, self.block_mm)
-        live = analysis.live_sheet
-        board, confidence, crowded = board_from(analysis)
-        clear = hands_clear(analysis, crowded)
-        reason = "" if clear else ("two blocks in one cell" if crowded and not analysis.others
-                                   else f"{analysis.others[0].kind} on the sheet")
+        live = warp_to_sheet(frame_bgr, self.lock.H)
+        analysis = read_cells(frame_bgr, self.lock.pose(), self.reference, self.refs, self.block_mm,
+                              prior=self.hypothesis, fg_chroma=self.calib.fg_chroma, live_sheet=live)
+        self.hypothesis = analysis.hypothesis
+        clear = hands_clear(analysis)
+        reason = "" if clear else f"{analysis.others[0].kind} on the sheet"
+        board, confidence, stacks = self._publish(analysis, clear)
         self._maybe_refresh(live, analysis, clear)
         state = GridState(t=t, board=board, arm_clear=True, hands_clear=clear, confidence=confidence, frame_id=frame_id)
-        return FrameResult(state, LOCKED, f"GRID LOCKED ({check.visible}/4 tags)", check, analysis, reason)
+        return FrameResult(state, LOCKED, f"GRID LOCKED ({check.visible}/4 tags)", check, analysis, reason, stacks)
+
+    def _publish(self, analysis: CellAnalysis, usable: bool) -> tuple[dict, dict, dict]:
+        """Per cell: this frame's reading -> stack memory (push/pop, unknown on conflict) -> the
+        majority of the last 5 frames. Returns (board, confidence, cell -> (stack or None, why))."""
+        readings = {}
+        for cell, r in analysis.cells.items():
+            if r.state == "block":
+                readings[cell] = Reading(r.level, r.color, r.sides)
+            elif r.state == "unknown":
+                readings[cell] = Reading(None, "unknown")
+        self.memory.update(readings, usable)
+        board, confidence, out = empty_board(), {c: 1.0 for c in CELLS}, {}
+        for cell, r in analysis.cells.items():
+            if r.state == "empty":
+                frame_value, why = (), ""
+            elif r.state == "unknown":
+                frame_value, why = "unknown", r.reason
+            else:
+                stack, why = self.memory.resolve(cell, readings[cell])
+                frame_value = tuple(stack) if stack else "unknown"
+            if usable:
+                self.vote.add(cell, frame_value)
+            # No usable frames yet (hands in view since start-up): show this frame's reading.
+            value, agreed = self.vote.winner(cell) if self.vote.history.get(cell) else (frame_value, True)
+            if not agreed or value == "unknown":
+                level = r.level if r.level is not None else 0
+                board[cell], confidence[cell] = (unknown_stack(level), 0.0)
+                out[cell] = (None, why or "no majority over the last 5 frames")
+            else:
+                board[cell] = list(value)
+                if not value:
+                    confidence[cell] = 1.0      # voted empty
+                elif r.state == "block" and frame_value == value:
+                    confidence[cell] = r.confidence
+                else:
+                    confidence[cell] = 0.9      # this frame disagrees, but the last 5 hold a majority
+                out[cell] = (list(value), "")
+        return board, confidence, out
 
     def _try_relock(self, frame_bgr, t, frame_id, check, visible) -> FrameResult:
         status = "GRID LOST: moved (re-locks when all 4 tags show on an empty board)"
         if len(visible) == len(TAG_IDS):
             lock, _ = lock_from_frame(frame_bgr, self.localizer)
-            empty = lock is not None and detect_blocks(frame_bgr, lock.pose(), self.reference, self.refs,
-                                                       self.block_mm).empty
+            empty = lock is not None and read_cells(frame_bgr, lock.pose(), self.reference, self.refs,
+                                                    self.block_mm, fg_chroma=self.calib.fg_chroma).empty
             self.relock_count = self.relock_count + 1 if empty else 0
             if empty and self.relock_count >= RELOCK_FRAMES:
                 self._adopt(lock, warp_to_sheet(frame_bgr, lock.H))
@@ -158,7 +202,7 @@ class Perceiver:
             self.relock_count = 0
         return self._unusable(t, frame_id, LOST, status, "grid moved", check)
 
-    def _maybe_refresh(self, live: np.ndarray, analysis: Analysis, clear: bool) -> None:
+    def _maybe_refresh(self, live: np.ndarray, analysis: CellAnalysis, clear: bool) -> None:
         if not (analysis.empty and clear):
             self.empty_since, self.refreshed = None, False
             return
@@ -170,6 +214,7 @@ class Perceiver:
             self._save_reference()
 
     def _unusable(self, t, frame_id, grid, status, reason, check=None) -> FrameResult:
+        self.memory.update({}, usable=False)
         state = GridState(t=t, board=empty_board(), arm_clear=True, hands_clear=False,
                           confidence={c: 0.0 for c in CELLS}, frame_id=frame_id)
         return FrameResult(state, grid, status, check, None, reason)
