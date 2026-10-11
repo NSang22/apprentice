@@ -18,7 +18,10 @@ saves it next to the lesson).
                               compared against was itself checked empty (reference_empty is False
                               when that independent check failed or could not run)
   one_cube_per_change         each settled board adds one cube, removes one, or moves one to
-                              another cell (a cell with 2 or 3 cubes going empty at once fails)
+                              another cell (a cell with 2 or 3 cubes going empty at once fails).
+                              Two cubes added on one board fail only if both are still in the lesson
+                              at the end; if the others were later removed (corrections), it passes
+                              with a note
   one_cube_per_color          a known color never shows up while a cube of that color is still on
                               the board, and no two steps share a color (the robot refers to
                               blocks by color, and the team uses one cube of each)
@@ -58,6 +61,7 @@ class Change:
     t: float
     added: list[Slot]
     removed: list[Slot]
+    added_later_removed: list[Slot] = field(default_factory=list)  # added here, removed before the end
 
 
 @dataclass
@@ -147,9 +151,16 @@ def run_gate(steps: list[Step], history: History, reference_empty: Optional[bool
         fail("starts_empty", "the empty-board picture came from the video and could not be confirmed empty on its own")
 
     for c in history.changes:
-        if not one_cube(c):
-            fail("one_cube_per_change", f"board at {c.t:.1f} s: removed {_slots(c.removed)}; added {_slots(c.added)}")
-            break
+        if one_cube(c):
+            continue
+        kept = [a for a in c.added if a not in c.added_later_removed]
+        if len(c.added) > 1 and kept != c.added and one_cube(Change(c.t, kept, c.removed)):
+            notes.setdefault("one_cube_per_change", []).append(
+                f"board at {c.t:.1f} s added {_slots(c.added)}; {_slots(c.added_later_removed)} was later removed "
+                "(a correction), so only one cube stays")
+            continue
+        fail("one_cube_per_change", f"board at {c.t:.1f} s: removed {_slots(c.removed)}; added {_slots(c.added)}")
+        break
 
     twice = sorted(color for color, n in Counter(s.color for s in steps if s.color in COLORS).items() if n > 1)
     if twice:

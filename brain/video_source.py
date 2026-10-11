@@ -104,11 +104,23 @@ def hand_band(pose: Any, block_mm: float) -> np.ndarray:
     return cv2.erode(band, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))) > 0
 
 
+# change_mask decides a pixel from pixels at most 14 px away (5x5 blur, 5x5 open, 9x9 close), so running it
+# on the band's bounding box grown by this much gives exactly the same band pixels as the whole sheet.
+BAND_PAD_PX = 24
+
+
 def band_change(live_sheet: np.ndarray, reference_sheet: np.ndarray, band: np.ndarray) -> Optional[float]:
     """Share of the band that changed since the empty board (perception's change_mask)."""
-    if not band.any():
+    ys, xs = np.nonzero(band)
+    if len(ys) == 0:
         return None
-    return float((change_mask(live_sheet, reference_sheet) > 0)[band].mean())
+    h, w = band.shape
+    y0, y1 = max(0, ys.min() - BAND_PAD_PX), min(h, ys.max() + 1 + BAND_PAD_PX)
+    x0, x1 = max(0, xs.min() - BAND_PAD_PX), min(w, xs.max() + 1 + BAND_PAD_PX)
+    if reference_sheet.shape[:2] != live_sheet.shape[:2]:  # change_mask would resize it to the live sheet first
+        reference_sheet = cv2.resize(reference_sheet, (live_sheet.shape[1], live_sheet.shape[0]))
+    changed = change_mask(live_sheet[y0:y1, x0:x1], reference_sheet[y0:y1, x0:x1]) > 0
+    return float(changed[band[y0:y1, x0:x1]].mean())
 
 
 class VideoSourceError(RuntimeError):
@@ -241,6 +253,11 @@ class VideoSource:
         index, next_index, last_why, next_progress = -1, 0, "no frames", 0.0
         reasons: Counter[str] = Counter()
         while True:
+            if started and index + 1 < next_index:  # a frame between samples: move past it without decoding it
+                if not self.cap.grab():
+                    break
+                index += 1
+                continue
             ok, frame = self.cap.read()
             if not ok:
                 break

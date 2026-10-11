@@ -44,6 +44,10 @@ it appears until it is removed, and every read taken while it is the top is kept
 removed deletes the step that placed it (a correction); t_video is when the board with the new
 cube first appeared.
 
+Hidden, not removed: a cube that disappears and whose color later comes back on the same cell at
+the same level was hidden by an arm. Its removal is undone (restore_hidden): it keeps its step and
+time, no new step, no correction; it is logged as hidden.
+
 Transients: something that appeared in a slot, was removed before the end, and never had a known
 color from any source (camera or robot memory) while it was there, such as a hand read as a block.
 It is not a cube: no step, no correction, and one_cube_per_change does not count it. Each one is
@@ -142,6 +146,7 @@ class Cube:
     settles: list[int] = field(default_factory=list)          # frame ids of those boards
     baseline: bool = False         # already on the first settled board (not a step)
     t_removed: Optional[float] = None
+    seq: int = 0                   # creation order, so steps keep the order the cubes appeared in
 
     def color(self) -> str:
         return agreed_color(self.seen)
@@ -177,6 +182,7 @@ class Extraction:
     weak_reads: list[dict[str, Any]] = field(default_factory=list)  # unclear reads that kept the top's color
     conflicts: list[dict[str, Any]] = field(default_factory=list)   # tops that read a color already on the board
     skipped: list[dict[str, Any]] = field(default_factory=list)     # settled boards the backstop skipped
+    hidden: list[dict[str, Any]] = field(default_factory=list)      # removals undone: an arm hid the cube
     robot_used: bool = False
     frames: int = 0
     unusable: dict[str, int] = field(default_factory=dict)  # reason -> frames the stabilizer could not use
@@ -329,7 +335,7 @@ def track(settled: Iterable[Settled], ex: Optional[Extraction] = None,
         fresh_color.clear()
 
         def add(cell: str, color: str) -> None:
-            cube = Cube(cell, len(stacks[cell]), s.t, s.frame_id)
+            cube = Cube(cell, len(stacks[cell]), s.t, s.frame_id, seq=len(ex.steps) + len(ex.removed) + len(ex.baseline))
             fresh_color[id(cube)] = color
             stacks[cell].append(cube)
             ex.steps.append(cube)
@@ -505,6 +511,35 @@ def split_transients(ex: Extraction) -> None:
     ex.removed = kept
 
 
+def restore_hidden(ex: Extraction) -> None:
+    """Undo removals an arm faked: a removed cube whose color is the color of the next cube to appear
+    in the same slot (cell and level) was hidden, not removed. It keeps its step and time and takes on
+    the later cube's reads; the later cube is dropped. Run after split_transients."""
+    transient = {id(c) for c in ex.transients}
+    for r in sorted(ex.removed, key=lambda c: c.seq):
+        if r.t_removed is None or r.color() == UNKNOWN:
+            continue
+        later = [c for c in ex.steps + ex.removed if c is not r and id(c) not in transient
+                 and (c.cell, c.level) == (r.cell, r.level) and c.t_video >= r.t_removed]
+        back = min(later, key=lambda c: c.seq, default=None)
+        if back is None or back.color() != r.color():
+            continue
+        ex.hidden.append({"cell": r.cell, "level": r.level, "color": r.color(), "t_gone": round(r.t_removed, 3),
+                          "t_back": round(back.t_video, 3)})
+        for field_name in ("reads", "robot", "seen", "named", "settles"):
+            getattr(r, field_name).extend(getattr(back, field_name))
+        ex.removed.remove(r)
+        r.t_removed = back.t_removed
+        if back in ex.steps:
+            ex.steps[ex.steps.index(back)] = r
+            ex.steps.sort(key=lambda c: c.seq)
+        else:
+            ex.removed[ex.removed.index(back)] = r
+        for _, added, gone in ex.changes:  # neither the hiding nor the coming back is a change
+            gone[:] = [r if c is back else c for c in gone if c is not r]  # a later removal of back is r's
+            added[:] = [c for c in added if c is not back]
+
+
 def gate_history(ex: Extraction) -> History:
     """What the gate checks, from the history map: transients left out of every change."""
     transient = {id(c) for c in ex.transients}
@@ -523,7 +558,8 @@ def gate_history(ex: Extraction) -> History:
     return History(first_occupied=[cell for cell in CELLS if first.board[cell]],
                    final_tops={cell: tops.get(cell) if last.board[cell] else None for cell in CELLS},
                    final_distances=dict(ex.distances[-1]), weak_limit=WEAK_READ_MAX_DISTANCE,
-                   changes=[Change(t, slots(added), slots(gone)) for t, added, gone in ex.changes],
+                   changes=[Change(t, slots(added), slots(gone), slots([c for c in added if c.t_removed is not None]))
+                            for t, added, gone in ex.changes],
                    problems=problems)
 
 
@@ -750,6 +786,7 @@ def write_outputs(ex: Extraction, rows: list[StepRow], lesson: Lesson, gate: Gat
         "baseline_cubes": [cube_dict(c, ex) for c in ex.baseline],
         "transients": [cube_dict(c, ex) for c in ex.transients],
         "weak_reads": ex.weak_reads,
+        "hidden": ex.hidden,
         "conflicting_reads": ex.conflicts,
         "skipped_boards": ex.skipped,
         "final_read": None if not ex.settled or not ex.settled[-1].final else
@@ -829,6 +866,9 @@ def print_report(out: Outcome, ex: Extraction) -> None:
     for c in ex.removed:
         print(f"  correction: {c.color()} cube on {c.cell} level {c.level}, appeared {c.t_video:.2f} s, "
               f"removed {c.t_removed:.2f} s")
+    for h in ex.hidden:
+        print(f"  hidden: {h['color']} cube on {h['cell']} level {h['level']} gone at {h['t_gone']:.2f} s, back at "
+              f"{h['t_back']:.2f} s (an arm hid it; step kept)")
     for c in ex.conflicts:
         print(f"  conflicting read: {c['cell']} level {c['level']} at {c['t']:.2f} s read {c['read']}, already on the "
               f"board; kept {c['kept']}")
@@ -998,6 +1038,7 @@ def finish(args: argparse.Namespace, entries: list[dict[str, Any]], name: str, f
     if video is not None:
         info.update(video.info)
     split_transients(ex)
+    restore_hidden(ex)
     try:
         manual = manual_colors(entries, ex.steps)
     except ColorsFileError as e:
