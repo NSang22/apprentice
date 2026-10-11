@@ -62,3 +62,14 @@ def test_hint_points_at_missing_first_and_fix_takes_wrong_blocks():
 def test_extra_block_is_not_perfect():
     g = recall.grade({"A1": "red"}, board(A1="red", C3="purple"))
     assert g.right == 1 and not g.perfect and g.errors["extra"] == 1
+
+
+def test_narration_lines_up_with_steps_without_square_names():
+    """A real recording: the speaker never named a square, put purple down and covered it, and used red twice."""
+    from buddy.teach import check_narration
+    steps = [{"color": "yellow", "cell": "B2", "level": 0}, {"color": "red", "cell": "A1", "level": 0},
+             {"color": "orange", "cell": "B1", "level": 0}, {"color": "teal", "cell": "C3", "level": 0}]
+    said = [{"action": "place", "color": c, "cell": None, "text": f"{c} over here"}
+            for c in ("yellow", "red", "purple", "orange", "teal", "red")]
+    r = check_narration(steps, said)
+    assert r["matched"] == 4 and r["unseen"] == ["purple", "red"]

@@ -173,17 +173,19 @@ def narration(path: str) -> dict:
 
 
 def main() -> None:
-    # The games use only the colors in play (robot ACTIVE_COLORS). The robot's namer also knows its
-    # extra colors (sky blue, orange) and once named a teal block "light blue", which then disagreed
-    # with the camera; in this helper process only, it chooses among the colors in play.
+    # Picture Recall and Take Turns make patterns from the colors in play (robot ACTIVE_COLORS) and the
+    # camera grades with those, so their scans name only those colors. Teach the Robot takes any block
+    # the robot knows: "scan all" uses the robot's full list (orange and sky blue too).
     from robot.perception.config import ACTIVE_COLORS
-    naming.NAMEABLE = list(ACTIVE_COLORS)
+    every = list(naming.NAMEABLE)
+    in_play = list(ACTIVE_COLORS)
     localizer = SheetLocalizer()
     say({"ready": True, "cell_map": cell_map(), "model": openai_vision.model() if openai_vision.available() else None})
     for line in sys.stdin:
         cmd, _, arg = line.strip().partition(" ")
         if cmd not in ("scan", "bank", "narration"):
             continue
+        naming.NAMEABLE = every if (cmd == "scan" and arg == "all") else in_play
         try:
             say(scan(localizer) if cmd == "scan" else bank(localizer) if cmd == "bank" else narration(arg))
         except Exception as e:

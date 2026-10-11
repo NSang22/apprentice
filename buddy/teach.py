@@ -186,32 +186,79 @@ def mux(video: Path, audio: Path, out: Path) -> bool:
     return out.is_file() and out.stat().st_size > video.stat().st_size // 2
 
 
+# Colors people say for each block, and blocks that are easy to mix up in speech ("light blue" for teal).
+SAID_LIKE = {"skyblue": "teal", "teal": "skyblue", "orange": "yellow", "yellow": "orange"}
+
+
+def _step_fields(s) -> tuple[str, str, int]:
+    """(color, cell, level) of a Step or of a step dict from the extractor's report."""
+    if isinstance(s, dict):
+        return s.get("color"), s.get("cell"), int(s.get("level") or 0)
+    return s.color, s.cell, s.level
+
+
+def _align(said: list[str], seen: list[str]) -> list[tuple[int, int]]:
+    """Longest common subsequence of two color lists: (spoken index, step index) pairs, in order.
+    A near-miss color ("light blue" for teal) counts too, but an exact color wins a tie."""
+    def score(a, b):
+        return 2 if a == b else 1 if SAID_LIKE.get(a) == b else 0
+    n, m = len(said), len(seen)
+    best = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            s = score(said[i], seen[j])
+            best[i][j] = max(best[i + 1][j], best[i][j + 1], best[i + 1][j + 1] + s if s else 0)
+    pairs, i, j = [], 0, 0
+    while i < n and j < m:
+        s = score(said[i], seen[j])
+        if s and best[i][j] == best[i + 1][j + 1] + s:
+            pairs.append((i, j))
+            i, j = i + 1, j + 1
+        elif best[i + 1][j] >= best[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    return pairs
+
+
 def check_narration(steps: list, placements: list[dict]) -> dict:
-    """Spoken placements vs the steps the camera saw. The grid decides (AGENTS.md rule 2): this
-    only fills each matching step's narration and lists where speech and grid disagree."""
+    """Natural speech vs the steps the camera saw, in order. Nobody has to say "B2": the spoken
+    colors are lined up with the steps' colors (longest common subsequence), and a square or "on
+    the red" is checked only when it was said. The grid decides (AGENTS.md rule 2): this fills each
+    matched step's narration and lists what speech and grid disagree on:
+      unseen   said, but no step has it (a block covered too fast, or never placed)
+      unheard  a step nobody mentioned
+    """
+    spoken = [p for p in placements if isinstance(p, dict) and p.get("action", "place") == "place"
+              and p.get("color") in COLORS]
+    fields = [_step_fields(s) for s in steps]
+    pairs = _align([p["color"] for p in spoken], [f[0] for f in fields])
     notes, matched = [], 0
-    in_play = set(active_colors())
-    # People call the teal block "light blue" (heard in a real recording): when sky blue is not in
-    # play, a spoken sky blue means teal.
-    said_as = {"skyblue": "teal"} if "skyblue" not in in_play and "teal" in in_play else {}
-    for p in placements:
-        if not isinstance(p, dict) or p.get("action", "place") != "place":
-            continue
-        cell, text = p.get("cell"), str(p.get("text") or "").strip()
-        color = said_as.get(p.get("color"), p.get("color"))
-        if cell not in {s.cell for s in steps}:
-            if cell:
-                notes.append(f"I heard \"{text or color + ' on ' + cell}\", but I didn't see a block on {cell}.")
-            continue
-        here = [s for s in steps if s.cell == cell]
-        same = [s for s in here if s.color == color]
-        if same:
-            matched += 1
-            if text and not same[0].narration:
-                same[0].narration = text
-        elif color in COLORS:
-            notes.append(f"I heard {color} on {cell}, but I saw {' and '.join(s.color for s in here)} there.")
-    return {"matched": matched, "notes": notes}
+    hit_spoken, hit_steps = {i for i, _ in pairs}, {j for _, j in pairs}
+    for i, j in pairs:
+        p, (color, cell, level) = spoken[i], fields[j]
+        text = str(p.get("text") or "").strip()
+        matched += 1
+        if p.get("cell") and p["cell"] != cell:
+            notes.append(f"You said the {color} block goes on {p['cell']}, but I saw it on {cell}.")
+        below = next((c for c in COLORS if f"on the {c}" in text.lower() or f"on top of the {c}" in text.lower()), None)
+        if below and level == 0:
+            notes.append(f"You said the {color} block goes on the {below}, but I saw it on the board.")
+        if p["color"] != color:
+            notes.append(f"You called the {color} block \"{p['color']}\". I went with what I saw: {color}.")
+        if text and not isinstance(steps[j], dict) and not steps[j].narration:
+            steps[j].narration = text
+    unseen = [spoken[i] for i in range(len(spoken)) if i not in hit_spoken]
+    unheard = [fields[j] for j in range(len(fields)) if j not in hit_steps]
+    for p in unseen:
+        again = sum(1 for q in spoken if q["color"] == p["color"]) > 1
+        notes.append(f"I heard you put {'another' if again else 'a'} {p['color']} block, but I didn't see it"
+                     f"{' (each color can be used once)' if again else ''}.")
+    if spoken:
+        for color, cell, _ in unheard:
+            notes.append(f"I saw {color} on {cell}, but I didn't hear it.")
+    return {"matched": matched, "notes": notes, "unseen": [p["color"] for p in unseen],
+            "unheard": [f[0] for f in unheard], "spoken": len(spoken), "steps": len(fields)}
 
 
 # ---------------------------------------------------------------- learning (the extractor)
@@ -275,10 +322,9 @@ def learn(frames: list[dict], lesson_id: str, title: str, source_video: Optional
         top_level = {}
         for c in ex.steps:
             top_level[c.cell] = max(top_level.get(c.cell, -1), c.level)
-        in_play = set(active_colors())  # the robot also knows sky blue and orange: never let those in
         for i, c in enumerate(ex.steps):
             color = final_tops.get(c.cell)
-            if c.level == top_level[c.cell] and color in in_play:
+            if c.level == top_level[c.cell] and color in COLORS:
                 manual[i + 1] = color
     rows = ext.step_rows(ex, manual)
     stage("squint", 1.0)
@@ -324,7 +370,7 @@ def learn_video(video: Path, repo: Path, title: str, video_s: float,
     # the colors in play and the block size, as scripts/jetson_up.sh runs perception: the extractor's
     # default is every shared color, which the 4-color calibration refuses (exit code 2)
     cmd = [sys.executable, "-u", "-m", "brain.extractor", "--video", str(video.resolve()), "--out", str(out),
-           "--title", title, "--colors", ",".join(active_colors()), "--block-mm", os.environ.get("BLOCK_MM", "47")]
+           "--title", title, "--colors", ",".join(calibrated_colors(repo)), "--block-mm", os.environ.get("BLOCK_MM", "47")]
     extractor_src = (repo / "brain" / "extractor.py").read_text(encoding="utf-8", errors="ignore")
     if "--no-gemini" in extractor_src:  # an older main checkout: never call Gemini (the project uses OpenAI)
         cmd.append("--no-gemini")
@@ -376,6 +422,18 @@ def learn_video(video: Path, repo: Path, title: str, video_s: float,
                 "via": "video", "trace": trace}
     last = next((l for l in reversed(trace["lines"]) if l.startswith("[extract]") and "run time" not in l), "")
     return {"ok": None, "error": f"extractor exit code {code}: {last}", "trace": trace}
+
+
+def calibrated_colors(repo: Path) -> list[str]:
+    """The colors perception's calibration has (repo/perception/calib/colors.json). The extractor's
+    camera reads only these; every other color still comes from the robot's color memory, which
+    knows all six (it named orange and sky blue right in real recordings)."""
+    try:
+        data = json.loads((repo / "perception" / "calib" / "colors.json").read_text(encoding="utf-8"))
+        have = [c for c in COLORS if c in data.get("colors", {})]
+        return have or active_colors()
+    except (OSError, ValueError):
+        return active_colors()
 
 
 def active_colors() -> list[str]:

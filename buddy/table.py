@@ -273,9 +273,10 @@ class RobotEyes:
                 self.error = str(e)
                 return {"ok": False, "error": str(e)}
 
-    def scan(self) -> dict:
-        """{ok, blocks: [{cell, color, center_mm, edge_mm, score}], naming} or {ok: False, error}."""
-        return self._ask("scan", EYES_SCAN_S)
+    def scan(self, all_colors: bool = False) -> dict:
+        """{ok, blocks: [{cell, color, center_mm, edge_mm, score}], naming} or {ok: False, error}.
+        all_colors: name every color the robot knows (Teach the Robot), not only the colors in play."""
+        return self._ask("scan all" if all_colors else "scan", EYES_SCAN_S)
 
     def bank(self) -> dict:
         """The vision model's list of the block colors in the robot's cube bank: {ok, colors: [...]}."""

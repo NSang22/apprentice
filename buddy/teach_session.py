@@ -70,6 +70,7 @@ class TeachSession:
         self.bank_mode = ""                  # "ready" (check before placing) or "retry" (after a miss)
         self.bank_result: Optional[dict] = None
         self.place_retried = False
+        self.place_fails = 0                 # failed places on the current rebuild step
         self.mood, self.say = "happy", ""
 
     @property
@@ -239,7 +240,7 @@ class TeachSession:
                 # own eyes naming each cell's top block
                 t = time.monotonic()
                 tops = None
-                res = self.eyes.scan()
+                res = self.eyes.scan(all_colors=True)
                 if res.get("ok"):
                     tops = {b["cell"]: b["color"] for b in res["blocks"] if b.get("cell")}
                 self._trace("eyes", "Robot's eyes on the final board", "ok" if res.get("ok") else "warn",
@@ -263,9 +264,19 @@ class TeachSession:
                             (f"\"{heard.get('transcript', '')[:120]}\"" if ok else heard.get("error", "no answer")),
                             heard.get("seconds") or (time.monotonic() - t_listen),
                             {k: heard.get(k) for k in ("transcript", "placements", "model", "error")})
-            if result.get("ok") and heard.get("ok"):   # speech fills step narration; the grid decides
-                check = teach.check_narration(result["lesson"].steps, heard.get("placements", []))
-                result["steps"] = [s.to_dict() for s in result["lesson"].steps]
+            seen_steps = (result["lesson"].steps if result.get("ok") else
+                          ((result.get("trace") or {}).get("report") or {}).get("steps") or [])
+            if heard.get("ok") and seen_steps:   # speech vs the grid, in order; the grid decides
+                check = teach.check_narration(seen_steps, heard.get("placements", []))
+                if result.get("ok"):
+                    result["steps"] = [s.to_dict() for s in result["lesson"].steps]
+                elif check["unseen"]:            # a refused recording: say what the narration explains
+                    colors_seen = [st.get("color") for st in seen_steps]
+                    again = next((c for c in check["unseen"] if c in colors_seen), None)
+                    result["problem"] = (f"I heard you use {again} twice. Each color can be used once, so I don't mix them up!"
+                                         if again else
+                                         f"I heard you put a {check['unseen'][0]} block, but I didn't see it. It may have been "
+                                         "covered too quickly. Let's teach it again, and take your hands away after each block!")
                 heard.update(check)
                 self._trace("speech_vs_grid", "Speech vs what the camera saw", "ok" if not check["notes"] else "warn",
                             f"{check['matched']} placements matched" + (f", {len(check['notes'])} disagree" if check["notes"] else ""),
@@ -364,6 +375,7 @@ class TeachSession:
                 else:
                     self._place_next()
             elif self.phase == "build_fix":
+                self.place_fails, self.place_retried = 0, False
                 self.build_i += 1
                 self._bank_or_place()
             elif self.phase in ("build_check",) and self.scan_stuck:
@@ -452,7 +464,13 @@ class TeachSession:
                         self.say = "Hands away from the board, please, so I can move! Then tap Ready."
                     elif self.pip.error:
                         self._log("place_error", {"step": self.build_i + 1, "error": self.pip.error})
-                        if self.eyes.info.get("model"):
+                        self.place_fails += 1
+                        if self.place_fails >= 2:   # don't loop: the child places this one for Pip
+                            self.phase, self.mood, self.glow = "build_fix", "encourage", s.cell
+                            self.say = (f"I can't pick up the {s.color} block from my bank. Can you put it "
+                                        f"{'on top ' if s.level else ''}on the glowing square for me? Then tap Done.")
+                            self.arm_used = False
+                        elif self.eyes.info.get("model"):
                             self._check_bank("retry")
                         else:
                             self._ask_bank([s.color], empty=True)
@@ -472,7 +490,7 @@ class TeachSession:
                     self._log("placed", {"step": self.build_i + 1, "cell": s.cell, "level": s.level, "color": s.color,
                                          "landed": landed, "sync": st.get("sync")})
                     if landed:
-                        self.place_retried = False
+                        self.place_retried, self.place_fails = False, 0
                         self.build_i += 1
                         self._bank_or_place()
                     else:
