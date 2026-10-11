@@ -43,7 +43,7 @@ def json_round_trip(obj):
 def test_grid_state_round_trip():
     gs = GridState(
         t=1728580000.123,
-        board=board_with(A1=["red"], B2=["blue", "yellow"], C3=["unknown"]),
+        board=board_with(A1=["red"], B2=["skyblue", "yellow"], C3=["unknown"]),
         arm_clear=True,
         hands_clear=False,
         confidence={"A1": 0.97, "B2": 0.91},
@@ -54,7 +54,7 @@ def test_grid_state_round_trip():
 
 def test_step_round_trip_with_and_without_optionals():
     full = Step("red", "A1", 0, t_video=4.2, narration="Start with red.")
-    bare = Step("blue", "C3", 2)
+    bare = Step("skyblue", "C3", 2)
     assert json_round_trip(full) == full
     assert json_round_trip(bare) == bare
 
@@ -64,8 +64,8 @@ def test_lesson_round_trip():
         lesson_id="x",
         title="X",
         source_video="videos/x.mp4",
-        steps=[Step("red", "A1", 0), Step("blue", "A1", 1)],
-        final_board=board_with(A1=["red", "blue"]),
+        steps=[Step("red", "A1", 0), Step("skyblue", "A1", 1)],
+        final_board=board_with(A1=["red", "skyblue"]),
         gate=Gate(passed=True, checks=[GateCheck("replay_matches_final_frame", True)]),
     )
     assert json_round_trip(lesson) == lesson
@@ -78,12 +78,12 @@ def test_session_state_round_trip():
         mode="human",
         lesson_id="staircase-v1",
         step_index=3,
-        board=board_with(B3=["blue"]),
-        expected_step=Step("blue", "B2", 1),
+        board=board_with(B3=["skyblue"]),
+        expected_step=Step("skyblue", "B2", 1),
         verdict=Verdict.WRONG_CELL,
         fault_cell="B3",
         hint_level=2,
-        hint_text="Close! Move the blue cube one cell to the left.",
+        hint_text="Close! Move the skyblue cube one cell to the left.",
         show_me=ShowMe("videos/expert_staircase.mp4", 11.0, 15.0),
         progress=Progress(human=["pass", "retry", "active"], robot=["pass"]),
     )
@@ -129,7 +129,7 @@ def test_clean_script_ends_on_lesson_final_board():
 
 
 def test_validate_board_accepts_good_board():
-    validate_board(board_with(A1=["red", "blue", "unknown"]))
+    validate_board(board_with(A1=["red", "skyblue", "unknown"]))
 
 
 @pytest.mark.parametrize(
@@ -137,7 +137,7 @@ def test_validate_board_accepts_good_board():
     [
         pytest.param({c: [] for c in CELLS if c != "B2"}, id="missing-cell"),
         pytest.param({**empty_board(), "D1": []}, id="extra-cell"),
-        pytest.param(board_with(A1=["purple"]), id="bad-color"),
+        pytest.param(board_with(A1=["blue"]), id="bad-color"),
         pytest.param(board_with(A1=["Red"]), id="wrong-case-color"),
         pytest.param(board_with(A1=["red"] * (MAX_LEVEL + 2)), id="too-tall"),
         pytest.param(board_with(A1="red"), id="stack-not-list"),
@@ -181,9 +181,9 @@ def test_empty_board_has_all_cells_empty():
 def test_apply_step_stacks_bottom_to_top():
     b = empty_board()
     b = apply_step(b, Step("red", "B2", 0))
-    b = apply_step(b, Step("blue", "B2", 1))
-    b = apply_step(b, Step("green", "B2", 2))
-    assert b["B2"] == ["red", "blue", "green"]
+    b = apply_step(b, Step("skyblue", "B2", 1))
+    b = apply_step(b, Step("teal", "B2", 2))
+    assert b["B2"] == ["red", "skyblue", "teal"]
     assert all(b[c] == [] for c in CELLS if c != "B2")
 
 
@@ -191,21 +191,21 @@ def test_apply_step_rejects_wrong_level():
     with pytest.raises(SchemaError):
         apply_step(empty_board(), Step("red", "A1", 1))  # floating cube
     with pytest.raises(SchemaError):
-        apply_step(board_with(A1=["red"]), Step("blue", "A1", 0))  # level taken
+        apply_step(board_with(A1=["red"]), Step("skyblue", "A1", 0))  # level taken
 
 
 def test_apply_step_does_not_mutate_input():
     b = board_with(A1=["red"])
     before = copy.deepcopy(b)
-    out = apply_step(b, Step("blue", "A1", 1))
+    out = apply_step(b, Step("skyblue", "A1", 1))
     assert b == before
-    assert out["A1"] == ["red", "blue"]
-    out["C3"].append("green")  # output shares no lists with input
+    assert out["A1"] == ["red", "skyblue"]
+    out["C3"].append("teal")  # output shares no lists with input
     assert b == before
 
 
 def test_boards_equal():
-    a = board_with(A1=["red", "blue"])
-    assert boards_equal(a, board_with(A1=["red", "blue"]))
-    assert not boards_equal(a, board_with(A1=["blue", "red"]))  # order matters
-    assert not boards_equal(a, board_with(A2=["red", "blue"]))
+    a = board_with(A1=["red", "skyblue"])
+    assert boards_equal(a, board_with(A1=["red", "skyblue"]))
+    assert not boards_equal(a, board_with(A1=["skyblue", "red"]))  # order matters
+    assert not boards_equal(a, board_with(A2=["red", "skyblue"]))

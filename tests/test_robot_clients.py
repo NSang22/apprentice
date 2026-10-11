@@ -17,16 +17,16 @@ from shared.schemas import empty_board
 def test_fake_place_and_pick_edit_the_board():
     r = FakeRobot()
     assert r.place("red", "A1", 0) == {"ok": True}
-    assert r.place("blue", "A1", 1) == {"ok": True}
-    assert r.board["A1"] == ["red", "blue"]
+    assert r.place("skyblue", "A1", 1) == {"ok": True}
+    assert r.board["A1"] == ["red", "skyblue"]
     assert r.pick("A1", 1) == {"ok": True}
     assert r.board["A1"] == ["red"]
 
 
 def test_fake_shares_the_board_it_was_given():
     board = empty_board()
-    FakeRobot(board).place("green", "B2", 0)
-    assert board["B2"] == ["green"]
+    FakeRobot(board).place("teal", "B2", 0)
+    assert board["B2"] == ["teal"]
 
 
 def test_fake_arm_leaves_home_until_home_is_called():
@@ -42,7 +42,7 @@ def test_fake_arm_leaves_home_until_home_is_called():
 def test_fake_wrong_cell_on_attempt_n():
     r = FakeRobot(wrong_cell_on={2})
     r.place("red", "A1", 0)
-    assert r.place("green", "B1", 0) == {"ok": True}
+    assert r.place("teal", "B1", 0) == {"ok": True}
     assert r.board["B1"] == []
     assert sum(len(s) for s in r.board.values()) == 2  # landed on a neighbor instead
 
@@ -60,10 +60,10 @@ def test_fake_rejects_impossible_moves():
     r = FakeRobot()
     assert r.place("red", "A1", 1)["ok"] is False  # floating cube
     assert r.pick("A1", 0)["ok"] is False          # nothing there
-    assert r.place("purple", "A1", 0)["ok"] is False
+    assert r.place("blue", "A1", 0)["ok"] is False
     assert r.hover("D4")["ok"] is False
     r.place("red", "A1", 0)
-    r.place("blue", "A1", 1)
+    r.place("skyblue", "A1", 1)
     assert r.pick("A1", 0)["ok"] is False          # not the top cube
 
 
@@ -110,8 +110,8 @@ def api():
 def test_http_place_sends_readme_body(api):
     url, h = api
     h.routes["/place"] = (200, b'{"ok": true}', 0)
-    assert HttpRobotClient(url).place("blue", "B2", 1) == {"ok": True}
-    assert h.received == [("POST", "/place", {"color": "blue", "cell": "B2", "level": 1})]
+    assert HttpRobotClient(url).place("skyblue", "B2", 1) == {"ok": True}
+    assert h.received == [("POST", "/place", {"color": "skyblue", "cell": "B2", "level": 1})]
 
 
 def test_http_all_calls_hit_their_routes(api):

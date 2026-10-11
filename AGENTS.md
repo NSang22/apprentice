@@ -31,7 +31,7 @@ If a task needs a change outside your module, stop and tell your human what chan
 
 Key conventions (details in README section 5):
 - Cells are `A1` to `C3`. Columns A to C left to right from the operator side; rows 1 to 3 front to back.
-- Colors are exactly `red`, `blue`, `yellow`, `green`, or `unknown`.
+- Colors are exactly `red`, `orange`, `yellow`, `teal`, `skyblue`, `purple`, or `unknown`.
 - Stacks are lists bottom to top. All 9 cells always appear in a board.
 - Ports: perception ws `8765`, brain ws `8766`, robot HTTP `8770`.
 

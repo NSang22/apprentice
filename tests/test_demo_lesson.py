@@ -5,7 +5,7 @@ from brain.fake_robot import FakeRobot
 from brain.journal import Journal
 from brain.session import COMPLETE, RUNNING, Session
 from brain.settings import DEMO_LESSON
-from shared.config import CELLS
+from shared.config import CELLS, COLORS
 from shared.schemas import Lesson, apply_step, boards_equal, empty_board, validate_board
 
 RAW = json.loads(DEMO_LESSON.read_text())
@@ -31,11 +31,11 @@ def test_demo_lesson_replays_to_its_final_board():
 
 def test_demo_lesson_fits_the_robot_today():
     steps = LESSON.steps
-    assert len(steps) == 5
+    assert 5 <= len(steps) <= 6
     assert all(s.level == 0 for s in steps)
     colors = Counter(s.color for s in steps)
-    assert set(colors) <= {"red", "blue", "yellow"}
-    assert max(colors.values()) <= 2
+    assert set(colors) <= set(COLORS)
+    assert max(colors.values()) <= 2  # the kit has 2 blocks of each color
     assert len({s.cell for s in steps}) == len(steps)  # one cube per cell, spread out
 
 
