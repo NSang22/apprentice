@@ -181,10 +181,11 @@ def default_calibration() -> Calibration:
 
 
 def area_stats(fracs: list[float]) -> tuple[float, float, float]:
-    """(min, median, max) footprint fractions with headroom: a block lands anywhere in a cell
-    and shows more side face away from the camera's nadir than the calibration spots did."""
+    """(min, median, max) footprint fractions with headroom. Calibration samples the centre cell,
+    near the camera's nadir; a block in a corner cell shows more of its sides (bigger), and one
+    partly hidden by a highlight or the arm's shadow reads smaller."""
     f = np.asarray(fracs, np.float64)
-    return float(f.min() * 0.7), float(np.median(f)), float(f.max() * 1.3)
+    return float(f.min() * 0.7), float(np.median(f)), float(f.max() * 1.6)
 
 
 def save_calibration(path: Path, refs: dict[str, ColorRef], fracs: list[float], cell_mm: float,
