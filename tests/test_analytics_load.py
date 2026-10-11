@@ -8,7 +8,7 @@ from brain.settings import DEMO_LESSON
 from shared.schemas import Lesson
 
 FIXTURES = Path(__file__).parent / "fixtures"
-HUMAN, ROBOT = "s-20261010-223829", "s-20261010-223808"  # session ids inside the brain fixtures
+HUMAN, ROBOT = "s-20261011-001708", "s-20261011-001655"  # session ids inside the brain fixtures
 
 
 def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
@@ -18,7 +18,7 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
         shutil.copy(p, sessions / p.name)
     # A crash mid-write, and a session that never left the "ready" phase (board lines only).
     with open(sessions / "brain_journal_human.jsonl", "a", encoding="utf-8") as f:
-        f.write('{"t": 1791650000.0, "session": "s-20261010-223829", "ki')
+        f.write('{"t": 1791650000.0, "session": "s-20261011-001708", "ki')
     (sessions / "s-ready.jsonl").write_text(
         '{"t":1.0,"session":"s-ready","mode":"human","kind":"board","data":{"step":0,"board":{}}}\n')
     # Synthetic journals are written by the real brain too, and add a robot place that fails.

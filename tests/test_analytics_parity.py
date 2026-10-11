@@ -1,6 +1,6 @@
 """The synthetic journals must use the same event data keys as the real brain.
 
-tests/fixtures/brain_journal_{human,robot}.jsonl were written by brain.server on main:
+tests/fixtures/brain_journal_{human,robot}.jsonl were written by brain.server on main (cc65d38):
     python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --autostart
     python -m brain.fake_feed --script tests/scripts/staircase_with_mistake.json   # with:
     python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode human --robot fake --autostart
@@ -38,3 +38,8 @@ def test_generator_writes_every_key_set_the_brain_writes():
     for group, sets in brain.items():
         assert group in ours, f"generator never writes {group}"
         assert sets <= ours[group], f"{group}: brain {sorted(map(sorted, sets))} vs ours {sorted(map(sorted, ours[group]))}"
+    # The other way for the grid_source note: the brain writes it for a ws feed (human, fake_feed)
+    # and never for the sim feed (robot), so the generator must not invent one.
+    def noted(sets):
+        return {mode for (mode, kind, _), s in sets.items() if kind == "note" and frozenset({"grid_source"}) in s}
+    assert noted(ours) == noted(brain) == {"human"}

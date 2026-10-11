@@ -87,15 +87,21 @@ class FakeClock:
         self.t = round(self.t + seconds, 3)
 
 
-# What brain/server.py passes as the session's provenance hook for a simulated run. The git fields
-# keep the Session's "unknown" defaults: synthetic data does not come from a checked-out run.
-SIM_PROVENANCE = {"grid_source": "sim", "robot": "fake"}
+# What brain/server.py passes as the session's provenance hook, per mode, the way the fixtures
+# are recorded: humans place cubes on the fake feed (a ws feed), the robot runs on the sim feed.
+# The git fields keep the Session's "unknown" defaults: synthetic data does not come from a
+# checked-out run.
+SIM_PROVENANCE = {"human": {"grid_source": "fake_feed", "robot": "fake"},
+                  "robot": {"grid_source": "sim", "robot": "fake"}}
 
 
 def _start(session: Session, journal: Journal) -> None:
-    """Start like brain/server.py does: it notes the grid source when the first frame arrives
-    (server.py, "grid_source" note), and with --autostart only then starts the session."""
-    journal.write("note", {"grid_source": SIM_PROVENANCE["grid_source"]})
+    """Start like brain/server.py with --autostart: the first frame from a ws feed writes a
+    "grid_source" note (server.py parse), then the session starts. The sim feed hands the server
+    GridState objects directly and writes no note."""
+    source = SIM_PROVENANCE[session.mode]["grid_source"]
+    if source != "sim":
+        journal.write("note", {"grid_source": source})
     session.start()
 
 
@@ -207,7 +213,7 @@ def human_session(
 ) -> None:
     """forced maps a step index to mistakes the human makes on its first attempts."""
     robot = FakeRobot(motion_s=ROBOT_MOTION_S, sleep=clock.advance)  # only hovers in human mode
-    session = Session(lesson, "human", journal, robot=robot, sleep=clock.advance, provenance=SIM_PROVENANCE.copy)
+    session = Session(lesson, "human", journal, robot=robot, sleep=clock.advance, provenance=SIM_PROVENANCE["human"].copy)
     _start(session, journal)
     skill = rng.uniform(-0.1, 0.1)
 
@@ -247,7 +253,7 @@ def robot_session(
 ) -> None:
     """wrong_cell_on / fail_on: 1-based place() counts the fake robot gets wrong."""
     robot = FakeRobot(wrong_cell_on=wrong_cell_on, fail_on=fail_on, motion_s=ROBOT_MOTION_S, sleep=clock.advance)
-    session = Session(lesson, "robot", journal, robot=robot, sleep=clock.advance, provenance=SIM_PROVENANCE.copy)
+    session = Session(lesson, "robot", journal, robot=robot, sleep=clock.advance, provenance=SIM_PROVENANCE["robot"].copy)
     _start(session, journal)
     knocked = False
     for _ in range(MAX_ROBOT_BOARDS):
