@@ -7,6 +7,7 @@ Boards are compared slot by slot (cell, level). A slot that differs contributes 
 expected cube to `missing` and the actual cube to `extra`. Verdicts are chosen in this
 order, so the newest step is explained first and older damage after it:
 
+  0. any cell reads "unknown"                       -> WAITING, fault_cell = that cell (never a pass)
   1. board matches expected                          -> PASS
   2. board matches expected minus the newest cube    -> MISSING (still placing)
   3. newest cube missing from its slot:
@@ -16,8 +17,17 @@ order, so the newest step is explained first and older damage after it:
   4. an older cube's slot holds another color        -> WRONG_COLOR
   5. an older cube is missing and its color sits
      somewhere it shouldn't (moved or knocked)       -> WRONG_CELL, fault_cell = where it is
-  6. any other cube where none belongs               -> EXTRA, fault_cell = where it is
+  6. any other cube where none belongs: if a slot open right now in the rest of the lesson
+     needs its color                                      -> WRONG_CELL, expected_cell = that slot
+     otherwise                                       -> EXTRA, fault_cell = where it is, and no
+                                                        expected_cell (take it off, no arrow)
   7. cubes missing with nothing extra (knocked off)  -> MISSING, fault_cell = where it belongs
+
+A block already sitting in its own slot from a later step (and on the right blocks) is not a
+fault: it is set aside before grading, and the lesson counts it when it gets there.
+
+progress_index() is the session's step counter: the first step whose slot does not hold its
+color, so removing an earlier block moves the lesson back to that step.
 
 Besides the verdict, a CheckResult says how to fix the board, one cube at a time:
   fault_cell, fault_level        the wrong cube to take off (fault_level is None when there
@@ -35,7 +45,7 @@ from dataclasses import dataclass
 from typing import NamedTuple, Optional
 
 from brain.settings import HUMAN_SIDE, HUMAN_SIDES
-from shared.config import CELLS, COLUMNS, ROWS
+from shared.config import CELLS, COLUMNS, ROWS, UNKNOWN
 from shared.schemas import Board, Lesson, Step, Verdict, apply_step, boards_equal, empty_board
 
 
@@ -67,6 +77,36 @@ def expected_board(lesson: Lesson, step_index: int) -> Board:
     for s in lesson.steps[: step_index + 1]:
         board = apply_step(board, s)
     return board
+
+
+def slot_holds(board: Board, s: Step) -> bool:
+    """The step's slot holds its color ("unknown" never matches)."""
+    stack = board[s.cell]
+    return len(stack) > s.level and stack[s.level] == s.color
+
+
+def progress_index(board: Board, lesson: Lesson) -> int:
+    """The first step whose slot does not hold its color; len(steps) when every slot does."""
+    for i, s in enumerate(lesson.steps):
+        if not slot_holds(board, s):
+            return i
+    return len(lesson.steps)
+
+
+def unknown_cells(board: Board) -> list[str]:
+    return [c for c in CELLS if UNKNOWN in board[c]]
+
+
+def set_aside_early(board: Board, lesson: Lesson, step_index: int) -> Board:
+    """The board without blocks that already sit in a later step's slot, on top of their
+    stack, with every block under them as the lesson wants (placed early, not a mistake)."""
+    final = lesson.final_board
+    out = {c: list(v) for c, v in board.items()}
+    for s in lesson.steps[step_index + 1:]:
+        stack = out[s.cell]
+        if len(stack) == s.level + 1 and stack == final[s.cell][: s.level + 1]:
+            stack.pop()
+    return out
 
 
 def slot_diff(expected: Board, actual: Board) -> tuple[list[Cube], list[Cube]]:
@@ -126,6 +166,14 @@ def level_phrase(level: int) -> str:
     return _LEVEL.get(level, f"on level {level}")
 
 
+def unknown_hint(cell: str) -> str:
+    return f"I can't tell the color of the block on {cell}. Try nudging it to the center of the square."
+
+
+def extra_hint(color: str, cell: str) -> str:
+    return f"Please take the {color} block off {cell}."
+
+
 def place_hint(s: Step) -> str:
     if s.level == 0:
         return f"Place a {s.color} cube on {s.cell}."
@@ -141,6 +189,11 @@ def check(board: Optional[Board], lesson: Lesson, step_index: int, human_side: s
     at_target = dict(expected_cell=target.cell, expected_level=target.level)
     if board is None:
         return CheckResult(Verdict.WAITING, detail="no stable board yet", **at_target)
+    unreadable = unknown_cells(board)
+    if unreadable:
+        c = unreadable[0]
+        return CheckResult(Verdict.WAITING, c, f"unknown color at {c}", unknown_hint(c), **at_target)
+    board = set_aside_early(board, lesson, step_index)
     if boards_equal(board, expected):
         return CheckResult(Verdict.PASS, detail=f"step {step_index} matches", hint_text="Nice! That's right.",
                            **at_target)
@@ -206,17 +259,25 @@ def check(board: Optional[Board], lesson: Lesson, step_index: int, human_side: s
                 fault_level=c.level, expected_cell=m.cell, expected_level=m.level,
             )
 
-    # 6. A cube where none belongs. The slot to fill next, if any, is the newest step's first.
+    # 6. A cube where none belongs: move it if the rest of the lesson needs its color, else off.
     if extra:
         c = extra[0]
-        gap = t if t in missing else (older_missing[0] if older_missing else None)
+        open_slots = [Cube(s.cell, s.level, s.color) for s in lesson.steps[step_index:] if not slot_holds(board, s)]
+        needed = [m for m in open_slots  # open now: the slot is the top of its stack
+                  if m.color == c.color and m.cell != c.cell and len(board[m.cell]) == m.level]
+        if needed:
+            m = needed[0]  # the earliest step that needs this color
+            return CheckResult(
+                Verdict.WRONG_CELL, c.cell,
+                f"{c.color} at {c.cell} belongs on {m.cell} level {m.level}",
+                f"Close! Move the {c.color} block {direction(c.cell, m.cell, human_side)}, to {m.cell}.",
+                fault_level=c.level, expected_cell=m.cell, expected_level=m.level,
+            )
         return CheckResult(
             Verdict.EXTRA, c.cell,
             f"unexpected {c.color} at {c.cell} level {c.level}",
-            f"Almost! Take the {c.color} cube off {c.cell}.",
+            extra_hint(c.color, c.cell),
             fault_level=c.level,
-            expected_cell=gap.cell if gap else None,
-            expected_level=gap.level if gap else None,
         )
 
     # 7. Older cubes gone with nothing extra on the board (knocked off the grid).

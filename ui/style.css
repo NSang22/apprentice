@@ -11,10 +11,13 @@
   --warn: #f5b041;      /* calm amber: mistakes and "needs a hand", never red */
   --info: #7cb7ff;
 
-  --cube-red: #e5484d;
-  --cube-blue: #3b82f6;
-  --cube-yellow: #f7c531;
-  --cube-green: #22a75a;
+  /* Playskool silicone blocks. perception/calib/colors.json (perception.calibrate) overrides these with measured values. */
+  --cube-red: #e2383f;
+  --cube-orange: #f5862a;
+  --cube-yellow: #f6c933;
+  --cube-teal: #16a59b;
+  --cube-skyblue: #62bdea;
+  --cube-purple: #8a5cc7;
   --cube-unknown: #6b7280;
 
   --s1: 16px;
@@ -248,7 +251,6 @@ body {
 .stage.view-3d .screen-title { font-size: 72px; }
 .stage.view-3d .screen-key { font-size: var(--s3); }
 .stage[data-phase="ready"] .progress { display: none; }
-.stage.view-3d .screen[data-kind="ready"] .screen-thumb,
 .stage.view-3d .screen[data-kind="complete"] .screen-thumb { display: none; }
 
 .toast {
@@ -280,3 +282,11 @@ body {
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; }
 }
+
+/* EXTRA: the block comes off (no arrow). Unknown: the camera can't read that block. */
+.b-remove { fill: none; stroke: var(--warn); stroke-width: 6; stroke-dasharray: 14 10; }
+.b-lift rect { fill: var(--warn); }
+.b-lift text { fill: #33230a; font-size: 28px; font-weight: 750; }
+.b-unsure { fill: none; stroke: var(--cube-unknown); stroke-width: 6; stroke-dasharray: 6 8; }
+.feedback[data-kind="unsure"] { border-color: var(--cube-unknown); }
+.feedback[data-kind="unsure"] .feedback-icon { background: var(--cube-unknown); color: #fff; }

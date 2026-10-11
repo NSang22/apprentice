@@ -10,7 +10,7 @@ from shared.schemas import GridState, empty_board
 SCRIPTS_DIR = Path(__file__).parent / "scripts"
 
 A = {**empty_board(), "A1": ["red"]}
-B = {**empty_board(), "A1": ["red"], "B1": ["green"]}
+B = {**empty_board(), "A1": ["red"], "B1": ["teal"]}
 
 
 def gs(board, hands=True, arm=True, conf=None, frame_id=0):
@@ -121,7 +121,7 @@ def test_unknown_color_resets():
 
 def test_jittery_frames_never_settle_on_the_jitter():
     # One cell flips color every third frame: runs never reach STABLE_FRAMES (5).
-    flipped = {**A, "A1": ["blue"]}
+    flipped = {**A, "A1": ["skyblue"]}
     frames = [gs(flipped if i % 3 == 2 else A) for i in range(30)]
     assert feed_all(Stabilizer(), frames) == []
 
@@ -146,7 +146,7 @@ def test_step_is_pure():
 def test_returned_board_is_a_copy():
     stab = Stabilizer()
     board = feed_all(stab, [gs(A)] * STABLE_FRAMES)[0]
-    board["C3"].append("green")
+    board["C3"].append("teal")
     assert stab.state.emitted == A
 
 
@@ -163,7 +163,7 @@ def run_script(name, seed=0):
 
 def test_jitter_and_hands_script_repeats_only_after_interruptions():
     # Settles once, survives jitter without repeating, then repeats after the hands and arm segments.
-    board = {**empty_board(), "A1": ["red", "blue"], "B2": ["green"], "C3": ["yellow"]}
+    board = {**empty_board(), "A1": ["red", "skyblue"], "B2": ["teal"], "C3": ["yellow"]}
     for seed in range(20):
         assert run_script("jitter_and_hands.json", seed) == [board] * 3, seed
 
@@ -171,3 +171,9 @@ def test_jitter_and_hands_script_repeats_only_after_interruptions():
 def test_staircase_script_yields_each_board_once():
     out = run_script("staircase_clean.json")
     assert [sum(len(s) for s in b.values()) for b in out] == [0, 1, 2, 3, 4, 5, 6]
+
+
+def test_unreadable_block_settles_as_unknown_instead_of_freezing():
+    frames = [gs(A, conf={"A1": MIN_CONFIDENCE - 0.2})] * STABLE_FRAMES
+    assert feed_all(Stabilizer(), frames) == [{**A, "A1": ["unknown"]}]
+    assert feed_all(Stabilizer(), [gs({**A, "A1": ["unknown"]})] * STABLE_FRAMES) == [{**A, "A1": ["unknown"]}]

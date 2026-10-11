@@ -1,6 +1,6 @@
 """The synthetic journals must use the same event data keys as the real brain.
 
-tests/fixtures/brain_journal_{human,robot}.jsonl were written by brain.server on main (cc65d38):
+tests/fixtures/brain_journal_{human,robot}.jsonl were written by brain.server on main (01afbbc merged into 5e4c6d1):
     python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --autostart
     python -m brain.fake_feed --script tests/scripts/staircase_with_mistake.json   # with:
     python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode human --robot fake --autostart

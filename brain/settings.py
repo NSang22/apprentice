@@ -6,7 +6,7 @@ These values only change brain behavior, so they live here and need no team sign
 from shared.config import LESSONS_DIR
 
 # The lesson the demo commands run when --lesson is not given. Flat (level 0 only, so the
-# robot never picks off a stack), red, blue and yellow only, at most 2 cubes per color.
+# robot never picks off a stack), at most 2 blocks per color (the kit has 2 of each).
 DEMO_LESSON = LESSONS_DIR / "sample-flat-v1.json"
 
 # Which side of the grid the human student stands on: "row3" (opposite the arm: column A is

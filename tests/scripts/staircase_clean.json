@@ -3,13 +3,13 @@
   {"board": {}, "duration_s": 1.0, "hands_clear": false, "arm_clear": true, "jitter": false},
   {"board": {"A1": ["red"]}, "duration_s": 1.5, "hands_clear": true, "arm_clear": true, "jitter": false},
   {"board": {"A1": ["red"]}, "duration_s": 1.0, "hands_clear": false, "arm_clear": true, "jitter": false},
-  {"board": {"A1": ["red"], "B1": ["green"]}, "duration_s": 1.5, "hands_clear": true, "arm_clear": true, "jitter": false},
-  {"board": {"A1": ["red"], "B1": ["green"]}, "duration_s": 1.0, "hands_clear": false, "arm_clear": true, "jitter": false},
-  {"board": {"A1": ["red"], "B1": ["green"], "C1": ["blue"]}, "duration_s": 1.5, "hands_clear": true, "arm_clear": true, "jitter": false},
-  {"board": {"A1": ["red"], "B1": ["green"], "C1": ["blue"]}, "duration_s": 1.0, "hands_clear": false, "arm_clear": true, "jitter": false},
-  {"board": {"A1": ["red", "blue"], "B1": ["green"], "C1": ["blue"]}, "duration_s": 1.5, "hands_clear": true, "arm_clear": true, "jitter": false},
-  {"board": {"A1": ["red", "blue"], "B1": ["green"], "C1": ["blue"]}, "duration_s": 1.0, "hands_clear": false, "arm_clear": true, "jitter": false},
-  {"board": {"A1": ["red", "blue"], "B1": ["green", "red"], "C1": ["blue"]}, "duration_s": 1.5, "hands_clear": true, "arm_clear": true, "jitter": false},
-  {"board": {"A1": ["red", "blue"], "B1": ["green", "red"], "C1": ["blue"]}, "duration_s": 1.0, "hands_clear": false, "arm_clear": true, "jitter": false},
-  {"board": {"A1": ["red", "blue", "yellow"], "B1": ["green", "red"], "C1": ["blue"]}, "duration_s": 3.0, "hands_clear": true, "arm_clear": true, "jitter": false}
+  {"board": {"A1": ["red"], "B1": ["teal"]}, "duration_s": 1.5, "hands_clear": true, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red"], "B1": ["teal"]}, "duration_s": 1.0, "hands_clear": false, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red"], "B1": ["teal"], "C1": ["skyblue"]}, "duration_s": 1.5, "hands_clear": true, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red"], "B1": ["teal"], "C1": ["skyblue"]}, "duration_s": 1.0, "hands_clear": false, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red", "skyblue"], "B1": ["teal"], "C1": ["skyblue"]}, "duration_s": 1.5, "hands_clear": true, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red", "skyblue"], "B1": ["teal"], "C1": ["skyblue"]}, "duration_s": 1.0, "hands_clear": false, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red", "skyblue"], "B1": ["teal", "red"], "C1": ["skyblue"]}, "duration_s": 1.5, "hands_clear": true, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red", "skyblue"], "B1": ["teal", "red"], "C1": ["skyblue"]}, "duration_s": 1.0, "hands_clear": false, "arm_clear": true, "jitter": false},
+  {"board": {"A1": ["red", "skyblue", "yellow"], "B1": ["teal", "red"], "C1": ["skyblue"]}, "duration_s": 3.0, "hands_clear": true, "arm_clear": true, "jitter": false}
 ]

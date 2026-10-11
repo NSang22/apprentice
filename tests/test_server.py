@@ -77,7 +77,7 @@ def test_ui_gets_latest_state_on_connect_and_every_update(tmp_path):
     first, updates = asyncio.run(scenario())
     journal.close()
     assert first["step_index"] == 0 and first["hint_text"] == "Place a red cube on A1."
-    assert updates[-1]["expected_step"]["color"] == "green"
+    assert updates[-1]["expected_step"]["color"] == "teal"
     assert updates[-1]["progress"]["human"][:2] == ["pass", "active"]
 
 

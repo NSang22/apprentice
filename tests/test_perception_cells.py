@@ -34,3 +34,9 @@ def test_internal_boundaries_belong_to_next_cell(geometry):
     assert mm_to_cell(x0 + size, y0 + size / 2) == "B1"
     assert mm_to_cell(x0 + size / 2, y0 + size) == "A2"
     assert mm_to_cell(x0 + 2 * size, y0 + 2 * size) == "C3"
+
+
+def test_tags_sit_at_the_d1_corner_cells():
+    from perception.cells import tag_corner_cells
+
+    assert tag_corner_cells() == {0: "A1", 1: "C1", 2: "C3", 3: "A3"}

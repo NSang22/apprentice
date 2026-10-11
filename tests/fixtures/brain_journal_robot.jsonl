@@ -1,51 +1,58 @@
-{"t":1791692215.49014,"session":"s-20261011-001655","mode":"robot","kind":"session_start","data":{"lesson_id":"sample-flat-v1","title":"Flat pattern","steps":5,"mode":"robot","human_side":"row3","max_retries":2,"grid_source":"sim","robot":"fake","git_commit":"cc65d388304b40fe7e344d56ac30fec62e9ba9aa","git_dirty":false}}
-{"t":1791692215.490549,"session":"s-20261011-001655","mode":"robot","kind":"gate","data":{"gate":null}}
-{"t":1791692215.4908755,"session":"s-20261011-001655","mode":"robot","kind":"note","data":{"warning":"lesson gate missing or failed"}}
-{"t":1791692215.4909885,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":0,"cmd":"home"}}
-{"t":1791692216.0934289,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":0,"cmd":"home","ok":true,"error":null}}
-{"t":1791692216.6492467,"session":"s-20261011-001655","mode":"robot","kind":"board","data":{"step":0,"board":{"A1":[],"A2":[],"A3":[],"B1":[],"B2":[],"B3":[],"C1":[],"C2":[],"C3":[]}}}
-{"t":1791692216.6500063,"session":"s-20261011-001655","mode":"robot","kind":"verdict","data":{"step":0,"verdict":"MISSING","fault_cell":null,"fault_level":null,"expected_cell":"A1","expected_level":0,"detail":"waiting for red at A1 level 0","retry":0}}
-{"t":1791692216.6506243,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":0,"cmd":"place","color":"red","cell":"A1","level":0}}
-{"t":1791692217.2539613,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":0,"cmd":"place","ok":true,"error":null}}
-{"t":1791692217.2548828,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":0,"cmd":"home"}}
-{"t":1791692217.8562412,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":0,"cmd":"home","ok":true,"error":null}}
-{"t":1791692218.3743913,"session":"s-20261011-001655","mode":"robot","kind":"board","data":{"step":0,"board":{"A1":["red"],"A2":[],"A3":[],"B1":[],"B2":[],"B3":[],"C1":[],"C2":[],"C3":[]}}}
-{"t":1791692218.3753006,"session":"s-20261011-001655","mode":"robot","kind":"verdict","data":{"step":0,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"A1","expected_level":0,"detail":"step 0 matches","retry":0}}
-{"t":1791692218.3764699,"session":"s-20261011-001655","mode":"robot","kind":"step_advance","data":{"from_step":0,"to_step":1,"first_try":true}}
-{"t":1791692218.3769252,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"place","color":"blue","cell":"C1","level":0}}
-{"t":1791692218.978387,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"place","ok":true,"error":null}}
-{"t":1791692218.9790556,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"home"}}
-{"t":1791692219.5802162,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"home","ok":true,"error":null}}
-{"t":1791692220.1161563,"session":"s-20261011-001655","mode":"robot","kind":"board","data":{"step":1,"board":{"A1":["red"],"A2":[],"A3":[],"B1":["blue"],"B2":[],"B3":[],"C1":[],"C2":[],"C3":[]}}}
-{"t":1791692220.1167831,"session":"s-20261011-001655","mode":"robot","kind":"verdict","data":{"step":1,"verdict":"WRONG_CELL","fault_cell":"B1","fault_level":0,"expected_cell":"C1","expected_level":0,"detail":"blue at B1, expected C1","retry":0}}
-{"t":1791692220.117583,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"pick","cell":"B1","level":0}}
-{"t":1791692220.7204335,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"pick","ok":true,"error":null}}
-{"t":1791692220.7212129,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"place","color":"blue","cell":"C1","level":0}}
-{"t":1791692221.3229105,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"place","ok":true,"error":null}}
-{"t":1791692221.3234437,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"home"}}
-{"t":1791692221.924447,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"home","ok":true,"error":null}}
-{"t":1791692222.468249,"session":"s-20261011-001655","mode":"robot","kind":"board","data":{"step":1,"board":{"A1":["red"],"A2":[],"A3":[],"B1":[],"B2":[],"B3":[],"C1":["blue"],"C2":[],"C3":[]}}}
-{"t":1791692222.4690964,"session":"s-20261011-001655","mode":"robot","kind":"verdict","data":{"step":1,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"C1","expected_level":0,"detail":"step 1 matches","retry":1}}
-{"t":1791692222.469662,"session":"s-20261011-001655","mode":"robot","kind":"step_advance","data":{"from_step":1,"to_step":2,"first_try":false}}
-{"t":1791692222.4702592,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":2,"cmd":"place","color":"yellow","cell":"B2","level":0}}
-{"t":1791692223.071392,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":2,"cmd":"place","ok":true,"error":null}}
-{"t":1791692223.0720189,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":2,"cmd":"home"}}
-{"t":1791692223.6729326,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":2,"cmd":"home","ok":true,"error":null}}
-{"t":1791692224.2024286,"session":"s-20261011-001655","mode":"robot","kind":"board","data":{"step":2,"board":{"A1":["red"],"A2":[],"A3":[],"B1":[],"B2":["yellow"],"B3":[],"C1":["blue"],"C2":[],"C3":[]}}}
-{"t":1791692224.2032464,"session":"s-20261011-001655","mode":"robot","kind":"verdict","data":{"step":2,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"B2","expected_level":0,"detail":"step 2 matches","retry":0}}
-{"t":1791692224.2035232,"session":"s-20261011-001655","mode":"robot","kind":"step_advance","data":{"from_step":2,"to_step":3,"first_try":true}}
-{"t":1791692224.2036939,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":3,"cmd":"place","color":"red","cell":"A3","level":0}}
-{"t":1791692224.80412,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":3,"cmd":"place","ok":true,"error":null}}
-{"t":1791692224.8049085,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":3,"cmd":"home"}}
-{"t":1791692225.4056463,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":3,"cmd":"home","ok":true,"error":null}}
-{"t":1791692225.9315236,"session":"s-20261011-001655","mode":"robot","kind":"board","data":{"step":3,"board":{"A1":["red"],"A2":[],"A3":["red"],"B1":[],"B2":["yellow"],"B3":[],"C1":["blue"],"C2":[],"C3":[]}}}
-{"t":1791692225.9320323,"session":"s-20261011-001655","mode":"robot","kind":"verdict","data":{"step":3,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"A3","expected_level":0,"detail":"step 3 matches","retry":0}}
-{"t":1791692225.932281,"session":"s-20261011-001655","mode":"robot","kind":"step_advance","data":{"from_step":3,"to_step":4,"first_try":true}}
-{"t":1791692225.9329085,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":4,"cmd":"place","color":"blue","cell":"C3","level":0}}
-{"t":1791692226.5342865,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":4,"cmd":"place","ok":true,"error":null}}
-{"t":1791692226.534878,"session":"s-20261011-001655","mode":"robot","kind":"robot_cmd","data":{"step":4,"cmd":"home"}}
-{"t":1791692227.1357965,"session":"s-20261011-001655","mode":"robot","kind":"robot_result","data":{"step":4,"cmd":"home","ok":true,"error":null}}
-{"t":1791692227.671189,"session":"s-20261011-001655","mode":"robot","kind":"board","data":{"step":4,"board":{"A1":["red"],"A2":[],"A3":["red"],"B1":[],"B2":["yellow"],"B3":[],"C1":["blue"],"C2":[],"C3":["blue"]}}}
-{"t":1791692227.671751,"session":"s-20261011-001655","mode":"robot","kind":"verdict","data":{"step":4,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"C3","expected_level":0,"detail":"step 4 matches","retry":0}}
-{"t":1791692227.6719656,"session":"s-20261011-001655","mode":"robot","kind":"step_advance","data":{"from_step":4,"to_step":5,"first_try":true}}
-{"t":1791692227.6726444,"session":"s-20261011-001655","mode":"robot","kind":"session_end","data":{"outcome":"complete","step":5}}
+{"t":1791693021.8454049,"session":"s-20261011-003021","mode":"robot","kind":"session_start","data":{"lesson_id":"sample-flat-v1","title":"Flat pattern","steps":6,"mode":"robot","human_side":"row3","max_retries":2,"grid_source":"sim","robot":"fake","git_commit":"5e4c6d1a4d09b668517781bcf153329aec781ced","git_dirty":true}}
+{"t":1791693021.84578,"session":"s-20261011-003021","mode":"robot","kind":"gate","data":{"gate":null}}
+{"t":1791693021.8459177,"session":"s-20261011-003021","mode":"robot","kind":"note","data":{"warning":"lesson gate missing or failed"}}
+{"t":1791693021.846112,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":0,"cmd":"home"}}
+{"t":1791693022.4469202,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":0,"cmd":"home","ok":true,"error":null}}
+{"t":1791693022.9666412,"session":"s-20261011-003021","mode":"robot","kind":"board","data":{"step":0,"board":{"A1":[],"A2":[],"A3":[],"B1":[],"B2":[],"B3":[],"C1":[],"C2":[],"C3":[]}}}
+{"t":1791693022.9670966,"session":"s-20261011-003021","mode":"robot","kind":"verdict","data":{"step":0,"verdict":"MISSING","fault_cell":null,"fault_level":null,"expected_cell":"A1","expected_level":0,"detail":"waiting for red at A1 level 0","retry":0}}
+{"t":1791693022.9676774,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":0,"cmd":"place","color":"red","cell":"A1","level":0}}
+{"t":1791693023.568451,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":0,"cmd":"place","ok":true,"error":null}}
+{"t":1791693023.5687046,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":0,"cmd":"home"}}
+{"t":1791693024.1693678,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":0,"cmd":"home","ok":true,"error":null}}
+{"t":1791693024.6837978,"session":"s-20261011-003021","mode":"robot","kind":"board","data":{"step":0,"board":{"A1":["red"],"A2":[],"A3":[],"B1":[],"B2":[],"B3":[],"C1":[],"C2":[],"C3":[]}}}
+{"t":1791693024.684726,"session":"s-20261011-003021","mode":"robot","kind":"verdict","data":{"step":0,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"A1","expected_level":0,"detail":"step 0 matches","retry":0}}
+{"t":1791693024.6855118,"session":"s-20261011-003021","mode":"robot","kind":"step_advance","data":{"from_step":0,"to_step":1,"first_try":true}}
+{"t":1791693024.6860683,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"place","color":"teal","cell":"C1","level":0}}
+{"t":1791693025.2869382,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"place","ok":true,"error":null}}
+{"t":1791693025.2876198,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"home"}}
+{"t":1791693025.8889287,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"home","ok":true,"error":null}}
+{"t":1791693026.3814054,"session":"s-20261011-003021","mode":"robot","kind":"board","data":{"step":1,"board":{"A1":["red"],"A2":[],"A3":[],"B1":["teal"],"B2":[],"B3":[],"C1":[],"C2":[],"C3":[]}}}
+{"t":1791693026.3819516,"session":"s-20261011-003021","mode":"robot","kind":"verdict","data":{"step":1,"verdict":"WRONG_CELL","fault_cell":"B1","fault_level":0,"expected_cell":"C1","expected_level":0,"detail":"teal at B1, expected C1","retry":0}}
+{"t":1791693026.3822463,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"pick","cell":"B1","level":0}}
+{"t":1791693026.9832458,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"pick","ok":true,"error":null}}
+{"t":1791693026.984006,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"place","color":"teal","cell":"C1","level":0}}
+{"t":1791693027.5847752,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"place","ok":true,"error":null}}
+{"t":1791693027.58518,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"home"}}
+{"t":1791693028.1859086,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"home","ok":true,"error":null}}
+{"t":1791693028.637123,"session":"s-20261011-003021","mode":"robot","kind":"board","data":{"step":1,"board":{"A1":["red"],"A2":[],"A3":[],"B1":[],"B2":[],"B3":[],"C1":["teal"],"C2":[],"C3":[]}}}
+{"t":1791693028.6377559,"session":"s-20261011-003021","mode":"robot","kind":"verdict","data":{"step":1,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"C1","expected_level":0,"detail":"step 1 matches","retry":1}}
+{"t":1791693028.6384227,"session":"s-20261011-003021","mode":"robot","kind":"step_advance","data":{"from_step":1,"to_step":2,"first_try":false}}
+{"t":1791693028.6387935,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":2,"cmd":"place","color":"purple","cell":"B2","level":0}}
+{"t":1791693029.2397254,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":2,"cmd":"place","ok":true,"error":null}}
+{"t":1791693029.2399585,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":2,"cmd":"home"}}
+{"t":1791693029.8404849,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":2,"cmd":"home","ok":true,"error":null}}
+{"t":1791693030.3505995,"session":"s-20261011-003021","mode":"robot","kind":"board","data":{"step":2,"board":{"A1":["red"],"A2":[],"A3":[],"B1":[],"B2":["purple"],"B3":[],"C1":["teal"],"C2":[],"C3":[]}}}
+{"t":1791693030.3509357,"session":"s-20261011-003021","mode":"robot","kind":"verdict","data":{"step":2,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"B2","expected_level":0,"detail":"step 2 matches","retry":0}}
+{"t":1791693030.3511722,"session":"s-20261011-003021","mode":"robot","kind":"step_advance","data":{"from_step":2,"to_step":3,"first_try":true}}
+{"t":1791693030.3513541,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":3,"cmd":"place","color":"yellow","cell":"A3","level":0}}
+{"t":1791693030.9523704,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":3,"cmd":"place","ok":true,"error":null}}
+{"t":1791693030.9528837,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":3,"cmd":"home"}}
+{"t":1791693031.5533104,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":3,"cmd":"home","ok":true,"error":null}}
+{"t":1791693032.0822062,"session":"s-20261011-003021","mode":"robot","kind":"board","data":{"step":3,"board":{"A1":["red"],"A2":[],"A3":["yellow"],"B1":[],"B2":["purple"],"B3":[],"C1":["teal"],"C2":[],"C3":[]}}}
+{"t":1791693032.0839736,"session":"s-20261011-003021","mode":"robot","kind":"verdict","data":{"step":3,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"A3","expected_level":0,"detail":"step 3 matches","retry":0}}
+{"t":1791693032.0856125,"session":"s-20261011-003021","mode":"robot","kind":"step_advance","data":{"from_step":3,"to_step":4,"first_try":true}}
+{"t":1791693032.0861876,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":4,"cmd":"place","color":"skyblue","cell":"C3","level":0}}
+{"t":1791693032.6876638,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":4,"cmd":"place","ok":true,"error":null}}
+{"t":1791693032.688118,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":4,"cmd":"home"}}
+{"t":1791693033.2886686,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":4,"cmd":"home","ok":true,"error":null}}
+{"t":1791693033.7300735,"session":"s-20261011-003021","mode":"robot","kind":"board","data":{"step":4,"board":{"A1":["red"],"A2":[],"A3":["yellow"],"B1":[],"B2":["purple"],"B3":[],"C1":["teal"],"C2":[],"C3":["skyblue"]}}}
+{"t":1791693033.7305214,"session":"s-20261011-003021","mode":"robot","kind":"verdict","data":{"step":4,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"C3","expected_level":0,"detail":"step 4 matches","retry":0}}
+{"t":1791693033.730981,"session":"s-20261011-003021","mode":"robot","kind":"step_advance","data":{"from_step":4,"to_step":5,"first_try":true}}
+{"t":1791693033.7314491,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":5,"cmd":"place","color":"orange","cell":"C2","level":0}}
+{"t":1791693034.3321586,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":5,"cmd":"place","ok":true,"error":null}}
+{"t":1791693034.3331695,"session":"s-20261011-003021","mode":"robot","kind":"robot_cmd","data":{"step":5,"cmd":"home"}}
+{"t":1791693034.9339817,"session":"s-20261011-003021","mode":"robot","kind":"robot_result","data":{"step":5,"cmd":"home","ok":true,"error":null}}
+{"t":1791693035.4988184,"session":"s-20261011-003021","mode":"robot","kind":"board","data":{"step":5,"board":{"A1":["red"],"A2":[],"A3":["yellow"],"B1":[],"B2":["purple"],"B3":[],"C1":["teal"],"C2":["orange"],"C3":["skyblue"]}}}
+{"t":1791693035.4997966,"session":"s-20261011-003021","mode":"robot","kind":"verdict","data":{"step":5,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"C2","expected_level":0,"detail":"step 5 matches","retry":0}}
+{"t":1791693035.5002294,"session":"s-20261011-003021","mode":"robot","kind":"step_advance","data":{"from_step":5,"to_step":6,"first_try":true}}
+{"t":1791693035.5008564,"session":"s-20261011-003021","mode":"robot","kind":"session_end","data":{"outcome":"complete","step":6}}

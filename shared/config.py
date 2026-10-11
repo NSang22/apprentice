@@ -11,7 +11,7 @@ COLUMNS = ["A", "B", "C"]
 ROWS = ["1", "2", "3"]
 CELLS = [c + r for c in COLUMNS for r in ROWS]  # A1, A2, A3, B1, ..., C3
 
-COLORS = ["red", "blue", "yellow", "green"]
+COLORS = ["red", "orange", "yellow", "teal", "skyblue", "purple"]  # Playskool silicone blocks, 2 of each
 UNKNOWN = "unknown"
 ALL_COLORS = COLORS + [UNKNOWN]  # every color string allowed in a GridState board
 

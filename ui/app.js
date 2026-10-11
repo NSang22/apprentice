@@ -14,7 +14,7 @@
   const COLUMNS = ["A", "B", "C"];
   const ROWS = ["1", "2", "3"];
   const CELLS = COLUMNS.flatMap((c) => ROWS.map((r) => c + r));
-  const COLORS = ["red", "blue", "yellow", "green"];
+  const COLORS = ["red", "orange", "yellow", "teal", "skyblue", "purple"];   // shared/config.py COLORS
   const VERDICTS = ["PASS", "WRONG_CELL", "WRONG_COLOR", "WRONG_LEVEL", "EXTRA", "MISSING", "WAITING"];
   const LEVEL_WORDS = ["", "second", "third"];
 
@@ -43,6 +43,7 @@
     showFailed: null,
     ws: null,
     toastTimer: 0,
+    blockHex: {},         // color -> measured hex from perception/calib/colors.json
   };
 
   // The student's side comes from the brain (SessionState.human_side); row3 until the first state.
@@ -121,7 +122,7 @@
     WRONG_CELL: "Almost! Wrong spot",
     WRONG_COLOR: "Almost! Different color",
     WRONG_LEVEL: "Right spot, different level",
-    EXTRA: "One cube too many",
+    EXTRA: "One block too many",
     MISSING: "A cube is missing",
   };
 
@@ -219,6 +220,9 @@
       if (isMistake(s)) {
         app.passUntil = 0;
         fb = { kind: "mistake", icon: "!", title: MISTAKE_TITLES[s.verdict] || "Almost!", text: s.hintText || "" };
+      } else if (unsureCell(s)) {
+        app.passUntil = 0;
+        fb = { kind: "unsure", icon: "?", title: "I can't read one block", text: s.hintText || "" };
       } else if (now < app.passUntil) {
         fb = { kind: "pass", icon: "✓", title: app.passText || "Nice! That's right.", text: "" };
       } else if (!s.boardSeen) {
@@ -307,22 +311,33 @@
   function fill(color) { return COLORS.includes(color) ? `var(--cube-${color})` : "var(--cube-unknown)"; }
 
   function arrowFrom(s) {
-    // Hint level 2+: arrow from the misplaced cube (fault_cell) to the slot that needs it
-    // (expected_cell, from the checker, so it is right for knocked older cubes too).
-    if (s.mode !== "human" || s.hintLevel < 2 || !isMistake(s) || !s.faultCell || !s.expectedCell) return null;
+    // Hint level 2+: arrow from the misplaced block (fault_cell) to the slot that needs it
+    // (expected_cell, from the checker). Only WRONG_CELL moves a block to another cell; EXTRA
+    // means "take it off" and gets the lift marker instead (liftFrom), never an arrow.
+    if (s.mode !== "human" || s.hintLevel < 2 || s.verdict !== "WRONG_CELL" || !s.faultCell || !s.expectedCell) return null;
     if (s.faultCell === s.expectedCell) return null;
     return [s.faultCell, s.expectedCell];
   }
 
+  // EXTRA: the block on fault_cell comes off the board. Shown from the first hint on.
+  function liftFrom(s, phase) {
+    return s && phase === "running" && s.verdict === "EXTRA" && s.faultCell && s.board[s.faultCell].length ? s.faultCell : null;
+  }
+
+  // WAITING with a fault cell: the camera can't read that block's color.
+  function unsureCell(s) {
+    return s && s.verdict === "WAITING" && s.faultCell ? s.faultCell : null;
+  }
+
   function renderBoard(s, phase) {
-    const key = JSON.stringify(s ? [s.board, s.expected, s.faultCell, s.expectedCell, s.hintLevel, s.verdict, phase, side(), s.robotStatus] : null);
+    const key = JSON.stringify(s ? [s.board, s.expected, s.stepIndex, s.faultCell, s.expectedCell, s.hintLevel, s.verdict, phase, side(), s.robotStatus] : null);
     if (key === app.boardKey) return;
     app.boardKey = key;
     const faultVisible = !!(s && phase === "running" && s.faultCell &&
       (s.mode === "human" ? isMistake(s) : s.verdict !== "PASS" && s.verdict !== "WAITING"));
     if (app.view3d && app.view === "3d") {
       guard(app.view3d.update, { s, phase, side: side(), faultVisible, arrow: s ? arrowFrom(s) : null,
-                                 activity: s ? s.robotStatus : null });
+                                 lift: liftFrom(s, phase), unsure: unsureCell(s), activity: s ? s.robotStatus : null });
     }
 
     const W = G.x0 * 2 + G.pitch * 3 - 16, H = G.y0 + G.pitch * 3 + 90;
@@ -366,6 +381,18 @@
         const r = levelRect(gCell, Math.min(gLevel, 2));
         const strong = s.mode === "human" && s.hintLevel >= 2 ? " strong" : "";
         parts.push(`<rect class="b-ghost${strong}" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.w}" rx="10" style="fill:${fill(gColor)}"/>`);
+      }
+      const lift = liftFrom(s, phase);
+      if (lift) {   // take it off: dashed outline on the block and a "lift off" badge, no arrow
+        const b = cellBox(lift), top = levelRect(lift, s.board[lift].length - 1);
+        parts.push(`<rect class="b-remove" x="${top.x - 6}" y="${top.y - 6}" width="${top.w + 12}" height="${top.w + 12}" rx="14"/>`);
+        parts.push(`<g class="b-lift"><rect x="${b.x + G.size / 2 - 62}" y="${b.y + G.size - 54}" width="124" height="44" rx="22"/>` +
+                   `<text x="${b.x + G.size / 2}" y="${b.y + G.size - 23}" text-anchor="middle">\u2191 off</text></g>`);
+      }
+      const unsure = unsureCell(s);
+      if (unsure) {
+        const b = cellBox(unsure);
+        parts.push(`<rect class="b-unsure" x="${b.x - 6}" y="${b.y - 6}" width="${G.size + 12}" height="${G.size + 12}" rx="20"/>`);
       }
       const arrow = arrowFrom(s);
       if (arrow) {
@@ -422,6 +449,7 @@
   function onState(s) {
     const prev = app.state;
     if (prev && prev.lessonId !== s.lessonId) app.passUntil = 0;   // brain restarted on another lesson
+    if (prev && s.stepIndex < prev.stepIndex) app.passUntil = 0;     // a block came off: show the earlier step now
     if (s.verdict === "PASS") {
       if (app.view3d && app.view === "3d") guard(app.view3d.pass, s.expectedCell || (s.expected && s.expected.cell));
       app.passUntil = Date.now() + PASS_HOLD_MS;
@@ -439,6 +467,7 @@
       try {
         const mod = await import("./view3d.js");
         app.view3d = mod.createView3D(ui.board3d);
+        if (Object.keys(app.blockHex).length) guard(app.view3d.setColors, app.blockHex);
       } catch (err) {
         console.warn("[ui] 3D view unavailable, using the 2D board:", err);
         app.view3dFailed = true;
@@ -536,6 +565,27 @@
     if (ui.screenThumb.innerHTML !== thumb) ui.screenThumb.innerHTML = thumb;
     ui.screenThumb.hidden = !board;
   }
+
+  // ------------------------------------------------------------ measured block colors
+
+  // perception.calibrate writes each block's measured color as hex; use it when present so the
+  // monitor shows the blocks on the table, not a generic palette. Missing file: CSS defaults.
+  function applyBlockColors() {
+    for (const [color, hex] of Object.entries(app.blockHex)) {
+      if (COLORS.includes(color)) document.documentElement.style.setProperty(`--cube-${color}`, hex);
+    }
+    if (app.view3d) guard(app.view3d.setColors, app.blockHex);
+  }
+  fetch("/perception/calib/colors.json", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      const colors = (d && d.colors) || {};
+      for (const [color, ref] of Object.entries(colors)) {
+        if (ref && /^#[0-9a-f]{6}$/i.test(ref.hex || "")) app.blockHex[color] = ref.hex;
+      }
+      applyBlockColors();
+    })
+    .catch(() => {});
 
   render();
   connect();

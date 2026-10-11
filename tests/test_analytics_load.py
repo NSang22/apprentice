@@ -8,7 +8,7 @@ from brain.settings import DEMO_LESSON
 from shared.schemas import Lesson
 
 FIXTURES = Path(__file__).parent / "fixtures"
-HUMAN, ROBOT = "s-20261011-001708", "s-20261011-001655"  # session ids inside the brain fixtures
+HUMAN, ROBOT = "s-20261011-003036", "s-20261011-003021"  # session ids inside the brain fixtures
 
 
 def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
@@ -18,7 +18,7 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
         shutil.copy(p, sessions / p.name)
     # A crash mid-write, and a session that never left the "ready" phase (board lines only).
     with open(sessions / "brain_journal_human.jsonl", "a", encoding="utf-8") as f:
-        f.write('{"t": 1791650000.0, "session": "s-20261011-001708", "ki')
+        f.write('{"t": 1791650000.0, "session": "s-20261011-003036", "ki')
     (sessions / "s-ready.jsonl").write_text(
         '{"t":1.0,"session":"s-ready","mode":"human","kind":"board","data":{"step":0,"board":{}}}\n')
     # Synthetic journals are written by the real brain too, and add a robot place that fails.
@@ -37,11 +37,15 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
     # The invariant behind the "still placing" skip rule: for every step the brain advanced,
     # the loader's first attempt passed exactly when the brain says first_try.
     first = {(a.session, a.step): a.passed for a in t.attempts if a.attempt_no == 1}
-    checked = 0
+    # Only a step's first advance: after a step_back (a cube moved off an earlier step) the brain
+    # advances that step again, and first_try then also reflects the fix made on the revisit.
+    checked, seen = 0, set()
     for path in sessions.glob("*.jsonl"):
         for e in read_journal(path)[0]:
-            if e["kind"] == "step_advance":
-                assert first[(e["session"], e["data"]["from_step"])] == e["data"]["first_try"], (path.name, e)
+            key = (e["session"], e["data"].get("from_step"))
+            if e["kind"] == "step_advance" and key not in seen:
+                seen.add(key)
+                assert first[key] == e["data"]["first_try"], (path.name, e)
                 checked += 1
     assert checked > 50
 
@@ -52,7 +56,7 @@ def test_loader_matches_the_brain_on_its_own_journals(tmp_path):
         ("WRONG_CELL", 1, 0, "C2"), ("PASS", 2, 1, None)]
     assert (human[0].step_color, human[0].step_cell, human[0].step_level) == ("red", "A1", 0)  # tests/fixtures lesson
     robot = [a for a in t.attempts if a.session == ROBOT]
-    assert len(robot) == 6  # the first "still placing" check comes before any place, so it is skipped
+    assert len(robot) == 7  # 6 passes + 1 wrong cell; the first "still placing" check comes before any place, so it is skipped
     assert [(a.verdict, a.retry, a.fault_cell) for a in robot if a.step == 1] == [
         ("WRONG_CELL", 0, "B1"), ("PASS", 1, None)]
     assert robot[0].step_color == "red"  # lessons/sample-flat-v1.json

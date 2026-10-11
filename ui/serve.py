@@ -1,7 +1,8 @@
 """Serve the monitor locally: python ui/serve.py, then open http://localhost:8000 (F11 for fullscreen).
 
 Serves ui/ at /ui/ and the expert clips in videos/ at /videos/ (SessionState.show_me.video is a
-repo-relative path like videos/expert_staircase.mp4). Nothing else in the repo is reachable.
+repo-relative path like videos/expert_staircase.mp4), and the measured block colors in
+perception/calib/ at /perception/calib/. Nothing else in the repo is reachable.
 MIME types are fixed here because Windows can map .js to text/plain, which breaks module loading.
 Range requests are supported because the browser needs them to seek the show-me clip to its start.
 No network needed: three.js is vendored in ui/vendor/.
@@ -19,7 +20,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ALLOWED = ("ui/", "videos/")
+ALLOWED = ("ui/", "videos/", "perception/calib/")
 TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",

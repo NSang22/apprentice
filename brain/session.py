@@ -5,12 +5,24 @@ begins the lesson, and refuses while the last stable board seen still has cubes 
 (hint_text asks to clear the board). If a stable board has already been seen, start()
 checks it at once, so the first verdict is MISSING ("Place the red cube on A1") rather than
 WAITING until the student touches the board. board_seen in the state tells the UI whether
-the camera has produced any stable board yet. Then feed it stable boards with on_board(). It checks each one, advances on PASS, and drives
-hints (human mode) or the robot (robot mode). All I/O goes through the injected journal,
+the camera has produced any stable board yet. Then feed it stable boards with on_board().
+
+Progress is a function of the board, not a forward-only counter. On every stable board
+step_index becomes the first step whose slot does not hold its color (checker.progress_index),
+so taking an earlier block off moves the lesson, its instruction, and the progress marks back
+to that step, and putting it back moves them forward again. Mistakes, robot retries, and hint
+levels are kept per step, so going back and forth never loses them. While any cell reads
+"unknown" the step holds still (an unreadable block must not move the lesson either way) and
+the verdict is WAITING with a nudge hint. The lesson is complete when the board is exactly the
+final board; every block in place plus an extra one stays on the last step, asking for the
+extra to come off.
+
+Each new board is checked against the current step and drives hints (human mode) or the robot
+(robot mode). All I/O goes through the injected journal,
 robot client, and on_state callback; sleep is injectable so tests run instantly.
 
 Human mode
-  Each wrong settle raises hint_level by one, up to 4, and PASS resets it:
+  Each wrong settle raises the step's hint_level by one, up to 4 (a new step starts at 0):
     1 text   2 ghost cube on the target   3 show-me clip (needs t_video)   4 robot hovers
   "Still placing" (the board is exactly as it was before this step) is not a mistake and
   leaves the hint level alone. Level 4 needs a robot; without one the ladder stops at 3.
@@ -37,7 +49,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable, Optional
 
-from brain.checker import CheckResult, check, expected_board
+from brain.checker import CheckResult, check, expected_board, progress_index, unknown_cells
 from brain.journal import Journal
 from brain.robot_client import RobotClient, RobotReply, fail
 from brain.settings import HOVER_HOLD_S, HUMAN_SIDE, MAX_HINT_LEVEL, SHOW_ME_POST_S, SHOW_ME_PRE_S
@@ -118,8 +130,10 @@ class Session:
         self.hint_text: Optional[str] = None
         self.show_me: Optional[ShowMe] = None
         self.marks = ["active"] + ["pending"] * (len(lesson.steps) - 1)
-        self.mistakes = 0          # human: wrong settles on the current step
-        self.retries = 0           # robot: failed retries on the current step
+        n = len(lesson.steps)
+        self.step_mistakes = [0] * n   # human: wrong settles, per step
+        self.step_retries = [0] * n    # robot: failed retries, per step
+        self.step_hints = [0] * n      # human: hint level reached, per step (restored on going back)
         self.placed_current = False  # robot: first place of the current step already issued
         self.robot_moves = 0
         self.expected_cell: Optional[str] = lesson.steps[0].cell
@@ -131,6 +145,29 @@ class Session:
         self._started = False
         self._ended = False
         self.board_seen = False
+
+    # ------------------------------------------------------------ per-step history
+
+    @property
+    def mistakes(self) -> int:
+        return self.step_mistakes[self.step_index] if self.step_index < len(self.step_mistakes) else 0
+
+    @mistakes.setter
+    def mistakes(self, value: int) -> None:
+        if self.step_index < len(self.step_mistakes):
+            self.step_mistakes[self.step_index] = value
+
+    @property
+    def retries(self) -> int:
+        return self.step_retries[self.step_index] if self.step_index < len(self.step_retries) else 0
+
+    @retries.setter
+    def retries(self, value: int) -> None:
+        if self.step_index < len(self.step_retries):
+            self.step_retries[self.step_index] = value
+
+    def _had_trouble(self, k: int) -> bool:
+        return self.step_mistakes[k] > 0 or self.step_retries[k] > 0
 
     # ------------------------------------------------------------ public
 
@@ -270,26 +307,58 @@ class Session:
         self._event("verdict", data)
         return r
 
-    def _advance(self) -> None:
-        k = self.step_index
-        had_trouble = self.mistakes > 0 or self.retries > 0
-        self.marks[k] = "retry" if had_trouble else "pass"
-        self.step_index += 1
-        self.verdict = Verdict.WAITING  # the new step has not been checked yet
-        self.hint_level, self.show_me, self.fault_cell = 0, None, None
-        self.mistakes, self.retries, self.placed_current = 0, 0, False
-        done = self.step_index == len(self.lesson.steps)
-        nxt = None if done else self.lesson.steps[self.step_index]
-        self.expected_cell, self.expected_level = (None, None) if nxt is None else (nxt.cell, nxt.level)
-        if done:
+    def _sync_progress(self, board: Board) -> None:
+        """Move step_index to where the board says the lesson is (see module docstring)."""
+        if unknown_cells(board):
+            return  # hold still: the check explains the unreadable block
+        n = len(self.lesson.steps)
+        k = progress_index(board, self.lesson)
+        if k == n and not boards_equal(board, self.lesson.final_board):
+            k = n - 1  # every block in place plus extras: stay on the last step until they come off
+        old = self.step_index
+        if k == old:
+            return
+        self.step_hints[old] = self.hint_level
+        if k > old:
+            for j in range(old, k):  # one PASS and one step_advance per step, even when blocks jump several
+                s = self.lesson.steps[j]
+                self.verdict, self.fault_cell = Verdict.PASS, None
+                self.expected_cell, self.expected_level = s.cell, s.level
+                self.hint_text = "Nice! That's right." if self.mode == "human" else f"Step {j + 1} checks out."
+                data = {"step": j, "verdict": Verdict.PASS.value, "fault_cell": None, "fault_level": None,
+                        "expected_cell": s.cell, "expected_level": s.level, "detail": f"step {j} matches"}
+                data.update({"retry": self.step_retries[j]} if self.mode == "robot" else {"hint_level": self.step_hints[j]})
+                self._event("verdict", data)
+                self.step_index = j + 1
+                self.verdict = Verdict.WAITING  # the new step has not been checked yet
+                self._recompute_marks()
+                self._event("step_advance", {"from_step": j, "to_step": j + 1, "first_try": not self._had_trouble(j)})
+        else:
+            self.step_index = k
+            self._recompute_marks()
+            self.verdict = Verdict.WAITING  # checked right after this
+            self._event("step_back", {"from_step": old, "to_step": k,
+                                      "info": f"the block for step {k + 1} is no longer in place"})
+        self.placed_current = False
+        if k == n:
             self.phase = COMPLETE
             self.verdict = Verdict.PASS
+            self.hint_level, self.show_me = 0, None
+            self.expected_cell = self.expected_level = None
             self.hint_text = "All done! You built the whole thing." if self.mode == "human" else "The robot finished the lesson."
-        else:
-            self.marks[self.step_index] = "active"
-        self._event("step_advance", {"from_step": k, "to_step": self.step_index, "first_try": not had_trouble})
-        if done:
             self._finish("complete")
+            return
+        self.hint_level = self.step_hints[k]
+        self.show_me = self._show_me_clip() if self.hint_level >= 3 else None
+        self.fault_cell = None
+        self.expected_cell, self.expected_level = self.lesson.steps[k].cell, self.lesson.steps[k].level
+
+    def _recompute_marks(self) -> None:
+        """Progress marks from the current step: done steps pass (or retry, if they ever had a
+        mistake), the current one is active, the rest pending."""
+        k = self.step_index
+        self.marks = [("retry" if self._had_trouble(i) else "pass") if i < k else "active" if i == k else "pending"
+                      for i in range(len(self.lesson.steps))]
 
     def _finish(self, outcome: str, **data: Any) -> None:
         if self._ended or not self._started:
@@ -306,18 +375,15 @@ class Session:
             if resettle:
                 self._event("note", {"step": self.step_index, "info": "board resettled after robot hover, not a new attempt"})
                 return
-        while True:
-            r = self._check(board)
-            if r.verdict is Verdict.PASS:
-                self._advance()
-                if self.phase != RUNNING:
-                    return
-                continue  # same board against the next step, so its instruction shows right away
-            if is_mistake(r):
-                self.mistakes += 1
-                self.hint_level = min(self.hint_level + 1, self.max_hint_level)
-                self._give_hint(r, board)
+        self._sync_progress(board)
+        if self.phase != RUNNING:
             return
+        r = self._check(board)
+        if is_mistake(r):
+            self.mistakes += 1
+            self.hint_level = min(self.hint_level + 1, self.max_hint_level)
+            self.step_hints[self.step_index] = self.hint_level
+            self._give_hint(r, board)
 
     def _give_hint(self, r: CheckResult, board: Board) -> None:
         if self.hint_level >= 3:
@@ -345,12 +411,16 @@ class Session:
     # ------------------------------------------------------------ robot mode
 
     def _robot_on_board(self, board: Board) -> None:
-        r = self._check(board)
-        if r.verdict is Verdict.PASS:
-            self._advance()
-            if self.phase == RUNNING:
-                self._robot_place_current()
+        before = self.step_index
+        self._sync_progress(board)
+        if self.phase != RUNNING:
             return
+        if self.step_index > before:  # passed: place the next step right away
+            self._robot_place_current()
+            return
+        r = self._check(board)
+        if r.verdict is Verdict.WAITING:
+            return  # an unreadable block: wait for the next board instead of moving the arm
         still_placing = r.verdict is Verdict.MISSING and r.fault_cell is None
         if still_placing and not self.placed_current:
             self._robot_place_current()
@@ -367,6 +437,8 @@ class Session:
             return f"Step {self.step_index + 1} checks out."
         if r.verdict is Verdict.MISSING and r.fault_cell is None:
             return "The camera doesn't see the new cube yet."
+        if r.verdict is Verdict.WAITING and r.fault_cell is not None:
+            return f"The camera can't tell the color of the block on {r.fault_cell}."
         where = f" at {r.fault_cell}" if r.fault_cell else ""
         return f"The camera caught a problem{where}. The robot will fix it."
 

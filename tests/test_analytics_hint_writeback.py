@@ -11,7 +11,7 @@ TARGET = {0: "A1", 1: "A2", 2: "C1"}  # lesson L
 
 def att(session, step, no, verdict, hint, fault=None):
     return Attempt(session=session, mode="human", provenance="real", lesson_id="L", step=step,
-                   step_color="blue", step_cell=TARGET[step], step_level=0, verdict=verdict,
+                   step_color="skyblue", step_cell=TARGET[step], step_level=0, verdict=verdict,
                    fault_cell=fault, fault_level=None if fault is None else 0,
                    expected_cell=TARGET[step], expected_level=0, attempt_no=no,
                    hint_level_before=hint, retry=None, t=0.0, seconds_since_step_start=1.0)
