@@ -2,6 +2,7 @@
 
     GET  /buddy                  the phone app (buddy/static/index.html)
     GET  /api/buddy/state        everything the screen needs; the phone polls it
+    GET  /api/buddy/debug        logs for the debug panel: events, Pip, robot vision, board sync
     POST /api/buddy/profile      {name, avatar}
     POST /api/buddy/settings     {difficulty, build_s, source}
     POST /api/buddy/start        {game}
@@ -69,6 +70,11 @@ def buddy_page():
 @router.get("/api/buddy/state")
 def state():
     return game.state()
+
+
+@router.get("/api/buddy/debug")
+def debug():
+    return game.debug()
 
 
 @router.post("/api/buddy/profile")

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 import traceback
 import urllib.request
 
@@ -60,7 +61,13 @@ def colour_of(object_name: str) -> str:
 
 
 def scan(localizer: SheetLocalizer) -> dict:
-    scene, _, _ = scene_mod.build_scene(frame(), localizer, naming="auto")
+    t0 = time.perf_counter()
+    img = frame()
+    t1 = time.perf_counter()
+    notes: list[str] = []   # what the colour namer says this scan (Gemini asked, Gemini failed, guesses)
+    namer = scene_mod._namer("auto")
+    namer.log = lambda m: (notes.append(m.strip()), print(m, flush=True))
+    scene, _, _ = scene_mod.build_scene(img, localizer, naming="auto")
     if scene is None:
         return {"ok": False, "error": "I can't see the sheet's tags"}
     blocks = []
@@ -69,8 +76,14 @@ def scan(localizer: SheetLocalizer) -> dict:
         cell = mm_to_cell(x, y)
         blocks.append({"cell": cell, "color": colour_of(o["name"]), "center_mm": [x, y],
                        "edge_mm": round(edge_margin_mm(x, y), 1) if cell else None, "score": o["score"]})
-    namer = scene_mod._namers.get("auto")
-    return {"ok": True, "blocks": blocks, "naming": getattr(namer, "last_source", None)}
+    t2 = time.perf_counter()
+    source = getattr(namer, "last_source", None)
+    if source == "model":
+        notes.insert(0, "traditional vision was unsure of a colour, so Gemini was asked")
+    elif source == "prior":
+        notes.insert(0, "traditional vision was unsure of a colour and Gemini did not answer: hue guess used")
+    return {"ok": True, "blocks": blocks, "naming": source, "notes": notes,
+            "ms": {"frame": round((t1 - t0) * 1000), "vision": round((t2 - t1) * 1000)}}
 
 
 def main() -> None:
