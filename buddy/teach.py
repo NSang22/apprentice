@@ -320,6 +320,9 @@ def learn_video(video: Path, repo: Path, title: str, video_s: float,
     # default is every shared color, which the 4-color calibration refuses (exit code 2)
     cmd = [sys.executable, "-u", "-m", "brain.extractor", "--video", str(video.resolve()), "--out", str(out),
            "--title", title, "--colors", ",".join(active_colors()), "--block-mm", os.environ.get("BLOCK_MM", "47")]
+    extractor_src = (repo / "brain" / "extractor.py").read_text(encoding="utf-8", errors="ignore")
+    if "--no-gemini" in extractor_src:  # an older main checkout: never call Gemini (the project uses OpenAI)
+        cmd.append("--no-gemini")
     proc = subprocess.Popen(cmd, cwd=str(repo), env={**os.environ, "PYTHONPATH": str(repo), "PYTHONUNBUFFERED": "1"},
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     lines: "queue.Queue[str]" = queue.Queue()

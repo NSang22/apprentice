@@ -39,7 +39,26 @@ import numpy as np
 
 from perception.cells import cell_center_mm, edge_margin_mm, mm_to_cell
 from robot.executor import cell_center as robot_cell_center
-from robot.perception import naming, openai_vision, scene as scene_mod
+from robot.perception import naming, scene as scene_mod
+
+try:
+    from robot.perception import openai_vision, vision_namer
+except ImportError:
+    # The main checkout predates the OpenAI switch: load this branch's client from next to this file,
+    # and point the robot's colour namer at it, in this helper process only (no Gemini call is made).
+    import importlib.util
+
+    def _load(name: str, path: Path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+        return module
+    _here = Path(__file__).resolve().parent.parent / "robot" / "perception"
+    openai_vision = _load("robot.perception.openai_vision", _here / "openai_vision.py")
+    vision_namer = _load("robot.perception.vision_namer", _here / "vision_namer.py")
+    if hasattr(naming, "gemini_namer"):
+        naming.gemini_namer = vision_namer
 from robot.perception.sheet import SheetLocalizer
 from shared.config import CELLS, COLORS
 
