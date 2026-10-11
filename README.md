@@ -63,7 +63,7 @@ Nothing past the core loop starts until we have **10 clean end-to-end runs**.
 |---|---|
 | Grid | 3x3, 2.25 in cells, printed, **taped down** |
 | Tags | AprilTag 36h11, IDs 0 to 3 at the corners (0 front-left, 1 front-right, 2 back-right, 3 back-left, "front" = operator side) |
-| Cubes | Matte painted wooden cubes, red / blue / yellow / green. **Use 1.25 in cubes only.** Keep the 1 in cubes in the bag (mixing sizes breaks taught poses) |
+| Cubes | Playskool silicone cubes, 2 each of red / orange / yellow / teal / skyblue / purple. Calibrate their colors with `perception.calibrate` (section 8) whenever the lighting changes |
 | Camera | Webcam on a tripod, fixed above the grid. Never move it after calibration. Recalibrate color at the actual demo table |
 | Perception | NVIDIA Jetson |
 | Robot | SO-101 arm, **taught poses, no IK**. Work zone 7 to 14 in |
@@ -108,7 +108,7 @@ These live in `shared/schemas.py` and `shared/config.py`. **Changing them requir
 ```json
 {
   "t": 1728580000.123,
-  "board": { "A1": ["red"], "B2": ["blue", "yellow"], "C3": [] },
+  "board": { "A1": ["red"], "B2": ["skyblue", "yellow"], "C3": [] },
   "arm_clear": true,
   "hands_clear": true,
   "confidence": { "A1": 0.97, "B2": 0.91 },
@@ -117,7 +117,7 @@ These live in `shared/schemas.py` and `shared/config.py`. **Changing them requir
 ```
 
 - `board` always contains all 9 cells. Lists go bottom to top. Empty cell = `[]`.
-- Colors are exactly `"red" | "blue" | "yellow" | "green"`. Anything unreadable becomes `"unknown"`.
+- Colors are exactly `"red" | "orange" | "yellow" | "teal" | "skyblue" | "purple"`. Anything unreadable becomes `"unknown"`.
 - `arm_clear` = the arm is at home and nothing of the arm is over the grid.
 - `hands_clear` = no hand over the grid.
 
@@ -158,11 +158,11 @@ Every call returns `{"ok": true}` or `{"ok": false, "error": "<reason>"}`. Calls
   "mode": "human",
   "lesson_id": "staircase-v1",
   "step_index": 3,
-  "expected_step": { "color": "blue", "cell": "B2", "level": 1 },
+  "expected_step": { "color": "skyblue", "cell": "B2", "level": 1 },
   "verdict": "WRONG_CELL",
   "fault_cell": "B3",
   "hint_level": 2,
-  "hint_text": "Close! Move the blue cube one cell to the left.",
+  "hint_text": "Close! Move the skyblue cube one cell to the left.",
   "show_me": { "video": "videos/expert_staircase.mp4", "start": 11.0, "end": 15.0 },
   "progress": { "human": ["pass", "pass", "retry", "active"], "robot": ["pass", "pass", "pass", "pass"] },
   "board": { "...": [] },
@@ -201,6 +201,8 @@ The last seven fields are optional (older producers omit them; defaults in `shar
 
 **Unknown is never a pass.** Low confidence, hands in frame, the arm away from home, or any `"unknown"` cell means `WAITING`. A false pass in front of a judge costs more than a one-second delay.
 
+An unreadable block does not freeze the lesson: the stabilizer still settles a board in which that cell reads `"unknown"` (a block below `MIN_CONFIDENCE` counts as unknown), and the verdict is `WAITING` with `fault_cell` set and the hint "I can't tell the color of the block on B2. Try nudging it to the center of the square." `EXTRA` means a block the rest of the lesson has no open slot for: "Please take the purple block off B2.", with no `expected_cell` (the UI shows a lift-off marker, never an arrow). A block whose color an open slot still needs is `WRONG_CELL`, with `expected_cell` pointing at that slot.
+
 ---
 
 ## 6. Core logic (brain)
@@ -210,6 +212,7 @@ The last seven fields are optional (older producers omit them; defaults in `shar
 3. **Extractor.** Diff consecutive stable boards. Each added cube becomes a step with its timestamp. A removed cube deletes the step that placed it. This handles expert corrections, which the VLM could not. The same extractor powers expert video, judge teaches mode, and teardown (steps reversed).
 4. **Gate.** Replay the steps on an empty board and confirm the result matches the final stable board from the video. Cross-check Whisper colors against grid colors. Store results in `lesson.gate`. Nothing reaches a student unchecked.
 5. **Session state machine.**
+   - **Progress comes from the board.** On every stable board, `step_index` is the first step whose slot does not hold its color. Taking an earlier block off moves the lesson back to that step (journal `step_back`); putting it back moves it forward again. Mistakes, retries, and hint levels are kept per step.
    - **Human mode:** wait for a stable board, check, advance on `PASS`, otherwise escalate hints: (1) text, (2) pulsing ghost cube on the target cell, (3) "show me" clip from the expert video, (4) robot hovers over the correct cell.
    - **Robot mode:** `place`, then `home`, wait for a stable board, check. On failure: `pick` the faulty cube and re-place. **Max 2 retries, then stop and flag the operator.**
 6. **Journal.** Append one JSON line per event to `data/sessions/<session_id>.jsonl`. Never rewrite a line. The journal is the source of truth for the eval chart, crash recovery, debugging replay, and analytics.
@@ -218,7 +221,7 @@ The last seven fields are optional (older producers omit them; defaults in `shar
 {"t": 1728580001.2, "session": "s-0042", "mode": "robot", "kind": "verdict", "data": {"step": 3, "verdict": "WRONG_CELL", "fault_cell": "B3", "retry": 1}}
 ```
 
-Journal `kind` values: `session_start`, `board`, `verdict`, `step_advance`, `hint`, `robot_cmd`, `robot_result`, `gate`, `note`, `session_end`.
+Journal `kind` values: `session_start`, `board`, `verdict`, `step_advance`, `step_back`, `hint`, `robot_cmd`, `robot_result`, `gate`, `note`, `session_end`.
 
 ---
 
@@ -272,7 +275,7 @@ apprentice/
 
 ## 8. How to run (fill in as modules land)
 
-Run everything from the repo root. The default demo lesson is `lessons/sample-flat-v1.json` (5 cubes, all on the board, red, blue and yellow). Commands that take `--lesson` use it when you leave the flag out.
+Run everything from the repo root. The default demo lesson is `lessons/sample-flat-v1.json` (6 blocks, all on the board, one of each color). Commands that take `--lesson` use it when you leave the flag out.
 
 ```bash
 # Tests (Python 3.11+)
@@ -304,10 +307,22 @@ python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --
 python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --fake-wrong-on 3 --fake-wrong-on 4 --autostart  # hits the retry cap and stops
 
 # Real perception: GridState on ws :8765 from the overhead camera, a video, or still images
-# --debug opens an annotated window and prints area / hue / fill confidence per cube
+# First calibrate the block colors under the demo light (writes perception/calib/colors.json):
+# the window asks for one block at a time ("Put RED on A1, then press SPACE"), one block on the sheet at a time.
+python -m perception.calibrate --camera 1
+# --debug opens a window labeling each block "B2 teal 0.93" (a "?" means the brain will see unknown)
+# and prints area / margin / fill per block. At start-up it prints which tag sits at which corner cell.
 python -m perception.publish --camera 1 --debug
+python -m perception.publish --list-cameras        # which index/backend sees the grid
 python -m perception.publish --video videos/demo.mp4
 python -m perception.publish --images "robot/samples/overhead_*.png" --debug
+
+# Real setup: camera on the Jetson, brain + UI on the laptop (same network)
+#   Jetson:  python -m perception.calibrate --camera <index>           # DISPLAY=:0 if over ssh
+#            python -m perception.publish --camera <index> --host 0.0.0.0 --debug
+#   Laptop:  scp <jetson>:apprentice/perception/calib/colors.json perception/calib/   # UI shows the measured colors
+#            python -m brain.server --mode human --grid ws://<jetson-ip>:8765
+#            python ui/serve.py      # http://localhost:8000, F11, Space starts, R resets
 
 # Monitor UI (ui/): reads SessionState from brain.server on ws :8766, no network needed
 python ui/serve.py      # then open http://localhost:8000 and press F11; keys 2 / 3 switch 2D / 3D board
