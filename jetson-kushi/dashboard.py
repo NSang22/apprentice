@@ -696,6 +696,239 @@ async def brain_cmd(body: BrainCmd):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------- teach (the hub's Make a lesson buttons)
+# One extractor run at a time (brain/extractor.py, run unchanged as a subprocess). The hub never shows
+# its output: the step table, gate and lesson-file lines are parsed here, everything goes to
+# logs/teach.log, and a failure becomes one kind sentence.
+
+TEACH_LOG = REPO_ROOT / "logs" / "teach.log"
+UPLOAD_DIR = REPO_ROOT / "videos" / "uploads"
+TEACH_CALIB = TABLE_REPO / "perception" / "calib"   # the gitignored calibration lives in the main checkout
+TEACH_COLORS = "red,purple,yellow,teal"
+TEACH_BLOCK_MM = "47"
+PERCEPTION_WAIT_S = 15.0
+VIDEO_TYPES = {"video/mp4": "mp4", "video/x-matroska": "mkv", "video/quicktime": "mov", "video/webm": "webm",
+               "video/x-msvideo": "avi"}
+STEP_ROW = re.compile(r"^\s*(\d+)\s+([A-C][1-3])\s+(\d+)\s+(\S+)\s+(\S+)\s+-?[\d.]+\s*$")
+
+# Kind sentences for the hub, by gate check (brain/gate.py CHECK_NAMES) or extractor message.
+TEACH_SAY = {
+    "one_cube_per_change": "Two blocks moved at once. Place one block at a time.",
+    "hands": "Hands were over the grid at the end. Take your hands away when you finish.",
+    "color": "Pip couldn't read a block's color. Try again in good light.",
+    "starts_empty": "Start with an empty board, then place one block at a time.",
+    "has_steps": "Pip didn't see any blocks placed. Try again, one block at a time.",
+    "one_cube_per_color": "Each color can be used once. Try again with one block of each color.",
+    "other": "Pip got mixed up. Let's try again, one block at a time.",
+    "busy": "Pip is already learning a lesson. Finish that one first.",
+    "camera": "Pip can't see the table yet. Check the camera, then try again.",
+    "stop": "Pip couldn't stop watching. Try again.",
+}
+
+
+class TeachJob:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.proc: subprocess.Popen | None = None
+        self.kind = ""            # "live" or "video"
+        self.state = "idle"       # idle | watching | processing | done | failed
+        self.steps: list[dict] = []
+        self.lesson_id: str | None = None
+        self.gate_passed: bool | None = None
+        self.message = ""
+        self.final_board: dict | None = None
+        self.fails: list[tuple[str, str]] = []   # (gate check, reason) from the FAIL lines
+        self.errors: list[str] = []
+        self.no_lesson = False
+        self.lesson_path: str | None = None
+        self._live: tuple[int, dict | None] = (0, None)
+
+    def busy(self) -> bool:
+        return self.state in ("watching", "processing")
+
+    def log(self, line: str) -> None:
+        try:
+            TEACH_LOG.parent.mkdir(parents=True, exist_ok=True)
+            with open(TEACH_LOG, "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n")
+        except OSError:
+            pass
+
+    def run(self, kind: str, args: list[str]) -> None:
+        """Start the extractor; the caller holds the lock and has checked busy()."""
+        self.kind, self.state = kind, "watching" if kind == "live" else "processing"
+        self.steps, self.lesson_id, self.gate_passed, self.message, self.final_board = [], None, None, "", None
+        self.fails, self.errors, self.no_lesson, self.lesson_path, self._live = [], [], False, None, (0, None)
+        cmd = [state.python_exe or sys.executable, "-u", "-m", "brain.extractor", *args]
+        self.log("starting: python -m brain.extractor " + " ".join(args))
+        self.proc = subprocess.Popen(cmd, cwd=str(REPO_ROOT), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=os.name == "posix",
+                                     env={**os.environ, "PYTHONUNBUFFERED": "1"})
+        threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
+
+    def _read(self, proc: subprocess.Popen) -> None:
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            self.log(line)
+            self._parse(line)
+        code = proc.wait()
+        self.log(f"exited with code {code}")
+        self._finish(code)
+
+    def _parse(self, line: str) -> None:
+        m = STEP_ROW.match(line)
+        if m:
+            self.steps.append({"cell": m.group(2), "level": int(m.group(3)), "color": m.group(4)})
+        elif line.startswith("gate: "):
+            self.gate_passed = line.strip() == "gate: PASSED"
+        elif line.strip().startswith("FAIL "):
+            name, _, reason = line.strip()[5:].strip().partition(":")
+            self.fails.append((name.strip(), reason.strip()))
+        elif line.startswith("lesson file:"):
+            self.lesson_path = line.split(":", 1)[1].strip()
+        elif "NO LESSON WRITTEN" in line:
+            self.no_lesson = True
+        elif line.startswith("[extract] ") and not line.startswith(("[extract] run time", "[extract] recording",
+                                                                      "[extract] take ended", "[extract] feed closed",
+                                                                      "[extract] t_video", "[extract] gemini")):
+            self.errors.append(line)
+        elif line.startswith("Traceback"):
+            self.errors.append(line)
+
+    def _finish(self, code: int) -> None:
+        if self.lesson_path:
+            try:
+                lesson = json.loads((REPO_ROOT / self.lesson_path).read_text(encoding="utf-8"))
+                self.lesson_id = lesson.get("lesson_id")
+                board: dict[str, list[str]] = {}
+                for step in lesson.get("steps", []):
+                    board.setdefault(step["cell"], []).append(step["color"])
+                self.final_board = board
+            except (OSError, ValueError, KeyError, TypeError) as e:
+                self.log(f"could not read the lesson file: {e}")
+        ok = code == 0 and self.lesson_id is not None and self.gate_passed
+        if ok:
+            self.state, self.message = "done", ""
+        else:
+            self.state = "done" if self.lesson_id else "failed"
+            self.message = self._kind_message()
+        self.proc = None
+
+    def _kind_message(self) -> str:
+        if self.no_lesson:
+            return TEACH_SAY["color"]
+        failed = {name: reason for name, reason in self.fails}
+        for name in ("one_cube_per_change", "starts_empty", "has_steps", "one_cube_per_color"):
+            if name in failed:
+                return TEACH_SAY[name]
+        if any("read" in reason and "color" in reason for reason in failed.values()):
+            return TEACH_SAY["color"]
+        if "replay_matches_final_frame" in failed or any("usable" in e or "hand" in e for e in self.errors):
+            return TEACH_SAY["hands"]
+        return TEACH_SAY["other"]
+
+    def live_view(self) -> tuple[int, dict | None]:
+        """While watching, the extractor prints nothing, so the live count and board come from the
+        dashboard's own perception tap: the cubes on the last frame with hands and arm clear."""
+        last = TAPS["grid"].last
+        if not isinstance(last, dict) or not isinstance(last.get("board"), dict):
+            return 0, None
+        board = last["board"]
+        if last.get("hands_clear") and last.get("arm_clear"):
+            self._live = (sum(len(v) for v in board.values() if isinstance(v, list)), board)
+        return self._live
+
+    def status(self) -> dict:
+        steps_seen, board = len(self.steps), self.final_board
+        if self.state == "watching":
+            steps_seen, board = self.live_view()
+        return {"state": self.state, "kind": self.kind, "steps_seen": steps_seen, "lesson_id": self.lesson_id,
+                "gate_passed": self.gate_passed, "message": self.message, "board": board}
+
+
+teach = TeachJob()
+
+
+class TeachLiveBody(BaseModel):
+    title: str = "My lesson"
+
+
+def teach_title(title: str | None) -> str:
+    return (title or "").strip()[:60] or "My lesson"
+
+
+@app.post("/api/teach/live/start")
+def teach_live_start(body: TeachLiveBody):
+    with teach.lock:
+        if teach.busy():
+            return JSONResponse({"ok": False, "message": TEACH_SAY["busy"]}, status_code=409)
+        if not port_open(GRID_WS_PORT):
+            try:
+                SERVICES["perception"].start({})   # exposure from the env, as the dashboard's own Start does by default
+            except Exception as e:
+                teach.log(f"perception would not start: {e}")
+                return JSONResponse({"ok": False, "message": TEACH_SAY["camera"]}, status_code=409)
+            deadline = time.time() + PERCEPTION_WAIT_S
+            while time.time() < deadline and not port_open(GRID_WS_PORT):
+                time.sleep(0.3)
+            if not port_open(GRID_WS_PORT):
+                teach.log(f"perception not up on :{GRID_WS_PORT} after {PERCEPTION_WAIT_S:g} s")
+                return JSONResponse({"ok": False, "message": TEACH_SAY["camera"]}, status_code=409)
+        teach.run("live", ["--grid", f"ws://localhost:{GRID_WS_PORT}", "--title", teach_title(body.title)])
+    return {"ok": True}
+
+
+@app.post("/api/teach/live/stop")
+def teach_live_stop():
+    proc = teach.proc
+    if teach.state != "watching" or proc is None:
+        return {"ok": True}
+    teach.state = "processing"
+    try:
+        # SIGINT ends the take; the extractor then writes the lesson (KeyboardInterrupt in ws_frames).
+        proc.send_signal(signal.SIGINT)
+    except (ValueError, OSError) as e:
+        teach.log(f"could not send SIGINT: {e}")
+        teach.state, teach.message = "watching", TEACH_SAY["stop"]
+        return JSONResponse({"ok": False, "message": TEACH_SAY["stop"]}, status_code=500)
+    return {"ok": True}
+
+
+@app.post("/api/teach/video")
+async def teach_video(request: Request, title: str = "My lesson", ext: str = ""):
+    if teach.busy():
+        return JSONResponse({"ok": False, "message": TEACH_SAY["busy"]}, status_code=409)
+    ext = re.sub(r"[^a-z0-9]", "", ext.lower())[:5] or VIDEO_TYPES.get(request.headers.get("content-type", ""), "mp4")
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    path = UPLOAD_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}.{ext}"
+    size = 0
+    try:
+        with open(path, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+                size += len(chunk)
+    except Exception as e:
+        teach.log(f"upload failed: {type(e).__name__}: {e}")
+        return JSONResponse({"ok": False, "message": "The upload stopped. Try again."}, status_code=400)
+    if not size:
+        path.unlink(missing_ok=True)
+        return JSONResponse({"ok": False, "message": "That file was empty. Pick a recording from the table camera."},
+                            status_code=400)
+    teach.log(f"upload saved: {path.relative_to(REPO_ROOT)} ({size} bytes)")
+    with teach.lock:
+        if teach.busy():
+            return JSONResponse({"ok": False, "message": TEACH_SAY["busy"]}, status_code=409)
+        # --video runs perception on the file inside the extractor, so the camera stays where it is.
+        teach.run("video", ["--video", str(path.relative_to(REPO_ROOT)), "--calib", str(TEACH_CALIB),
+                            "--colors", TEACH_COLORS, "--block-mm", TEACH_BLOCK_MM, "--title", teach_title(title)])
+    return {"ok": True}
+
+
+@app.get("/api/teach/status")
+def teach_status():
+    return JSONResponse(teach.status(), headers={"Cache-Control": "no-store"})
+
+
 # ---------------------------------------------------------------- health
 
 def run_cmd(*cmd: str, timeout: float = 3.0) -> str:

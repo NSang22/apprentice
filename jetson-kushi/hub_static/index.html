@@ -85,11 +85,34 @@
   /* TEACH: blue cards. */
   .teach { background: var(--blue-l); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
   .teach .sub { margin: 0; color: #4a7b94; }
-  .cmd { display: none; flex-direction: column; gap: 10px; }
-  .cmd.open { display: flex; }
-  code { display: block; background: #fff; border: 2px solid var(--line); border-radius: 16px; padding: 10px 12px;
-         font: 600 14px/1.5 Consolas, "Courier New", monospace; color: var(--ink); white-space: pre-wrap; word-break: break-all;
-         user-select: all; }
+  .teach h3 { color: #1f6f94; }
+  .field { font: inherit; font-size: 17px; font-weight: 700; color: var(--ink); width: 100%; min-height: 52px; padding: 12px 14px;
+           background: #fff; border: 2px solid var(--line); border-radius: 16px; outline: none; }
+  .field:focus { border-color: var(--blue); }
+  label.btn { cursor: pointer; }
+  label.btn input { display: none; }
+  label.btn.off { background: var(--line); color: #afafaf; box-shadow: 0 4px 0 #d0d0d0; pointer-events: none; }
+  .btn.orange { background: var(--orange); box-shadow: 0 4px 0 var(--orange-d); }
+
+  /* The running teach job: watching, uploading, processing, then a result card. */
+  .job { margin-top: 16px; border-radius: 22px; padding: 18px; border: 2px solid var(--d); box-shadow: 0 4px 0 var(--d); background: var(--l); }
+  .job.blue { --l: var(--blue-l); --d: var(--blue-d); }
+  .job.green { --l: var(--green-l); --d: var(--green-d); }
+  .job.orange { --l: var(--orange-l); --d: var(--orange-d); }
+  .job-main { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .job .pip-wrap { margin: 0; flex: 1; min-width: 260px; align-items: center; }
+  .job .pip { width: 72px; height: 80px; }
+  .job .bubble { margin: 0; }
+  .job .bubble::before { bottom: auto; top: calc(50% - 9px); }
+  .job .count { text-align: center; min-width: 96px; }
+  .job .count b { display: block; font-size: 30px; font-weight: 900; line-height: 1; }
+  .job .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+  .job .actions .btn + .btn { margin-top: 0; }
+  .mini.big { grid-template-columns: repeat(3, 30px); gap: 6px; padding: 8px; background: #fff; }
+  .mini.big i { width: 30px; height: 30px; border-radius: 8px; background: var(--soft); box-shadow: 0 3px 0 var(--line); }
+  .bar { height: 16px; background: #fff; border-radius: 99px; overflow: hidden; margin-top: 14px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--green); border-radius: 99px; transition: width .2s; }
+  @media (max-width: 560px) { .job .actions { grid-template-columns: 1fr; } }
 
   /* LEARN: learner tiles. Teal is block-like (6 px ledge, radius 13). */
   .tile { border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 6px; min-height: 140px; color: var(--ink);
@@ -279,22 +302,17 @@
         <p class="sub">Opens Buddy. Pick Teach the Robot.</p>
       </div>
       <div class="teach">
-        <button class="btn blue" data-panel="p-table">Build it on the table</button>
-        <div class="cmd" id="p-table">
-          <p class="sub">Start Perception, then build the lesson one cube at a time:</p>
-          <code>python -m brain.extractor --grid ws://localhost:8765 --title "My lesson"</code>
-          <button class="btn ghost copy">Copy</button>
-        </div>
+        <h3>Build it on the table</h3>
+        <input class="field" id="teach-title" value="My lesson" maxlength="60" aria-label="Lesson name">
+        <button class="btn" id="teach-start">Start teaching</button>
       </div>
       <div class="teach">
-        <button class="btn blue" data-panel="p-video">From a video</button>
-        <div class="cmd" id="p-video">
-          <p class="sub">Point it at an overhead video of someone building:</p>
-          <code>python -m brain.extractor --video &lt;file&gt; --calib perception/calib --colors red,purple,yellow,teal --block-mm 47</code>
-          <button class="btn ghost copy">Copy</button>
-        </div>
+        <h3>Upload a table recording</h3>
+        <label class="btn blue" id="teach-pick">Choose a recording<input type="file" id="teach-file" accept="video/*"></label>
+        <p class="sub">Use a recording from the table camera.</p>
       </div>
     </div>
+    <div id="teach-job"></div>
   </section>
 
   <section class="section">
@@ -370,37 +388,6 @@ const SWITCH_WAIT_MS = 2500;   // load and mode send no reply on success, only {
 const CELLS = ["A1", "A2", "A3", "B1", "B2", "B3", "C1", "C2", "C3"];
 const BLOCK_COLORS = ["red", "orange", "yellow", "teal", "skyblue", "purple"];
 
-for (const b of document.querySelectorAll("[data-panel]")) {
-  b.addEventListener("click", () => document.getElementById(b.dataset.panel).classList.toggle("open"));
-}
-
-// navigator.clipboard needs https or localhost; the Jetson serves plain http on the LAN.
-for (const b of document.querySelectorAll(".copy")) {
-  b.addEventListener("click", () => {
-    const text = b.parentElement.querySelector("code").textContent;
-    const done = () => { b.textContent = "Copied"; setTimeout(() => (b.textContent = "Copy"), 1500); };
-    if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text) && done());
-    } else if (fallbackCopy(text)) {
-      done();
-    } else {
-      b.textContent = "Select the text to copy";
-    }
-  });
-}
-function fallbackCopy(text) {
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.style.position = "fixed";
-  ta.style.opacity = "0";
-  document.body.appendChild(ta);
-  ta.select();
-  let ok = false;
-  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
-  ta.remove();
-  return ok;
-}
-
 const statusEl = document.getElementById("lib-status");
 const listEl = document.getElementById("lesson-list");
 let busy = false;
@@ -427,24 +414,27 @@ function loadLessons() {
   ws.onclose = () => { if (!answered) showOffline(); };
 }
 
-// A 3x3 board of the top cube in each cell, when the list reply carries the final board; else the step count.
-function preview(l) {
-  if (l.final_board && typeof l.final_board === "object") {
-    const mini = document.createElement("div");
-    mini.className = "mini";
-    mini.setAttribute("aria-hidden", "true");
-    for (const cell of CELLS) {
-      const tile = document.createElement("i");
-      const stack = l.final_board[cell] || [];
-      const top = stack[stack.length - 1];
-      if (BLOCK_COLORS.includes(top)) {
-        tile.style.background = `var(--c-${top})`;
-        tile.style.boxShadow = `0 2px 0 var(--c-${top}-d)`;
-      }
-      mini.appendChild(tile);
+// A 3x3 board of the top cube in each cell, as printed: A1 top left.
+function miniBoard(board, big) {
+  const mini = document.createElement("div");
+  mini.className = big ? "mini big" : "mini";
+  mini.setAttribute("aria-hidden", "true");
+  for (const cell of CELLS) {
+    const tile = document.createElement("i");
+    const stack = (board && board[cell]) || [];
+    const top = stack[stack.length - 1];
+    if (BLOCK_COLORS.includes(top)) {
+      tile.style.background = `var(--c-${top})`;
+      tile.style.boxShadow = `0 ${big ? 3 : 2}px 0 var(--c-${top}-d)`;
     }
-    return mini;
+    mini.appendChild(tile);
   }
+  return mini;
+}
+
+// The lesson's final board when the list reply carries it; else the step count.
+function preview(l) {
+  if (l.final_board && typeof l.final_board === "object") return miniBoard(l.final_board, false);
   const box = document.createElement("div");
   box.className = "steps";
   box.innerHTML = `<b>${Number(l.steps) || 0}</b><span>step${l.steps === 1 ? "" : "s"}</span>`;
@@ -537,6 +527,174 @@ function openLesson(lessonId, mode, card, errEl) {
 }
 
 loadLessons();
+
+// ---------------------------------------------------------------- Teach (the Jetson runs the extractor)
+// /api/teach/* in jetson-kushi/dashboard.py. One job at a time; the page never shows commands or output.
+const TEACH_POLL_MS = 500;
+const TEACH_OFFLINE = "Pip can't reach the Jetson right now. Try again.";
+const jobEl = document.getElementById("teach-job");
+const titleEl = document.getElementById("teach-title");
+const startBtn = document.getElementById("teach-start");
+const pickEl = document.getElementById("teach-pick");
+const fileEl = document.getElementById("teach-file");
+const heroPip = document.querySelector("#hub .pip");
+let teachTimer = 0;
+let teachMine = false;   // show a result only for a job this page started or saw running
+
+function node(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function pipSays(text) {
+  const wrap = node("div", "pip-wrap");
+  const pip = heroPip.cloneNode(true);
+  pip.dataset.mood = "happy";
+  wrap.append(pip, node("div", "bubble", text));
+  return wrap;
+}
+
+function teachLocked(on) {
+  startBtn.disabled = on;
+  pickEl.classList.toggle("off", on);
+  fileEl.disabled = on;
+}
+
+function jobCard(color) {
+  jobEl.innerHTML = "";
+  delete jobEl.dataset.state;
+  const card = node("div", "job " + color);
+  jobEl.append(card);
+  return card;
+}
+
+function showTryAgain(message) {
+  const card = jobCard("orange");
+  card.append(pipSays(message || "Pip got mixed up. Let's try again, one block at a time."));
+  const again = node("button", "btn orange", "Try again");
+  again.style.marginTop = "16px";
+  again.onclick = () => { jobEl.innerHTML = ""; teachLocked(false); };
+  card.append(again);
+  teachLocked(false);
+}
+
+function renderTeach(st) {
+  const same = jobEl.dataset.state === st.state && jobEl.firstChild;
+  if (same && st.state === "processing") return;
+  const watchSay = st.message || "I'm watching! Place one block at a time.";
+  if (same && st.state === "watching") {   // update in place, so Pip keeps bobbing
+    jobEl.querySelector(".bubble").textContent = watchSay;
+    jobEl.querySelector(".count b").textContent = String(st.steps_seen || 0);
+    jobEl.querySelector(".count .label").textContent = st.steps_seen === 1 ? "step seen" : "steps seen";
+    jobEl.querySelector(".mini").replaceWith(miniBoard(st.board, true));
+    return;
+  }
+  if (st.state === "watching") {
+    const card = jobCard("blue");
+    const main = node("div", "job-main");
+    const count = node("div", "count");
+    count.append(node("b", null, String(st.steps_seen || 0)), node("span", "label", st.steps_seen === 1 ? "step seen" : "steps seen"));
+    main.append(pipSays(watchSay), count, miniBoard(st.board, true));
+    const done = node("button", "btn blue", "I'm done");
+    done.style.marginTop = "16px";
+    // A stop that fails leaves the take running: keep watching, and Pip says why (st.message).
+    done.onclick = async () => {
+      done.disabled = true;
+      clearTimeout(teachTimer);
+      try { await fetch("/api/teach/live/stop", { method: "POST" }); } catch (e) { /* the poll shows the state */ }
+      pollTeach();
+    };
+    card.append(main, done);
+  } else if (st.state === "processing") {
+    const card = jobCard("blue");
+    card.append(pipSays(st.kind === "video" ? "Pip is watching your video..." : "Pip is learning your lesson..."));
+  } else if (st.state === "done" && st.gate_passed && st.lesson_id) {
+    const card = jobCard("green");
+    const main = node("div", "job-main");
+    const n = st.steps_seen;
+    main.append(pipSays(`Pip learned ${n} step${n === 1 ? "" : "s"}!`), miniBoard(st.board, true));
+    const err = node("p", "err");
+    const actions = node("div", "actions");
+    const practice = node("button", "btn", "Practice it");
+    const robot = node("button", "btn", "Robot builds it");
+    practice.onclick = () => openLesson(st.lesson_id, "human", card, err);
+    robot.onclick = () => openLesson(st.lesson_id, "robot", card, err);
+    actions.append(practice, robot);
+    card.append(main, actions, err);
+    teachLocked(false);
+    loadLessons();
+  } else if (st.state === "done" || st.state === "failed") {
+    showTryAgain(st.message);
+  }
+  jobEl.dataset.state = st.state;
+}
+
+async function teachPost(url, body) {
+  try {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data.ok === false) {
+      showTryAgain(data.message || TEACH_OFFLINE);
+      return { ok: false };
+    }
+    return { ok: true };
+  } catch (e) {
+    showTryAgain(TEACH_OFFLINE);
+    return { ok: false };
+  }
+}
+
+async function pollTeach() {
+  clearTimeout(teachTimer);
+  let st;
+  try {
+    st = await (await fetch("/api/teach/status", { cache: "no-store" })).json();
+  } catch (e) {
+    if (teachMine) teachTimer = setTimeout(pollTeach, TEACH_POLL_MS * 4);
+    return;
+  }
+  const running = st.state === "watching" || st.state === "processing";
+  if (running) { teachMine = true; teachLocked(true); }
+  if (teachMine) renderTeach(st);
+  if (running) teachTimer = setTimeout(pollTeach, TEACH_POLL_MS);
+}
+
+startBtn.onclick = async () => {
+  teachLocked(true);
+  jobCard("blue").append(pipSays("Getting the camera ready..."));
+  if ((await teachPost("/api/teach/live/start", { title: titleEl.value })).ok) { teachMine = true; pollTeach(); }
+};
+
+// The raw file is the request body (no multipart). XMLHttpRequest, not fetch, so the bar can show upload progress.
+fileEl.onchange = () => {
+  const file = fileEl.files[0];
+  fileEl.value = "";
+  if (!file) return;
+  teachLocked(true);
+  const card = jobCard("blue");
+  card.append(pipSays("Sending your video to Pip..."));
+  const bar = node("div", "bar");
+  const fill = node("i");
+  bar.append(fill);
+  card.append(bar);
+  const ext = file.name.includes(".") ? file.name.split(".").pop().toLowerCase() : "";
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", `/api/teach/video?title=${encodeURIComponent(titleEl.value)}&ext=${encodeURIComponent(ext)}`);
+  xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+  xhr.upload.onprogress = (e) => { if (e.lengthComputable) fill.style.width = `${Math.round((100 * e.loaded) / e.total)}%`; };
+  xhr.onload = () => {
+    let data = {};
+    try { data = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
+    if (xhr.status >= 200 && xhr.status < 300 && data.ok !== false) { teachMine = true; pollTeach(); }
+    else showTryAgain(data.message || "The upload stopped. Try again.");
+  };
+  xhr.onerror = () => showTryAgain("The upload stopped. Try again.");
+  xhr.send(file);
+};
+
+pollTeach();
 
 // ---------------------------------------------------------------- Track view (#track)
 // Reads /api/metrics (data/analytics/metrics.json, schema in analytics/METRICS_SCHEMA.md) and shows
@@ -953,7 +1111,7 @@ async function openTrack() {
   }
   if (tvEl.hidden) return;   // closed while loading
   if (metrics.missing || !metrics.by_provenance || !metrics.by_provenance.real) {
-    tvBody.append(el("span", "pill", "Run python -m analytics.report to see progress"));
+    tvBody.append(el("span", "pill", "No progress report yet. Make one on the Jetson to see it."));
     tvBody.firstChild.style.marginTop = "24px";
     say("No bricks yet. Run the report and I will build the wall!");
     return;
