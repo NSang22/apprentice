@@ -540,7 +540,16 @@ function renderGame() {
   let [prompt, sub] = PROMPTS[ph] || ["", ""];
   if (ph === "show") sub = `Round ${S.round} of ${S.rounds} · ${S.pattern_size} block${S.pattern_size > 1 ? "s" : ""}`;
   if (ph === "build") { prompt = S.attempt === 2 ? "Fix it!" : "Build it!"; sub = practice ? "Pick a color, then tap a square" : "Build it on the table"; }
-  if (ph === "helping") sub = S.pip.step === "hands" ? "Hands away from the board, please!" : S.helped === "hint" ? "Look at the glowing square" : "Taking off the wrong blocks";
+  if (ph === "helping") {
+    // the 20 s fix timer starts only after Pip is back home, so say what the arm is doing meanwhile
+    const step = S.pip.arm ? S.pip.step : "";
+    sub = step === "hands" ? "Hands away from the board, please!"
+        : step === "moving" || step === "start" ? "Pip is moving to the square..."
+        : step === "pointing" ? "Look where Pip is pointing!"
+        : step === "removing" ? "Pip is taking off a block..."
+        : step === "homing" ? "Pip is going back. Get ready!"
+        : S.helped === "hint" ? "Look at the glowing square" : "Taking off the wrong blocks";
+  }
   if (ph === "result") prompt = S.grade && S.grade.perfect ? "You did it!" : "Here's the answer";
   $("g-prompt").textContent = prompt; $("g-sub").textContent = sub;
   $("hands").style.display = ph === "scan" ? "block" : "none";

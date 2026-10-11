@@ -151,12 +151,14 @@ class Pip:
             if not self._wait_hands(should_stop):
                 self.error = "hands"
                 return
-            self.step = "pointing"
+            self.step = "moving"                    # hover blocks until the jaws are over the square
             reply = self.client.hover(to_robot_cell(cell))
             if not reply.get("ok"):
                 self.error = reply.get("error", "hover failed")
                 return
+            self.step = "pointing"                  # arrived: hold so the child sees it, then home
             time.sleep(HOVER_HOLD_S)
+            self.step = "homing"
         self._run(job)
 
     def remove(self, cells: list[str], should_stop: Callable[[], bool] = lambda: False) -> None:
@@ -165,9 +167,10 @@ class Pip:
                 if not self._wait_hands(should_stop):
                     self.error, self.left_over = "hands", cells[i:]
                     return
-                self.step = f"removing {cell}"
+                self.step = "removing"
                 reply = self.client.pick(to_robot_cell(cell), 0)
                 if not reply.get("ok"):
                     self.error, self.left_over = reply.get("error", "pick failed"), cells[i:]
                     return
+            self.step = "homing"
         self._run(job)
