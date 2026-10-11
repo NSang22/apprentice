@@ -8,8 +8,9 @@ Later, "Build it, Pip!" rebuilds it step by step with the arm (buddy/teach_sessi
 
 What is recorded on the table:
   frames   every GridState perception sent while recording (what the extractor reads)
-  video    the camera's frames from perception's frame server, VIDEO_FPS, saved as an mp4 so the
-           lesson has a real source video (data/buddy/videos/<lesson id>.mp4)
+  video    the camera's frames from perception's frame server, VIDEO_FPS, saved as WebM (VP8: the
+           Jetson's OpenCV cannot write H.264, and phones play WebM) so the lesson has a real source
+           video the child can watch back (data/buddy/videos/<lesson id>.webm)
   colors   one look by the robot's own eyes at the end: the top block of each cell, so the colors
            Pip rebuilds with are the colors Pip sees (a "manual" color source for the extractor)
 
@@ -34,6 +35,7 @@ MAX_HIGH = 2               # blocks per stack in this game
 BANK_SIZE = 2              # blocks the robot's bank beside the sheet holds at a time
 VIDEO_FPS = 8.0
 VIDEO_WIDTH = 960
+VIDEO_EXT, VIDEO_FOURCC = ".webm", "VP80"
 FRAME_URL = "http://127.0.0.1:8771/frame"
 LESSONS_DIR = REPO_ROOT / "data" / "buddy" / "lessons"
 VIDEOS_DIR = REPO_ROOT / "data" / "buddy" / "videos"
@@ -72,7 +74,7 @@ def kid_problem(reasons: dict[str, str]) -> str:
 
 
 class VideoRecorder:
-    """Saves the camera's frames (perception's frame server, which owns the webcam) as an mp4."""
+    """Saves the camera's frames (perception's frame server, which owns the webcam) as a WebM video."""
 
     def __init__(self, path: Path, url: str = FRAME_URL, fps: float = VIDEO_FPS, width: int = VIDEO_WIDTH):
         self.path, self.url, self.fps, self.width = path, url, fps, width
@@ -98,7 +100,7 @@ class VideoRecorder:
                 size = (self.width, int(h * self.width / w))
                 if writer is None:
                     self.path.parent.mkdir(parents=True, exist_ok=True)
-                    writer = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*"mp4v"), self.fps, size)
+                    writer = cv2.VideoWriter(str(self.path), cv2.VideoWriter_fourcc(*VIDEO_FOURCC), self.fps, size)
                 writer.write(cv2.resize(frame, size, interpolation=cv2.INTER_AREA))
                 self.frames += 1
                 self._stop.wait(max(0.0, 1.0 / self.fps - (time.monotonic() - started)))
@@ -237,11 +239,22 @@ def saved_lessons() -> list[dict]:
         try:
             d = json.loads(path.read_text(encoding="utf-8"))
             out.append({"id": d["lesson_id"], "title": d["title"], "steps": len(d["steps"]),
+                        "video": video_url(d["lesson_id"]),
                         "colors": [s["color"] for s in d["steps"]], "taught_by": d.get("taught_by", ""),
                         "created": d.get("created", "")})
         except (OSError, ValueError, KeyError):
             continue
     return out
+
+
+def video_file(name: str) -> Optional[Path]:
+    """The recording for a lesson id (or an unsaved recording's session id), if there is one."""
+    path = VIDEOS_DIR / f"{Path(name).name}{VIDEO_EXT}"
+    return path if path.is_file() and path.stat().st_size > 0 else None
+
+
+def video_url(name: str) -> Optional[str]:
+    return f"/buddy/video/{name}" if video_file(name) else None
 
 
 def load(lesson_id: str) -> Lesson:

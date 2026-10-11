@@ -99,7 +99,7 @@ class TeachSession:
                     if self.source == "table" else "I'm watching! Pick a color and tap squares to build. Towers can be 2 high.")
         if self.source == "table":
             self.table.record_start()
-            self.recorder = teach.VideoRecorder(teach.VIDEOS_DIR / f"{self.session_id}.mp4")
+            self.recorder = teach.VideoRecorder(teach.VIDEOS_DIR / f"{self.session_id}{teach.VIDEO_EXT}")
             self.recorder.start()
 
     def tap(self, cell: str, color: str) -> None:
@@ -187,7 +187,7 @@ class TeachSession:
             name = "".join(ch for ch in name.strip() if ch.isalnum() or ch in " -'")[:24] or "My lesson"
             self.lesson.lesson_id, self.lesson.title = teach.new_id(name), name
             if self.video_path and self.video_path.exists():  # the video takes the lesson's name too
-                target = self.video_path.with_name(f"{self.lesson.lesson_id}.mp4")
+                target = self.video_path.with_name(f"{self.lesson.lesson_id}{teach.VIDEO_EXT}")
                 self.video_path.rename(target)
                 self.video_path = target
                 self.lesson.source_video = str(target.relative_to(teach.REPO_ROOT)).replace("\\", "/")
@@ -370,6 +370,8 @@ class TeachSession:
                 "scan_stuck": self.scan_stuck,
                 "pip": {"busy": self.pip.busy, "step": self.pip.step, "arm": self.arm_used},
                 "lessons": teach.saved_lessons() if self.phase == "home" else [],
+                # what Pip watched: the unsaved recording while reviewing, the lesson's once saved
+                "video": teach.video_url(self.video_path.stem) if self.video_path else None,
                 "mood": self.mood,
                 "say": self.say,
             }

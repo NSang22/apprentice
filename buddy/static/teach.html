@@ -164,6 +164,13 @@
   .bankcard { width: 100%; border: 2px dashed var(--orange); background: var(--orange-l); border-radius: 18px; padding: 12px; text-align: center; }
   .bankcard b { display: block; color: var(--orange-d); text-transform: uppercase; letter-spacing: .06em; font-size: 13px; margin-bottom: 8px; }
   .bankcard .sws { display: flex; gap: 12px; justify-content: center; } .bankcard .sw { width: 46px; height: 46px; border-radius: 12px; }
+  .vid { width: 100%; border-radius: 16px; background: #000; display: block; aspect-ratio: 16/9; }
+  .vid-cap { font-size: 13px; color: var(--dim); font-weight: 800; text-transform: uppercase; letter-spacing: .06em; margin: 8px 0 4px; width: 100%; }
+  .lesson button.watch { background: var(--blue); box-shadow: 0 3px 0 var(--blue-d); margin-right: 6px; }
+  .player { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 9; display: none; flex-direction: column; justify-content: center; padding: 16px; }
+  .player.on { display: flex; }
+  .player .inner { max-width: 640px; width: 100%; margin: 0 auto; }
+  .player b { color: #fff; display: block; font-size: 18px; margin-bottom: 10px; }
   h2 { font-size: 20px; font-weight: 900; margin: 16px 0 4px; width: 100%; }
 </style>
 </head>
@@ -214,6 +221,7 @@
     <div style="display:flex;justify-content:center;margin-top:6px"><svg class="pip" id="rv-pip" data-mood="cheer" style="width:110px;height:120px"><use href="#pip"/></svg></div>
     <h1 id="rv-title">I learned it!</h1>
     <p class="lead" id="rv-say"></p>
+    <div id="rv-video" style="width:100%;display:none"><div class="vid-cap">What Pip watched</div><video class="vid" id="rv-vid" controls playsinline muted></video></div>
     <ul class="steps" id="rv-steps"></ul>
     <div id="rv-name-box" style="width:100%"><input class="name-input" id="rv-name" maxlength="24" placeholder="Name your lesson" autocomplete="off"></div>
     <div style="flex:1"></div>
@@ -221,6 +229,8 @@
   </section>
 </div>
 
+<div class="player" id="player"><div class="inner"><b id="player-title"></b><video class="vid" id="player-vid" controls playsinline autoplay muted></video>
+  <button class="btn" id="player-close" style="margin-top:14px">Close</button></div></div>
 <div class="toast" id="toast"></div>
 <canvas id="confetti"></canvas>
 <svg width="0" height="0" style="position:absolute"><defs>
@@ -359,6 +369,9 @@ function renderReview() {
   $("rv-steps").innerHTML = ph === "problem" ? "" : S.steps.map((s, k) =>
     `<li><span class="num">${k + 1}</span>${sw(s.color)}<span>${s.color} on <b>${s.cell}</b>${s.level ? " (on top)" : ""}</span></li>`).join("");
   $("rv-name-box").style.display = ph === "review" ? "block" : "none";
+  const v = ph !== "problem" && S.video;
+  $("rv-video").style.display = v ? "block" : "none";
+  if (v && $("rv-vid").dataset.src !== S.video) { $("rv-vid").dataset.src = S.video; $("rv-vid").src = S.video; }
   const key = ph;
   if ($("rv-footer").dataset.k === key) return;
   $("rv-footer").dataset.k = key;
@@ -381,7 +394,7 @@ function renderIntro() {
   if ($("source").dataset.k !== seg) { $("source").dataset.k = seg; $("source").innerHTML = seg; }
   $("mine-h").style.display = S.lessons.length ? "block" : "none";
   const html = S.lessons.map((l) => `<div class="lesson"><div class="t"><b>${l.title}</b><small>${l.steps} steps${l.taught_by ? " · by " + l.taught_by : ""}</small>
-      <div class="dots">${l.colors.map((c) => `<i style="--c:var(--c-${c})"></i>`).join("")}</div></div><button data-build="${l.id}">Build it</button></div>`).join("");
+      <div class="dots">${l.colors.map((c) => `<i style="--c:var(--c-${c})"></i>`).join("")}</div></div>${l.video ? `<button class="watch" data-watch="${l.video}" data-title="${l.title}">Watch</button>` : ""}<button data-build="${l.id}">Build it</button></div>`).join("");
   if ($("lessons").dataset.k !== html) { $("lessons").dataset.k = html; $("lessons").innerHTML = html; }
 }
 
@@ -426,13 +439,15 @@ function confetti(n) {
 }
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-cell],[data-color],[data-source],[data-build]");
+  const t = e.target.closest("[data-cell],[data-color],[data-source],[data-build],[data-watch]");
   if (!t) return;
   if (t.dataset.cell && S.phase === "recording" && S.source === "practice") { sfx.tap(); act("/api/buddy/teach/tap", { cell: t.dataset.cell, color: chosen }); }
   else if (t.dataset.color) { chosen = t.dataset.color; sfx.tap(); renderPalette(); }
   else if (t.dataset.source) { sfx.tap(); api("/api/buddy/settings", { source: t.dataset.source }).then(poll1); }
+  else if (t.dataset.watch) { $("player-title").textContent = t.dataset.title; $("player-vid").src = t.dataset.watch; $("player").classList.add("on"); }
   else if (t.dataset.build) { sfx.tap(); act("/api/buddy/teach/build", { lesson_id: t.dataset.build }); }
 });
+$("player-close").onclick = () => { $("player-vid").pause(); $("player-vid").removeAttribute("src"); $("player").classList.remove("on"); };
 $("start").onclick = () => { sfx.tap(); act("/api/buddy/teach/start"); };
 $("quit").onclick = () => { if (confirm("Stop?")) act("/api/buddy/teach/quit"); };
 

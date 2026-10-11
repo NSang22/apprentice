@@ -235,6 +235,16 @@ def teach_page():
     return FileResponse(STATIC / "teach.html", headers={"Cache-Control": "no-store"})
 
 
+@router.get("/buddy/video/{name}")
+def teach_video(name: str):
+    """A Teach the Robot recording (data/buddy/videos), so the child can watch what Pip saw."""
+    from buddy.teach import video_file
+    path = video_file(name)
+    if path is None:
+        return JSONResponse({"ok": False, "error": "no video"}, status_code=404)
+    return FileResponse(path, media_type="video/webm")
+
+
 @router.get("/api/buddy/teach/state")
 def teach_state():
     return teach.state()
