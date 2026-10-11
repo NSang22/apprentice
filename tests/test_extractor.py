@@ -45,20 +45,40 @@ def failed(gate):
     return [c.name for c in gate.gate.checks if not c.passed]
 
 
+def stairs(boards):
+    """Each board held, then a hand over the grid, like tests/scripts/staircase_clean.json."""
+    out = [seg({}, 2.0), seg({}, 1.0, hands_clear=False)]
+    for b in boards:
+        out += [seg(b), seg(b, 1.0, hands_clear=False)]
+    return out + [seg(boards[-1], 3.0)]
+
+
+# The staircase with one cube of each color (the fixture's repeats now read as conflicting).
+DISTINCT = stairs([{"A1": ["red"]}, {"A1": ["red"], "B1": ["teal"]}, {"A1": ["red"], "B1": ["teal"], "C1": ["skyblue"]},
+                   {"A1": ["red", "purple"], "B1": ["teal"], "C1": ["skyblue"]},
+                   {"A1": ["red", "purple"], "B1": ["teal", "orange"], "C1": ["skyblue"]},
+                   {"A1": ["red", "purple", "yellow"], "B1": ["teal", "orange"], "C1": ["skyblue"]}])
+DISTINCT_STEPS = [("red", "A1", 0), ("teal", "B1", 0), ("skyblue", "C1", 0), ("purple", "A1", 1),
+                  ("orange", "B1", 1), ("yellow", "A1", 2)]
+
+
 def test_staircase_gives_stacked_steps_from_history():
-    _, _, lesson, gate = lesson_from(script_frames(SCRIPTS / "staircase_clean.json"))
-    assert placed(lesson) == placed(STAIRCASE)   # levels 0, 1 and 2, no flag
+    _, _, lesson, gate = lesson_from(frames_of(DISTINCT))
+    assert placed(lesson) == DISTINCT_STEPS   # levels 0, 1 and 2, no flag
     times = [s.t_video for s in lesson.steps]
     assert times == sorted(times) and times[0] > 0
-    assert failed(gate) == ["one_cube_per_color"]   # the staircase uses two skyblue and two red
+    assert gate.gate.passed, gate.reasons
 
 
 def test_expert_correction_leaves_one_step():
     # skyblue goes on C2 first, then moves to C1
-    ex, _, lesson, gate = lesson_from(script_frames(SCRIPTS / "staircase_with_mistake.json"))
-    assert placed(lesson) == placed(STAIRCASE)
+    mistake = stairs([{"A1": ["red"]}, {"A1": ["red"], "B1": ["teal"]}, {"A1": ["red"], "B1": ["teal"], "C2": ["skyblue"]},
+                      {"A1": ["red"], "B1": ["teal"], "C1": ["skyblue"]},
+                      {"A1": ["red", "purple"], "B1": ["teal"], "C1": ["skyblue"]}])
+    ex, _, lesson, gate = lesson_from(frames_of(mistake))
+    assert placed(lesson) == DISTINCT_STEPS[:4]
     assert [(c.cell, c.level) for c in ex.removed] == [("C2", 0)]
-    assert failed(gate) == ["one_cube_per_color"]
+    assert gate.gate.passed, gate.reasons
 
 
 def test_two_cubes_at_once_fails_one_cube_check():
@@ -89,9 +109,9 @@ def test_hands_and_jitter_produce_no_steps():
 
 
 def test_round_trip_lesson_teaches_what_was_shown(tmp_path):
-    frames = script_frames(SCRIPTS / "staircase_clean.json")
+    frames = frames_of(DISTINCT)
     _, _, lesson, gate = lesson_from(frames)
-    assert failed(gate) == ["one_cube_per_color"]
+    assert gate.gate.passed, gate.reasons
     lesson = Lesson.from_dict(lesson.to_dict())
     journal = Journal("s-roundtrip", "human", directory=tmp_path, clock=lambda: 0.0)
     session = Session(lesson, "human", journal, sleep=lambda s: None)
@@ -190,7 +210,7 @@ def test_unclear_read_close_to_the_top_keeps_its_color():
     rows = step_rows(ex)
     lesson = build_lesson(rows, "test-lesson", "Test", None)
     gate = gate_lesson(lesson, ex, rows=rows)
-    assert placed(lesson) == [("red", "A1", 0)] and [w["kept"] for w in ex.weak_reads] == ["red"]
+    assert placed(lesson) == [("red", "A1", 0)] and {w["kept"] for w in ex.weak_reads} == {"red"}
     assert gate.gate.passed, gate.reasons
     assert gate.notes["replay_matches_final_frame"] == ["A1: weak read, 20.0 from red (limit 26)"]
     # the same read 40 from red is not close: something else is on A1, an unknown step, and the gate fails
@@ -235,6 +255,55 @@ def test_gemini_fallback_accepts_and_rejects():
     rows = step_rows(ex)
     gemini_fallback(rows, ex, lambda frame_id, cell: b"jpeg", lambda jpeg: pytest.fail("called Gemini"), saved)
     assert [r.color for r in rows] == ["red", "purple", "unknown", "unknown"]
+
+
+def test_hand_band_ignores_stacks_and_sees_a_hand():
+    import numpy as np
+    from brain.video_source import HAND_BAND_MAX, band_change, hand_band
+    from perception.change import SHEET_PX_PER_MM, sheet_size_px
+    from perception.cells import cell_center_mm, grid_geometry
+    from robot.perception.sheet import SheetPose
+    # camera 430 mm over the sheet, 2 image px per mm, as a straight-down view
+    band = hand_band(SheetPose(np.diag([0.5, 0.5, 1.0]), [0, 1, 2, 3], 0.0, np.array([108.0, 220.0, 430.0])), 48.0)
+    _, _, size = grid_geometry()
+    for cell in ("A1", "B2", "C3"):   # a cell and the block on it are never in the band
+        x, y = (np.array(cell_center_mm(cell)) * SHEET_PX_PER_MM).astype(int)
+        assert not band[y, x]
+    w, h = sheet_size_px()
+    empty = np.full((h, w, 3), 235, np.uint8)
+    arm = empty.copy()
+    arm[band.any(axis=1).nonzero()[0].min():, : w // 2] = (40, 40, 40)   # a dark sleeve over the band's left half
+    assert band_change(empty, empty, band) == 0.0
+    assert band_change(arm, empty, band) > HAND_BAND_MAX
+
+
+def test_backstop_skips_a_board_that_changes_three_cells():
+    ex, _, lesson, gate = lesson_from(frames_of([
+        seg({}), seg({"A1": ["red"]}),
+        seg({"A1": ["red"], "A2": ["unknown"], "A3": ["unknown"], "B1": ["unknown"]}),   # a sleeve read as blocks
+        seg({"A1": ["red"], "B2": ["teal"]})]))
+    assert placed(lesson) == [("red", "A1", 0), ("teal", "B2", 0)]
+    assert [k["cells"] for k in ex.skipped] == [["A2", "A3", "B1"]]
+    assert gate.gate.passed, gate.reasons
+
+
+def test_new_cube_on_an_empty_cell_beats_a_color_change():
+    # B2 yellow appears while A1's top also reads yellow: B2 is the cube, A1 keeps red (a conflicting read)
+    ex, _, lesson, gate = lesson_from(frames_of([seg({}), seg({"A1": ["red"]}), seg({"A1": ["yellow"], "B2": ["yellow"]}),
+                                                 seg({"A1": ["red"], "B2": ["yellow"]})]))
+    assert placed(lesson) == [("red", "A1", 0), ("yellow", "B2", 0)]
+    assert [(c["cell"], c["kept"], c["read"]) for c in ex.conflicts] == [("A1", "red", "yellow")]
+    assert gate.gate.passed, gate.reasons
+
+
+def test_new_cube_is_named_among_colors_not_on_the_board():
+    # B2 sits 8 from skyblue and 12 from teal: unclear among all colors, but skyblue is already on A1
+    robot = {"A1": "skyblue", "B2": "unknown"}
+    dist = {"A1": {"skyblue": 2.0, "teal": 20.0, "yellow": 100.0}, "B2": {"skyblue": 8.0, "teal": 12.0, "yellow": 100.0}}
+    ex = extract(frames_of([seg({}), seg({"A1": ["unknown"]}), seg({"A1": ["unknown"], "B2": ["unknown"]})]),
+                 robot_read=lambda f, cell: robot[cell], robot_distance=lambda f, cell: dist[cell])
+    rows = step_rows(ex)
+    assert [(r.cell, r.color) for r in rows] == [("A1", "skyblue"), ("B2", "teal")]
 
 
 def test_colors_file_with_wrong_cell_is_refused():

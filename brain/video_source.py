@@ -23,8 +23,17 @@ Grid lock and empty board, two modes:
 Either way the files are copied to a temp folder first: Perceiver writes its lock and empty
 board back while it runs, and nothing here may change the team's calibration.
 
+Own hand check: perception's hands_clear misses a dark sleeve and counts a hand resting on a cell
+as part of a block. So every frame is also checked here: a band of sheet around the 3x3 grid, outside
+everything a 2-high stack on any cell can cover in the picture (each cell's column projected from
+the locked camera position, plus HAND_BAND_CLEAR_MM), is compared with the empty-board picture
+(perception's change_mask). Anything reaching into the grid crosses the band; when more than
+HAND_BAND_MAX of it changed, the frame goes out as not clear (hands_clear false), so it can never be
+part of a settled board.
+
 For each settled board the 9 cells of that frame are cropped (on_settle), so save_pictures()
-can write one picture per step.
+can write one picture per step. on_stable() keeps a copy of the latest frame the stabilizer would
+accept, so the extractor's final read can name and crop it after the video has moved on.
 
 With a robot color memory (--color-memory, or robot/outputs/color_memory.json when that exists;
 robot/perception/color.py's ColorMemory file), each
@@ -52,6 +61,7 @@ import numpy as np
 
 from perception.blocks import sheet_roi
 from perception.cells import cell_center_mm, grid_geometry, mm_to_cell
+from perception.change import SHEET_PX_PER_MM, change_mask, sheet_size_px, warp_to_sheet
 from perception.colors import CALIB_PATH, load_calibration, parse_colors
 from perception.grid_lock import load_lock
 from perception.perceive import FrameResult, Perceiver
@@ -67,6 +77,38 @@ FIRST_FRAME_SEARCH_S = 1.0    # first-frame mode: look this far into the video f
 PROGRESS_EVERY_S = 5.0
 CROP_MARGIN = 0.15            # step pictures: this share of a cell around it on every side
 LOCK, EMPTY, COLORS_JSON = "grid_lock.json", "empty_board.png", "colors.json"
+HAND_BAND_STACK = 2           # the band stays clear of a stack this many blocks high on any cell
+HAND_BAND_CLEAR_MM = 8.0      # ... plus this much (a block off-centre in its cell, its shadow edge)
+HAND_BAND_EDGE_MM = 3.0       # and this far inside the paper's edge (warp error at the edge)
+HAND_BAND_MAX = 0.010         # share of the band changed above which a frame is not clear: clean frames read
+                              # at most 0.007 on expert_take1/2, the faintest hand 0.012 (take 1 frame 611)
+
+
+def hand_band(pose: Any, block_mm: float) -> np.ndarray:
+    """Sheet-warp mask (bool) of the hand band: the paper (HAND_BAND_EDGE_MM inside its edge) minus
+    every cell's column HAND_BAND_STACK blocks high as the camera sees it on the table, minus
+    HAND_BAND_CLEAR_MM around those columns."""
+    w, h = sheet_size_px()
+    e = int(round(HAND_BAND_EDGE_MM * SHEET_PX_PER_MM))
+    band = np.zeros((h, w), np.uint8)
+    band[e:h - e, e:w - e] = 255
+    _, _, size = grid_geometry()
+    for cell in CELLS:
+        cx, cy = cell_center_mm(cell)
+        sq = np.array([(cx - size / 2, cy - size / 2), (cx + size / 2, cy - size / 2),
+                       (cx + size / 2, cy + size / 2), (cx - size / 2, cy + size / 2)])
+        top = pose.to_sheet(pose.to_image(sq, HAND_BAND_STACK * block_mm), 0.0)  # its top, seen on the table
+        hull = cv2.convexHull(np.vstack([sq, top]).astype(np.float32)) * SHEET_PX_PER_MM
+        cv2.fillPoly(band, [hull.astype(np.int32)], 0)
+    k = int(round(HAND_BAND_CLEAR_MM * SHEET_PX_PER_MM)) * 2 + 1
+    return cv2.erode(band, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))) > 0
+
+
+def band_change(live_sheet: np.ndarray, reference_sheet: np.ndarray, band: np.ndarray) -> Optional[float]:
+    """Share of the band that changed since the empty board (perception's change_mask)."""
+    if not band.any():
+        return None
+    return float((change_mask(live_sheet, reference_sheet) > 0)[band].mean())
 
 
 class VideoSourceError(RuntimeError):
@@ -155,6 +197,12 @@ class VideoSource:
         self._frame: Optional[np.ndarray] = None
         self._frame_id = -1
         self._result: Optional[FrameResult] = None
+        self._stable: Optional[tuple[int, np.ndarray]] = None  # (frame id, frame): latest acceptable frame
+        self._band: Optional[np.ndarray] = None
+        self._band_key: Optional[bytes] = None
+        self.band_max = HAND_BAND_MAX
+        self.band_log: list[tuple[int, float, float]] = []  # (frame id, t, share of the band changed)
+        self.hand_frames = 0          # frames perception called clear that the band check threw out
         self._crops: dict[int, dict[str, np.ndarray]] = {}
         self._robot_reads: dict[int, dict[str, str]] = {}
         self._robot_dist: dict[int, dict[str, dict[str, float]]] = {}  # frame -> cell -> color -> distance
@@ -162,6 +210,7 @@ class VideoSource:
         if color_memory is None and robot_color.MEMORY_FILE.is_file():
             color_memory = robot_color.MEMORY_FILE  # the robot's own file, read only
         self.namer = None if color_memory is None else self._robot_namer(Path(color_memory))
+        self.clear_limits = (float(robot_color.KNOWN_MAX), float(robot_color.MIN_MARGIN))  # a clear memory read
 
     def _robot_namer(self, path: Path) -> Any:
         if not path.is_file():
@@ -213,16 +262,47 @@ class VideoSource:
             result = self.perceiver.step(frame, index, timestamp=t)
             if not result.state.hands_clear:
                 reasons[result.reason or result.status] += 1
+            state = result.state
+            change = self._band_change(frame, result)
+            if change is not None:
+                self.band_log.append((index, t, change))
+                if self.band_max is not None and change > self.band_max and state.hands_clear:
+                    state = GridState(state.t, state.board, state.arm_clear, False, state.confidence, state.frame_id)
+                    self.hand_frames += 1
             self._frame, self._frame_id, self._result = frame, index, result
             if t >= next_progress:
                 self.log(f"[extract] {t:5.1f} s  {result.status}")
                 next_progress += PROGRESS_EVERY_S
-            yield result.state
-        self.info["frames"] = {"perception_not_clear": dict(sorted(reasons.items()))}
+            yield state
+        self.info["frames"] = {"perception_not_clear": dict(sorted(reasons.items())),
+                               "hand_band_not_clear": self.hand_frames, "hand_band_max": self.band_max}
         if not started:
             raise VideoSourceError(f"no frame in the first {FIRST_FRAME_SEARCH_S:g} s shows all 4 AprilTags "
                                    f"({last_why}). Start the recording on an empty board with all 4 tags in view, "
                                    "or pass --calib <folder>.")
+
+    def band_mask(self) -> Optional[np.ndarray]:
+        """The hand band for the current grid lock, recomputed when the lock changes."""
+        lock = self.perceiver.lock
+        if lock is None:
+            return None
+        key = np.asarray(lock.H).tobytes()
+        if key != self._band_key:
+            self._band, self._band_key = hand_band(lock.pose(), self.block_mm), key
+        return self._band
+
+    def _band_change(self, frame: np.ndarray, result: FrameResult) -> Optional[float]:
+        """Share of the hand band that differs from the empty-board picture, None without a lock."""
+        band, ref = self.band_mask(), self.perceiver.reference
+        if band is None or ref is None or result.grid != "locked":
+            return None
+        live = result.analysis.live_sheet if result.analysis is not None and result.analysis.live_sheet is not None             else warp_to_sheet(frame, self.perceiver.lock.H)
+        return band_change(live, ref, band)
+
+    def on_stable(self, frame_id: int) -> None:
+        """The extractor calls this for each frame the stabilizer would accept: keep a copy."""
+        if frame_id == self._frame_id and self._frame is not None:
+            self._stable = (frame_id, self._frame.copy())
 
     def _check_reference(self, frame: np.ndarray, index: int, t: float) -> None:
         """First-frame mode: is the frame used as the empty board really empty? segment.detect
@@ -242,14 +322,20 @@ class VideoSource:
     def on_settle(self, settled: Any) -> None:
         """For the frame that settled a board (the current frame): crop every cell, and with a
         color memory, name each occupied cell's top block the way the robot does."""
-        if settled.frame_id != self._frame_id or self._frame is None or self.perceiver.lock is None:
+        if self.perceiver.lock is None:
             return
-        self._crops[settled.frame_id] = {cell: self._crop(self._frame, cell) for cell in CELLS}
+        if settled.frame_id == self._frame_id and self._frame is not None:
+            frame = self._frame
+        elif self._stable is not None and settled.frame_id == self._stable[0]:
+            frame = self._stable[1]  # the final read, taken after the video moved on
+        else:
+            return
+        self._crops[settled.frame_id] = {cell: self._crop(frame, cell) for cell in CELLS}
         if self.namer is not None:
-            self._robot_reads[settled.frame_id], self._robot_dist[settled.frame_id] = self._robot_names(settled.board)
+            self._robot_reads[settled.frame_id], self._robot_dist[settled.frame_id] = self._robot_names(frame, settled.board)
 
-    def _robot_names(self, board: dict[str, list[str]]) -> tuple[dict[str, str], dict[str, dict[str, float]]]:
-        frame, pose = self._frame, self.perceiver.lock.pose()
+    def _robot_names(self, frame: np.ndarray, board: dict[str, list[str]]) -> tuple[dict[str, str], dict[str, dict[str, float]]]:
+        pose = self.perceiver.lock.pose()
         tags = {k: v["corners_mm"] for k, v in self.perceiver.localizer.spec["tags"].items()}
         blobs = segment.detect(frame, None, pose=pose, tags=tags)  # as robot/perception/scene.build_scene
         by_cell: dict[str, list[Any]] = {}

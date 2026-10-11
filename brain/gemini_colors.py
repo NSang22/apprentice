@@ -16,6 +16,7 @@ import base64
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from typing import Optional
@@ -24,6 +25,7 @@ from shared.config import COLORS, REPO_ROOT
 
 API = "https://generativelanguage.googleapis.com/v1beta"
 TIMEOUT_S = 30
+RETRIES, RETRY_WAIT_S = 2, 2.0   # a timeout or a 5xx answer is retried twice, 2 s apart
 NONE = "none"
 PROMPT = (
     "This is a close-up photo, taken from above, of one toy block on a printed sheet (a hand or a "
@@ -51,15 +53,25 @@ def api_key() -> Optional[str]:
 
 
 def _request(url: str, key: str, body: Optional[dict] = None) -> dict:
+    """One request, retried RETRIES times after RETRY_WAIT_S on a timeout or a 5xx answer."""
     data = None if body is None else json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"x-goog-api-key": key, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
-            return json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        raise GeminiUnavailable(f"Gemini answered HTTP {e.code}") from None
-    except (urllib.error.URLError, TimeoutError, ValueError) as e:
-        raise GeminiUnavailable(f"Gemini request failed: {type(e).__name__}") from None
+    for attempt in range(RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            failure, retry = f"Gemini answered HTTP {e.code}", e.code >= 500
+        except (urllib.error.URLError, TimeoutError) as e:
+            reason = getattr(e, "reason", e)
+            failure = f"Gemini request failed: {type(reason).__name__}"
+            retry = isinstance(reason, TimeoutError) or isinstance(e, TimeoutError)
+        except ValueError as e:
+            raise GeminiUnavailable(f"Gemini request failed: {type(e).__name__}") from None
+        if not retry or attempt == RETRIES:
+            raise GeminiUnavailable(failure + (f" (after {attempt + 1} tries)" if attempt else "")) from None
+        time.sleep(RETRY_WAIT_S)
+    raise GeminiUnavailable("unreachable")
 
 
 def model_name(key: str) -> str:

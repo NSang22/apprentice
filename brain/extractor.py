@@ -8,11 +8,19 @@ The extractor only ever sees a stream of GridState. --video runs perception on t
 this process (brain/video_source.py, imported only for --video); --script builds the frames of a
 fake feed script in memory; --grid reads a live feed.
 
+Usable frames: the stabilizer only takes a frame perception calls clear; with --video the hand band
+in brain/video_source.py also has to be unchanged. At the end one more board is always taken from
+the last frames the stabilizer would accept (the final read, used by the gate and for any Gemini
+crop). A recording with no usable frame in its last FINAL_GAP_S seconds stops with an error. A
+settled board whose occupancy differs from the last accepted board in BACKSTOP_CELLS or more cells
+is skipped and logged (a sleeve or arm read as blocks).
+
 Height comes from history, not from the camera's height read. From every frame only two facts per
 cell are used: is it occupied, and what is its top color (the camera's own stack is kept in the
 extract record as evidence only). The existing stabilizer settles those boards. One map for the
 whole recording holds each cell's cubes, bottom to top, at most MAX_LEVEL + 1. Between settled
-boards, removals are applied before additions:
+boards, removals come first, then new cubes on empty cells (the strongest evidence), then what the
+tops of occupied cells read:
   a cell goes empty                     its cube is removed (2 or 3 cubes at once: the gate fails)
   the top reads the color right under   the top cube was removed
   an empty cell becomes occupied        a step at level 0
@@ -27,8 +35,11 @@ easier to keep a color than to get one: an unclear read is close when its robot-
 the top's color is at most WEAK_READ_MAX_DISTANCE, looser than the memory's own limit for a clear
 name (robot/perception/color.py KNOWN_MAX 18 plus MIN_MARGIN 8). The camera gives no distance, so
 without a color memory an unclear read is never close.
-A known color showing up while that color is still on the board fails the gate (one cube per
-color). Position first, color second, per level: a cube is its slot (cell, level) from the moment
+A new cube on an empty cell whose color is already on the board fails the gate (one cube per
+color); an occupied cell whose top reads a color already on the board keeps its old color, adds no
+step, and the read is logged as conflicting. A new cube is named only among colors not yet on the
+board: with robot-memory distances, the clear-read limits are measured against those colors only, and
+an unclear top that is nearer such a color than its own is a new cube of that color. Position first, color second, per level: a cube is its slot (cell, level) from the moment
 it appears until it is removed, and every read taken while it is the top is kept. A cube that is
 removed deletes the step that placed it (a correction); t_video is when the board with the new
 cube first appeared.
@@ -75,7 +86,7 @@ import re
 import sys
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
@@ -97,6 +108,11 @@ RobotDistance = Callable[[int, str], Optional[dict[str, float]]]  # (frame id, c
 # cube. Measured on expert_take1 (videos/calib_oct11/color_memory.json): the one board where no source
 # read a placed cube clearly was B3 orange at 22.9; the hand over C3 read 29.3 from its nearest color.
 WEAK_READ_MAX_DISTANCE = 26.0
+# A clear robot-memory read: nearest color within this distance and ahead of the next by this margin
+# (robot/perception/color.py KNOWN_MAX, MIN_MARGIN; --video passes the robot's own values).
+CLEAR_MAX_DISTANCE, CLEAR_MIN_MARGIN = 18.0, 8.0
+FINAL_GAP_S = 3.0       # the recording must have a usable frame within this many seconds of its end
+BACKSTOP_CELLS = 3      # a settled board changing this many cells' occupancy at once is skipped
 
 
 # ---------------------------------------------------------------- settling and tracking (pure)
@@ -110,6 +126,7 @@ class Settled:
     board: Board       # occupancy and top only: each cell [] or [top color]
     camera_board: Optional[Board] = None  # the camera's own stacks on that frame (evidence only)
     camera_confidence: Optional[dict[str, float]] = None  # the camera's confidence per cell on that frame
+    final: bool = False  # the final read, taken at the end even if nothing changed
 
 
 @dataclass
@@ -121,6 +138,7 @@ class Cube:
     reads: list[str] = field(default_factory=list)            # camera top read, per board it was the top
     robot: list[Optional[str]] = field(default_factory=list)  # robot-memory read, same boards (None: not read)
     seen: list[str] = field(default_factory=list)             # the clear read used (robot, else camera)
+    named: list[str] = field(default_factory=list)            # robot-memory names among colors not on the board
     settles: list[int] = field(default_factory=list)          # frame ids of those boards
     baseline: bool = False         # already on the first settled board (not a step)
     t_removed: Optional[float] = None
@@ -157,6 +175,8 @@ class Extraction:
     tops: list[dict[str, str]] = field(default_factory=list)  # per settled board: occupied cell -> top read
     distances: list[dict[str, dict[str, float]]] = field(default_factory=list)  # per board: cell -> color -> distance
     weak_reads: list[dict[str, Any]] = field(default_factory=list)  # unclear reads that kept the top's color
+    conflicts: list[dict[str, Any]] = field(default_factory=list)   # tops that read a color already on the board
+    skipped: list[dict[str, Any]] = field(default_factory=list)     # settled boards the backstop skipped
     robot_used: bool = False
     frames: int = 0
     unusable: dict[str, int] = field(default_factory=dict)  # reason -> frames the stabilizer could not use
@@ -183,44 +203,97 @@ def occupancy_and_top(gs: GridState) -> GridState:
     return GridState(gs.t, board, gs.arm_clear, gs.hands_clear, dict(gs.confidence), gs.frame_id)
 
 
+class ExtractError(ValueError):
+    """The recording cannot give a lesson, for example no usable frame near its end."""
+
+
 def settle(frames: Iterable[GridState], extraction: Extraction,
-           on_settle: Optional[Callable[[Settled], None]] = None) -> Iterable[Settled]:
-    """Run frames, reduced to occupancy and top, through the existing stabilizer."""
+           on_settle: Optional[Callable[[Settled], None]] = None,
+           on_stable: Optional[Callable[[int], None]] = None) -> Iterable[Settled]:
+    """Run frames, reduced to occupancy and top, through the existing stabilizer. At the end, one
+    more settled board (final=True) from the latest frame the stabilizer would accept, even if
+    nothing changed, so the final read never comes from a frame a hand was still over. Raises
+    ExtractError when no frame is usable, or none in the last FINAL_GAP_S seconds."""
     state = StabilizerState()
     unusable: Counter[str] = Counter()
+    latest: Optional[tuple[GridState, GridState, Board, float]] = None  # (frame, raw, board, run start)
+    last_emitted: Optional[int] = None
+    last_usable_t: Optional[float] = None
+    last_t = 0.0
     for raw in frames:
         gs = occupancy_and_top(raw)
         extraction.frames += 1
         why = unusable_reason(gs)
         if why is not None:
             unusable[why] += 1
+        else:
+            last_usable_t = gs.t
+        last_t = gs.t
+        # Would the stabilizer accept a board on this frame if it had not emitted one yet?
+        probe_state, probe = stabilizer_step(replace(state, emitted=None), gs)
         state, board = stabilizer_step(state, gs)
+        if probe is not None:
+            latest = (gs, raw, probe, probe_state.since)
+            if on_stable is not None:
+                on_stable(gs.frame_id)
         if board is not None:
             s = Settled(t=state.since, t_settled=gs.t, frame_id=gs.frame_id, board=board,
                         camera_board=copy_board(raw.board), camera_confidence=dict(raw.confidence))
+            last_emitted = gs.frame_id
             if on_settle is not None:
                 on_settle(s)
             yield s
     extraction.unusable = dict(sorted(unusable.items()))
+    if last_usable_t is None:
+        raise ExtractError("no usable frame in the recording: something is over the grid the whole time")
+    if last_t - last_usable_t > FINAL_GAP_S:
+        raise ExtractError(f"no usable frame after {last_usable_t:.1f} s ({last_t - last_usable_t:.1f} s before the "
+                           "end): something stays over the grid or its edge until the recording ends")
+    if latest is not None and latest[0].frame_id != last_emitted:
+        gs, raw, board, since = latest
+        s = Settled(t=since, t_settled=gs.t, frame_id=gs.frame_id, board=board, camera_board=copy_board(raw.board),
+                    camera_confidence=dict(raw.confidence), final=True)
+        if on_settle is not None:
+            on_settle(s)
+        yield s
 
 
 def extract(frames: Iterable[GridState], on_settle: Optional[Callable[[Settled], None]] = None,
-            robot_read: Optional[RobotRead] = None, robot_distance: Optional[RobotDistance] = None) -> Extraction:
+            robot_read: Optional[RobotRead] = None, robot_distance: Optional[RobotDistance] = None,
+            on_stable: Optional[Callable[[int], None]] = None,
+            clear_limits: tuple[float, float] = (CLEAR_MAX_DISTANCE, CLEAR_MIN_MARGIN)) -> Extraction:
     """Frames -> the existing stabilizer -> track()."""
     ex = Extraction(settled=[], steps=[], removed=[], baseline=[])
-    return track(settle(frames, ex, on_settle), ex, robot_read, robot_distance)
+    return track(settle(frames, ex, on_settle, on_stable), ex, robot_read, robot_distance, clear_limits)
+
+
+def name_new(dist: dict[str, float], taken: set[str],
+             clear_limits: tuple[float, float] = (CLEAR_MAX_DISTANCE, CLEAR_MIN_MARGIN)) -> Optional[str]:
+    """Name a new cube from robot-memory distances: only colors not yet on the board are candidates,
+    and the clear-read limits (nearest within the distance, ahead of the next by the margin) are
+    measured against those only. None when no candidate is clear."""
+    cands = sorted((d, c) for c, d in dist.items() if c not in taken and c in COLORS)
+    if not cands:
+        return None
+    d1, c1 = cands[0]
+    d2 = cands[1][0] if len(cands) > 1 else float("inf")
+    return c1 if d1 <= clear_limits[0] and d2 - d1 >= clear_limits[1] else None
 
 
 def track(settled: Iterable[Settled], ex: Optional[Extraction] = None,
-          robot_read: Optional[RobotRead] = None, robot_distance: Optional[RobotDistance] = None) -> Extraction:
+          robot_read: Optional[RobotRead] = None, robot_distance: Optional[RobotDistance] = None,
+          clear_limits: tuple[float, float] = (CLEAR_MAX_DISTANCE, CLEAR_MIN_MARGIN)) -> Extraction:
     """Steps from boards that have already settled (oldest first), by history: see the module
     docstring. Only occupancy and the top color of each cell are read from a board."""
     ex = ex if ex is not None else Extraction(settled=[], steps=[], removed=[], baseline=[])
     ex.robot_used = robot_read is not None
     stacks: dict[str, list[Cube]] = {cell: [] for cell in CELLS}
 
-    def on_board(color: str, other: Optional[Cube] = None) -> bool:
-        return any(c is not other and c.color() == color for st in stacks.values() for c in st)
+    fresh_color: dict[int, str] = {}  # cubes added on the board being read: their color before any read is kept
+
+    def colors_on_board(other: Optional[Cube] = None) -> set[str]:
+        return {c.color() if c.seen else fresh_color.get(id(c), UNKNOWN)
+                for st in stacks.values() for c in st if c is not other} - {UNKNOWN}
 
     def remove(cube: Cube, t: float, gone: list[Cube]) -> None:
         cube.t_removed = t
@@ -229,26 +302,47 @@ def track(settled: Iterable[Settled], ex: Optional[Extraction] = None,
             ex.steps.remove(cube)
             ex.removed.append(cube)
 
+    last_occupied: Optional[set[str]] = None
     for s in settled:
+        occupied = [cell for cell in CELLS if s.board[cell]]
+        if last_occupied is not None:  # backstop: too many cells changed at once to be one move
+            changed = sorted(set(occupied) ^ last_occupied)
+            if len(changed) >= BACKSTOP_CELLS:
+                ex.skipped.append({"t": round(s.t, 3), "frame_id": s.frame_id, "final": s.final, "cells": changed})
+                continue
+        last_occupied = set(occupied)
         first = not ex.settled
         ex.settled.append(s)
-        occupied = [cell for cell in CELLS if s.board[cell]]
         camera = {cell: s.board[cell][-1] for cell in occupied}
         robot = {cell: robot_read(s.frame_id, cell) if robot_read is not None else None for cell in occupied}
         tops = {cell: robot[cell] if robot[cell] not in (None, UNKNOWN) else camera[cell] for cell in occupied}
         dist = {cell: d for cell in occupied if robot_distance is not None and (d := robot_distance(s.frame_id, cell))}
         ex.tops.append(tops)
         ex.distances.append(dist)
+        seen = dict(tops)       # the read each top cube keeps from this board
         added: list[Cube] = []
         gone: list[Cube] = []
         skip: set[str] = set()  # cells whose read on this board was refused (not kept on the top cube)
+        refused: set[str] = set()  # cells whose read conflicted: kept on the top cube as unknown
+        named_now: dict[str, str] = {}  # cells named among colors not on the board (robot-memory distances)
+        overridden: set[str] = set()    # cells whose read named a color on the board and was replaced by named_now
+        fresh_color.clear()
+
+        def add(cell: str, color: str) -> None:
+            cube = Cube(cell, len(stacks[cell]), s.t, s.frame_id)
+            fresh_color[id(cube)] = color
+            stacks[cell].append(cube)
+            ex.steps.append(cube)
+            added.append(cube)
+            seen[cell] = color
+
         if first:
             for cell in occupied:
                 cube = Cube(cell, 0, s.t, s.frame_id, baseline=True)
                 stacks[cell].append(cube)
                 ex.baseline.append(cube)
         else:
-            for cell in CELLS:  # removals first
+            for cell in CELLS:  # 1. removals
                 st = stacks[cell]
                 if st and cell not in camera:
                     if len(st) > 1:  # judged in gate_history, once transients are known
@@ -258,50 +352,66 @@ def track(settled: Iterable[Settled], ex: Optional[Extraction] = None,
                     st.clear()
                 elif len(st) >= 2 and tops[cell] != UNKNOWN and tops[cell] == st[-2].color() != st[-1].color():
                     remove(st.pop(), s.t, gone)
-            for cell in occupied:  # then additions
+            fresh = [cell for cell in occupied if not stacks[cell]]
+            for cell in fresh:  # 2. a cube on an empty cell: the strongest evidence
+                read, taken = tops[cell], colors_on_board()
+                if (read == UNKNOWN or read in taken) and (named := name_new(dist.get(cell, {}), taken, clear_limits)):
+                    if read != UNKNOWN:
+                        overridden.add(cell)
+                    read = named_now[cell] = named  # only colors not yet on the board are candidates
+                if read != UNKNOWN and read in colors_on_board():
+                    ex.problems.append(("one_cube_per_color", f"{read} appeared on {cell} at {s.t:.1f} s while "
+                                                              f"a {read} cube was still on the board"))
+                add(cell, read)
+            for cell in (c for c in occupied if c not in fresh):  # 3. what an occupied cell's top reads
                 st, read = stacks[cell], tops[cell]
-                if not st:
-                    if read != UNKNOWN and on_board(read):
-                        ex.problems.append(("one_cube_per_color", f"{read} appeared on {cell} at {s.t:.1f} s while "
-                                                                  f"a {read} cube was still on the board"))
-                    cube = Cube(cell, 0, s.t, s.frame_id)
-                elif read == UNKNOWN:
-                    color = st[-1].color()
-                    d = dist.get(cell, {}).get(color)
-                    if color != UNKNOWN and d is not None and d <= WEAK_READ_MAX_DISTANCE:
-                        ex.weak_reads.append({"t": round(s.t, 3), "cell": cell, "level": st[-1].level, "kept": color,
-                                              "distance": round(d, 1)})
-                        continue  # a weaker read of the same cube
-                    if color == UNKNOWN or len(st) > MAX_LEVEL:
-                        continue  # the same unread cube, or no room for another
-                    cube = Cube(cell, len(st), s.t, s.frame_id)  # unclear and not close: something else on it
-                elif read == st[-1].color():
+                top, color, d = st[-1], st[-1].color(), dist.get(cell, {})
+                if read != UNKNOWN:
+                    if read == color:
+                        continue
+                    if read in colors_on_board(top):  # a color already on the board: keep the old one
+                        ex.conflicts.append({"t": round(s.t, 3), "cell": cell, "level": top.level, "kept": color,
+                                             "read": read})
+                        refused.add(cell)
+                    elif color == UNKNOWN:
+                        continue  # the top's first clear read: the same cube
+                    elif len(st) > MAX_LEVEL:
+                        ex.problems.append(("levels_match_stack_height", f"a fourth cube ({read}) on {cell} at "
+                                                                         f"{s.t:.1f} s"))
+                        skip.add(cell)
+                    else:
+                        add(cell, read)
                     continue
-                elif st[-1].color() == UNKNOWN:  # the top's first clear read: the same cube
-                    if on_board(read, st[-1]):
-                        ex.problems.append(("one_cube_per_color", f"{read} read on {cell} at {s.t:.1f} s while a "
-                                                                  f"{read} cube was still on the board"))
-                    continue
-                elif len(st) > MAX_LEVEL:
-                    ex.problems.append(("levels_match_stack_height", f"a fourth cube ({read}) on {cell} at {s.t:.1f} s"))
-                    skip.add(cell)
-                    continue
-                else:
-                    if on_board(read):
-                        ex.problems.append(("one_cube_per_color", f"{read} stacked on {cell} at {s.t:.1f} s while a "
-                                                                  f"{read} cube was still on the board"))
-                    cube = Cube(cell, len(st), s.t, s.frame_id)
-                st.append(cube)
-                ex.steps.append(cube)
-                added.append(cube)
+                named = name_new(d, colors_on_board(), clear_limits)
+                if color == UNKNOWN:
+                    if named:
+                        seen[cell] = named_now[cell] = named  # the same unread cube, now named
+                elif named is not None and named != color and (color not in d or d[named] < d[color]):
+                    if len(st) > MAX_LEVEL:
+                        ex.problems.append(("levels_match_stack_height", f"a fourth cube ({named}) on {cell} at "
+                                                                         f"{s.t:.1f} s"))
+                        skip.add(cell)
+                    else:
+                        add(cell, named)  # nearer a free color than its own: a new cube
+                        named_now[cell] = named
+                elif color in d and d[color] <= WEAK_READ_MAX_DISTANCE:
+                    ex.weak_reads.append({"t": round(s.t, 3), "cell": cell, "level": top.level, "kept": color,
+                                          "distance": round(d[color], 1)})  # a weaker read of the same cube
+                elif len(st) <= MAX_LEVEL:
+                    add(cell, UNKNOWN)  # unclear and not close: something else on it
             ex.changes.append((s.t, added, gone))
+        # The top reads the gate sees: free-color names in, conflicting reads out (not clear reads of that cell).
+        ex.tops[-1] = {**tops, **named_now, **{cell: UNKNOWN for cell in refused}}
         for cell in occupied:  # the read of each top cube on this board
             if cell in skip or not stacks[cell]:
                 continue
             top = stacks[cell][-1]
-            top.reads.append(camera[cell])
-            top.robot.append(robot[cell])
-            top.seen.append(tops[cell])
+            blank = cell in refused or cell in overridden  # that read is not evidence for this cube's color
+            top.reads.append(UNKNOWN if blank else camera[cell])
+            top.robot.append(UNKNOWN if blank and robot[cell] is not None else robot[cell])
+            top.seen.append(UNKNOWN if cell in refused else seen[cell])
+            if cell in named_now:
+                top.named.append(named_now[cell])
             top.settles.append(s.frame_id)
     return ex
 
@@ -390,7 +500,7 @@ def split_transients(ex: Extraction) -> None:
     that ever had a known color, or is still on the board at the end, stays a cube."""
     kept = []
     for cube in ex.removed:
-        known = [r for r in cube.reads + cube.robot_reads() if r != UNKNOWN]
+        known = [r for r in cube.reads + cube.robot_reads() + cube.named if r != UNKNOWN]
         (kept if known else ex.transients).append(cube)
     ex.removed = kept
 
@@ -424,9 +534,10 @@ def step_rows(ex: Extraction, manual: Optional[dict[int, str]] = None) -> list[S
     rows = []
     for i, cube in enumerate(ex.steps):
         robot_color = robot_counts = None
-        if ex.robot_used:
+        if ex.robot_used:  # the namer's reads, plus names among colors not on the board
             reads = cube.robot_reads()
-            robot_color, robot_counts = agreed_color(reads), dict(sorted(Counter(reads).items()))
+            robot_color = agreed_color(reads + cube.named)
+            robot_counts = dict(sorted(Counter(reads + [f"{n} (named among free colors)" for n in cube.named]).items()))
         color, source = choose_color(cube.camera_color(), robot_color, manual.get(i + 1))
         rows.append(StepRow(i + 1, cube.cell, cube.level, cube.t_video, color, source, cube.camera_color(),
                             cube.read_counts(), cube.frame_id, robot_color, robot_counts, manual.get(i + 1)))
@@ -437,7 +548,10 @@ GeminiAsk = Callable[[bytes], dict]  # crop (jpeg) -> {"answer": a COLORS name o
 
 
 def clearest_frame(cube: Cube, ex: Extraction) -> Optional[int]:
-    """The settled board where the cube was on top and the camera was most sure of its cell."""
+    """The final read when the cube is on top there, else the settled board where it was on top and
+    the camera was most sure of its cell."""
+    if ex.settled and ex.settled[-1].final and ex.settled[-1].frame_id in cube.settles:
+        return ex.settled[-1].frame_id
     conf = {s.frame_id: (s.camera_confidence or {}).get(cube.cell, 0.0) for s in ex.settled}
     return max(cube.settles, key=lambda fid: (conf.get(fid, 0.0), -fid)) if cube.settles else None
 
@@ -636,6 +750,10 @@ def write_outputs(ex: Extraction, rows: list[StepRow], lesson: Lesson, gate: Gat
         "baseline_cubes": [cube_dict(c, ex) for c in ex.baseline],
         "transients": [cube_dict(c, ex) for c in ex.transients],
         "weak_reads": ex.weak_reads,
+        "conflicting_reads": ex.conflicts,
+        "skipped_boards": ex.skipped,
+        "final_read": None if not ex.settled or not ex.settled[-1].final else
+        {"t": round(ex.settled[-1].t_settled, 3), "frame_id": ex.settled[-1].frame_id},
         "gemini": gemini or [],
         "gate": {**gate.gate.to_dict(), "reasons": gate.reasons, "notes": gate.notes},
         "pictures": [repo_relative(Path(p)) for p in pictures(extract_dir / lesson.lesson_id)] if pictures else [],
@@ -711,6 +829,12 @@ def print_report(out: Outcome, ex: Extraction) -> None:
     for c in ex.removed:
         print(f"  correction: {c.color()} cube on {c.cell} level {c.level}, appeared {c.t_video:.2f} s, "
               f"removed {c.t_removed:.2f} s")
+    for c in ex.conflicts:
+        print(f"  conflicting read: {c['cell']} level {c['level']} at {c['t']:.2f} s read {c['read']}, already on the "
+              f"board; kept {c['kept']}")
+    for k in ex.skipped:
+        print(f"  skipped board at {k['t']:.2f} s{' (final read)' if k['final'] else ''}: "
+              f"{len(k['cells'])} cells changed at once ({', '.join(k['cells'])})")
     for w in ex.weak_reads:
         print(f"  weak read: {w['cell']} level {w['level']} at {w['t']:.2f} s kept {w['kept']} "
               f"(robot-memory distance {w['distance']}, limit {WEAK_READ_MAX_DISTANCE:g})")
@@ -721,8 +845,9 @@ def print_report(out: Outcome, ex: Extraction) -> None:
     for r in disagree:
         print(f"  step {r.number}: camera reads disagree {r.reads}")
     usable = ex.frames - sum(ex.unusable.values())
-    print(f"\nframes: {ex.frames} read, {usable} usable; settled boards: {len(ex.settled)} "
-          f"({ex.boards_with_unknown} with an unknown cell)")
+    final = " (last one is the final read)" if ex.settled and ex.settled[-1].final else ""
+    print(f"\nframes: {ex.frames} read, {usable} usable; settled boards: {len(ex.settled)}{final}, "
+          f"{len(ex.skipped)} skipped ({ex.boards_with_unknown} with an unknown cell)")
     for why, n in ex.unusable.items():
         print(f"  unusable: {n} frames, {why}")
     g = out.gate
@@ -769,6 +894,14 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    started = time.monotonic()
+    try:
+        return run(argv)
+    finally:
+        print(f"[extract] run time {time.monotonic() - started:.1f} s")
+
+
+def run(argv: Optional[list[str]] = None) -> int:
     args = parser().parse_args(argv)
     if not args.video and (args.calib or args.colors or args.block_mm or args.color_memory):
         print("[extract] --calib, --colors, --block-mm and --color-memory only apply to --video", file=sys.stderr)
@@ -812,7 +945,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     try:
         return finish(args, entries, name, frames, info, source_video, video)
-    except source_errors as e:
+    except source_errors + (ExtractError,) as e:
         print(f"[extract] {e}", file=sys.stderr)
         return EXIT_BAD_INPUT
     finally:
@@ -843,6 +976,9 @@ def ask_gemini(args: argparse.Namespace, rows: list[StepRow], ex: Extraction, vi
     saved = saved_gemini(lessons_dir, (video.info.get("source") or {}).get("sha256"))
     records = gemini_fallback(rows, ex, video.crop_jpeg, ask if key else None, saved)
     print(f"[extract] gemini: {calls} call(s), {sum(1 for r in records if r.get('reused'))} saved answer(s) reused")
+    models = sorted({r["model"] for r in records if r.get("model")})
+    if models:
+        print(f"[extract] gemini model: {', '.join(models)}")
     for r in records:
         print(f"  gemini step {r['step']} {r['cell']}: {r.get('answer', '-')} "
               + ("accepted (unverified)" if r["accepted"] else f"rejected: {r['reason']}"))
@@ -853,7 +989,12 @@ def finish(args: argparse.Namespace, entries: list[dict[str, Any]], name: str, f
            info: dict[str, Any], source_video: Optional[str], video: Any) -> int:
     robot_read = video.robot_read if video is not None and video.namer is not None else None
     ex = extract(frames, video.on_settle if video is not None else None, robot_read,
-                 video.robot_distance if robot_read is not None else None)
+                 video.robot_distance if robot_read is not None else None,
+                 video.on_stable if video is not None else None,
+                 video.clear_limits if video is not None else (CLEAR_MAX_DISTANCE, CLEAR_MIN_MARGIN))
+    if video is not None:
+        print(f"[extract] hand band: {video.hand_frames} frame(s) perception called clear were thrown out "
+              f"(band changed more than {video.band_max:g})")
     if video is not None:
         info.update(video.info)
     split_transients(ex)
