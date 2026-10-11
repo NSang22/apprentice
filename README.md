@@ -351,6 +351,17 @@ python -m perception.publish --video videos/demo.mp4
 # publish owns the webcam and shares it: GET http://127.0.0.1:8771/frame is the newest raw frame (headers
 # X-Shape, X-Timestamp), GET /health its age. robot/api.py reads the camera through it. --frame-port 0 turns it off.
 
+# Lesson from an expert video (offline, no camera, no network): perception runs on the file in-process.
+# Writes lessons/<id>.json only when every step has a known color, plus lessons/extract/<id>.json (gate
+# reasons, color reads, draft + colors-file template if a color is unknown) and step pictures. No --calib:
+# grid lock + empty board from the video's first second. Exit 0 gate passed, 1 gate failed, 3 colors unknown.
+# Stacks up to 3 come from history (a clear new top color on an occupied cell), never the camera's height read.
+# Defaults: --block-mm 48, --colors all shared colors, --color-memory robot/outputs/color_memory.json if present.
+# A step no source can name is asked of Gemini (GEMINI_API_KEY, offline, answers reused on reruns); --no-gemini skips it.
+python -m brain.extractor --video videos/expert_take1.mp4 --color-memory videos/calib_oct11/color_memory.json --boards-out data/boards.json
+python -m brain.extractor --video videos/expert_take1.mp4 --colors red,yellow,orange,purple,skyblue --colors-file colors.json
+python -m brain.extractor --script tests/scripts/staircase_with_mistake.json   # or --grid ws://<host>:8765 (live camera; Ctrl+C ends the take)
+
 # Robot API on the Jetson (README 5.3), in the lerobot venv, started after perception.publish (it reads the
 # camera through publish's frame server, and refuses frames older than 0.5 s). One command at a time; every
 # command and result goes to robot/outputs/api_log.jsonl. --lesson keeps blocks already in their lesson cell
@@ -382,12 +393,6 @@ python -m analytics.fake_journal --seed 7   # synthetic_*.jsonl journals in data
 python -m analytics.report --sessions data/sessions --out data/analytics/metrics.json   # every metric, per provenance; add --tasks robot/outputs/tasks, --include-synthetic
 python -m analytics.record_fixtures       # re-record tests/fixtures/brain_journal_{human,robot}.jsonl from the real brain (about a minute)
 # The fixtures are never edited by hand: when the brain's journal changes, re-record them and commit the result.
-```
-
-Planned, not built yet:
-
-```bash
-python -m brain.extractor --video videos/expert_staircase.mp4 --out lessons/staircase-v1.json  # planned: lesson from an expert video
 ```
 
 ---
