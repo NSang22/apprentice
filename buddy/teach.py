@@ -48,6 +48,7 @@ VIDEOS_DIR = REPO_ROOT / "data" / "buddy" / "videos"
 # What the waiting child sees while Pip works, in order. Each is a real step (see learn()).
 STAGES = [
     ("rewind", "Rewinding the tape"),
+    ("listen", "Listening to what you said"),
     ("flummox", "Flummoxing"),
     ("count", "Counting blocks"),
     ("squint", "Squinting at colors"),
@@ -124,6 +125,81 @@ class VideoRecorder:
         if self._thread is not None:
             self._thread.join(timeout=3)
         return self.path if self.frames else None
+
+
+MIC = "hw:CARD=Camera,DEV=0"   # the overhead webcam's own microphone (arecord -l: card "Camera")
+
+
+class AudioRecorder:
+    """The webcam microphone to an Opus file while the child builds (GStreamer: alsasrc, opusenc).
+    The narration is a second source for the steps: Gemini transcribes it afterwards."""
+
+    def __init__(self, path: Path, device: str = MIC):
+        self.path, self.device = path, device
+        self.proc = None
+        self.error: Optional[str] = None
+
+    def start(self) -> None:
+        import subprocess
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.proc = subprocess.Popen(
+                ["gst-launch-1.0", "-q", "-e", "alsasrc", f"device={self.device}", "!", "audioconvert", "!",
+                 "audioresample", "!", "opusenc", "!", "oggmux", "!", "filesink", f"location={self.path}"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        except OSError as e:  # no GStreamer: the lesson still records video
+            self.error = str(e)
+
+    def stop(self) -> Optional[Path]:
+        import signal
+        import subprocess
+        if self.proc is None:
+            return None
+        if self.proc.poll() is None:
+            self.proc.send_signal(signal.SIGINT)   # -e: SIGINT sends end-of-stream, so the file is closed properly
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        if self.proc.returncode not in (0, None) and self.proc.stderr:
+            self.error = (self.proc.stderr.read() or "").strip()[-300:] or self.error
+        return self.path if self.path.is_file() and self.path.stat().st_size > 2000 else None
+
+
+def mux(video: Path, audio: Path, out: Path) -> bool:
+    """Video and narration in one WebM (VP8 + Opus) for playback, with GStreamer's webmmux."""
+    import subprocess
+    cmd = ["gst-launch-1.0", "-q", "-e", "webmmux", "name=m", "!", "filesink", f"location={out}",
+           "filesrc", f"location={video}", "!", "matroskademux", "!", "queue", "!", "m.",
+           "filesrc", f"location={audio}", "!", "oggdemux", "!", "opusparse", "!", "queue", "!", "m."]
+    try:
+        subprocess.run(cmd, timeout=60, capture_output=True)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.is_file() and out.stat().st_size > video.stat().st_size // 2
+
+
+def check_narration(steps: list, placements: list[dict]) -> dict:
+    """Spoken placements vs the steps the camera saw. The grid decides (AGENTS.md rule 2): this
+    only fills each matching step's narration and lists where speech and grid disagree."""
+    notes, matched = [], 0
+    for p in placements:
+        if not isinstance(p, dict) or p.get("action", "place") != "place":
+            continue
+        cell, color, text = p.get("cell"), p.get("color"), str(p.get("text") or "").strip()
+        if cell not in {s.cell for s in steps}:
+            if cell:
+                notes.append(f"I heard \"{text or color + ' on ' + cell}\", but I didn't see a block on {cell}.")
+            continue
+        here = [s for s in steps if s.cell == cell]
+        same = [s for s in here if s.color == color]
+        if same:
+            matched += 1
+            if text and not same[0].narration:
+                same[0].narration = text
+        elif color in COLORS:
+            notes.append(f"I heard {color} on {cell}, but I saw {' and '.join(s.color for s in here)} there.")
+    return {"matched": matched, "notes": notes}
 
 
 # ---------------------------------------------------------------- learning (the extractor)

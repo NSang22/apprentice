@@ -172,6 +172,11 @@
   .player .inner { max-width: 640px; width: 100%; margin: 0 auto; }
   .player b { color: #fff; display: block; font-size: 18px; margin-bottom: 10px; }
   h2 { font-size: 20px; font-weight: 900; margin: 16px 0 4px; width: 100%; }
+  .eye-btn { background: var(--blue-l); border: 2px solid #84d8ff; border-radius: 12px; padding: 4px 8px; cursor: pointer; color: var(--blue-d);
+             font: inherit; font-weight: 900; font-size: 13px; display: flex; align-items: center; gap: 4px; }
+  .eye-btn.on { background: var(--blue); color: #fff; border-color: var(--blue-d); }
+  .cam { width: 100%; border-radius: 14px; background: #000; display: none; aspect-ratio: 16/9; object-fit: contain; }
+  .cam.on { display: block; }
 </style>
 </head>
 <body>
@@ -193,10 +198,12 @@
       <button class="icon-btn" id="quit" aria-label="Stop"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>
       <div class="bar"><i id="bar"></i></div>
       <div class="rec" id="rec"><i></i>Rec</div>
+      <button class="eye-btn" id="eye" aria-label="Pip's eyes">👁 Eyes</button>
     </div>
     <div class="stage">
       <div class="pip-wrap"><svg class="pip small" id="pip" data-mood="happy"><use href="#pip"/></svg><div class="bubble" id="say"></div></div>
       <div class="bankcard" id="bankcard"><b>Put in Pip's bank</b><div class="sws" id="bank"></div></div>
+      <img class="cam" id="cam" alt="What Pip sees">
       <div class="side">Pip's side</div>
       <div class="grid" id="grid"></div>
       <div class="side">Your side</div>
@@ -222,6 +229,8 @@
     <h1 id="rv-title">I learned it!</h1>
     <p class="lead" id="rv-say"></p>
     <div id="rv-video" style="width:100%;display:none"><div class="vid-cap">What Pip watched</div><video class="vid" id="rv-vid" controls playsinline muted></video></div>
+    <div id="rv-heard" class="bankcard" style="display:none;border-color:var(--blue);background:var(--blue-l);text-align:left;margin-bottom:8px">
+      <b style="color:var(--blue-d)">What you said</b><div id="rv-transcript" style="font-size:15px"></div><div id="rv-notes" style="font-size:14px;color:var(--orange-d);margin-top:6px"></div></div>
     <ul class="steps" id="rv-steps"></ul>
     <div id="rv-name-box" style="width:100%"><input class="name-input" id="rv-name" maxlength="24" placeholder="Name your lesson" autocomplete="off"></div>
     <div style="flex:1"></div>
@@ -338,7 +347,7 @@ function renderGame() {
   $("pip").dataset.mood = S.mood; $("say").textContent = S.say;
   $("rec").style.visibility = rec ? "visible" : "hidden";
   $("rec-row").style.display = rec ? "flex" : "none";
-  $("bankcard").style.display = ph === "bank" ? "block" : "none";
+  $("bankcard").style.display = ph === "bank" || ph === "bank_check" ? "block" : "none";
   if (ph === "bank") $("bank").innerHTML = S.bank.map(sw).join("");
   $("bar").style.width = building() ? `${(S.build.i / Math.max(1, S.build.total)) * 100}%` : rec ? `${(1 - S.record_left / S.record_s) * 100}%` : "0%";
   renderGrid(); renderPalette();
@@ -346,6 +355,7 @@ function renderGame() {
       ? `<div class="row"><button class="btn ghost" id="f-undo" style="flex:1">Undo</button><button class="btn red" id="f-done" style="flex:2">I'm done!</button></div>`
       : `<button class="btn red" id="f-done">I'm done!</button>`);
   else if (ph === "bank") footer("bank", `<button class="btn orange" id="f-ready">Ready!</button>`);
+  else if (ph === "bank_check") footer("bank_check", `<button class="btn" disabled>Pip is looking in the bank...</button>`);
   else if (ph === "build_fix") footer("fix", `<button class="btn" id="f-ready">${S.pip.arm ? "Fixed it!" : "Done"}</button>`);
   else if (ph === "build_check" && S.scan_stuck) footer("stuck", `<button class="btn blue" id="f-ready">Scan again</button>`);
   else if (ph === "build_done") footer("done", `<button class="btn" id="f-home">Yay!</button>`);
@@ -367,8 +377,12 @@ function renderReview() {
   $("rv-title").textContent = ph === "problem" ? "Oops!" : ph === "saved" ? "Saved!" : "I learned it!";
   $("rv-say").textContent = S.say;
   $("rv-steps").innerHTML = ph === "problem" ? "" : S.steps.map((s, k) =>
-    `<li><span class="num">${k + 1}</span>${sw(s.color)}<span>${s.color} on <b>${s.cell}</b>${s.level ? " (on top)" : ""}</span></li>`).join("");
+    `<li><span class="num">${k + 1}</span>${sw(s.color)}<span>${s.color} on <b>${s.cell}</b>${s.level ? " (on top)" : ""}${s.narration ? `<br><small style="color:var(--dim)">"${s.narration}"</small>` : ""}</span></li>`).join("");
   $("rv-name-box").style.display = ph === "review" ? "block" : "none";
+  const h = S.heard || {};
+  $("rv-heard").style.display = ph === "review" && h.ok && (h.transcript || (h.notes || []).length) ? "block" : "none";
+  $("rv-transcript").textContent = h.transcript ? `"${h.transcript}"` : "";
+  $("rv-notes").innerHTML = (h.notes || []).map((n) => `• ${n}`).join("<br>");
   const v = ph !== "problem" && S.video;
   $("rv-video").style.display = v ? "block" : "none";
   if (v && $("rv-vid").dataset.src !== S.video) { $("rv-vid").dataset.src = S.video; $("rv-vid").src = S.video; }
@@ -450,6 +464,17 @@ document.addEventListener("click", (e) => {
 $("player-close").onclick = () => { $("player-vid").pause(); $("player-vid").removeAttribute("src"); $("player").classList.remove("on"); };
 $("start").onclick = () => { sfx.tap(); act("/api/buddy/teach/start"); };
 $("quit").onclick = () => { if (confirm("Stop?")) act("/api/buddy/teach/quit"); };
+
+
+// "Pip's eyes": the live camera (perception's frame server), refreshed while it is open
+let camOn = false, camTimer = null;
+function toggleCam() {
+  camOn = !camOn; $("eye").classList.toggle("on", camOn); $("cam").classList.toggle("on", camOn);
+  clearInterval(camTimer);
+  const load = () => { const img = new Image(); img.onload = () => { $("cam").src = img.src; }; img.onerror = () => { if (camOn) toast("The camera is off. Turn on the table (⚙ on the home screen)."); camOn && toggleCam(); }; img.src = `/buddy/camera.jpg?t=${Date.now()}`; };
+  if (camOn) { load(); camTimer = setInterval(load, 700); }
+}
+$("eye").onclick = toggleCam;
 
 async function poll1() { try { if (!busy) { S = await api("/api/buddy/teach/state"); render(); } } catch (e) {} }
 async function poll() { await poll1(); setTimeout(poll, S && S.phase !== "home" ? 300 : 1000); }

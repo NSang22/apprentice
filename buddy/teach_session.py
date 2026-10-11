@@ -9,6 +9,8 @@ Phases:
   review      the steps Pip learned; the child names the lesson and saves it
   saved       saved: "Build it, Pip!" now, or later from the saved lessons
   bank        rebuild: Pip asks for the next colors in its bank (it holds BANK_SIZE), then Ready
+  bank_check  (table) Gemini Flash looks in the bank: before placing, and when robot.api says a
+              color is missing (its sheet calibration can misread blocks on the green box)
   building    Pip places one step (the arm on the table; it appears on the phone in practice)
   build_check (table) did the block land on its square and level?
   build_fix   it did not: the child puts it right, then taps Fixed it
@@ -28,7 +30,7 @@ from typing import Optional
 from buddy import recall, teach
 from buddy.scanner import Scanner
 from buddy.session import SESSIONS_DIR, Profile, default_colors, empty_board
-from buddy.table import Pip, RobotEyes, TableBoard
+from buddy.table import Pip, RobotEyes, TableBoard, missing_from_bank
 
 MIN_STAGE_S = 0.9          # each fun stage name stays up at least this long, so a child can read it
 PRACTICE_PLACE_S = 1.5     # practice rebuild: one block appears this often
@@ -62,6 +64,12 @@ class TeachSession:
         self.until = 0.0
         self.arm_used = False
         self.scan_stuck = False
+        self.audio = None                    # the microphone recorder while recording
+        self.audio_path = None
+        self.heard: dict = {}                # Gemini's transcript and where speech and grid disagree
+        self.bank_mode = ""                  # "ready" (check before placing) or "retry" (after a miss)
+        self.bank_result: Optional[dict] = None
+        self.place_retried = False
         self.mood, self.say = "happy", ""
 
     @property
@@ -99,8 +107,10 @@ class TeachSession:
                     if self.source == "table" else "I'm watching! Pick a color and tap squares to build. Towers can be 2 high.")
         if self.source == "table":
             self.table.record_start()
-            self.recorder = teach.VideoRecorder(teach.VIDEOS_DIR / f"{self.session_id}{teach.VIDEO_EXT}")
+            self.recorder = teach.VideoRecorder(teach.VIDEOS_DIR / f"{self.session_id}_silent{teach.VIDEO_EXT}")
             self.recorder.start()
+            self.audio = teach.AudioRecorder(teach.VIDEOS_DIR / f"{self.session_id}.ogg")
+            self.audio.start()
 
     def tap(self, cell: str, color: str) -> None:
         """Practice recording: add a block on top of the cell (at most MAX_HIGH high)."""
@@ -129,8 +139,9 @@ class TeachSession:
         self.phase, self.mood, self.say = "processing", "think", "Hmm, let me think about what you taught me..."
         frames = self.table.record_stop() if self.source == "table" else []
         recorder, self.recorder = self.recorder, None
+        audio, self.audio = self.audio, None
         taps = list(self.taps)
-        threading.Thread(target=self._learn, args=(frames, recorder, taps), daemon=True).start()
+        threading.Thread(target=self._learn, args=(frames, recorder, taps, audio), daemon=True).start()
 
     def _set_stage(self, name: str, frac: float) -> None:
         """Called from the learning thread. A new stage waits until the last one was on screen
@@ -145,10 +156,26 @@ class TeachSession:
         with self.lock:
             self.stage = {"name": name, "label": dict(teach.STAGES)[name], "progress": round((i + frac) / len(names), 3)}
 
-    def _learn(self, frames: list[dict], recorder, taps: list[dict]) -> None:
+    def _learn(self, frames: list[dict], recorder, taps: list[dict], audio=None) -> None:
+        heard: dict = {}
         try:
             self._set_stage("rewind", 0.0)
-            video = recorder.stop() if recorder else None
+            silent = recorder.stop() if recorder else None
+            sound = audio.stop() if audio else None
+            video = silent
+            if silent and sound:  # one WebM with the narration, for playback and the record
+                joined = silent.with_name(silent.name.replace("_silent", ""))
+                if teach.mux(silent, sound, joined):
+                    video = joined
+            if self.source == "table" and sound:
+                # Gemini transcribes the narration while the extractor works on the video
+                def listen():
+                    heard.update(self.eyes.narration(sound))
+                listener = threading.Thread(target=listen, daemon=True)
+                listener.start()
+                self._set_stage("listen", 0.5)
+            else:
+                listener = None
             source_video = str(video.relative_to(teach.REPO_ROOT)).replace("\\", "/") if video else None
             title = "My lesson"
             result = {"ok": None}
@@ -172,6 +199,12 @@ class TeachSession:
                 for name, _ in teach.STAGES[:4]:
                     self._set_stage(name, 1.0)
                 result = teach.learn_taps(taps, self.session_id, title)
+            if listener is not None:
+                listener.join(timeout=60)
+            if result.get("ok") and heard.get("ok"):   # speech fills step narration; the grid decides
+                check = teach.check_narration(result["lesson"].steps, heard.get("placements", []))
+                result["steps"] = [s.to_dict() for s in result["lesson"].steps]
+                heard.update(check)
             for name, _ in teach.STAGES:  # walk the rest of the bar, so it always reaches the end
                 if [n for n, _ in teach.STAGES].index(name) >= [n for n, _ in teach.STAGES].index(self.stage["name"] or "rewind"):
                     self._set_stage(name, 1.0)
@@ -179,6 +212,9 @@ class TeachSession:
             result = {"ok": False, "problem": teach.DEFAULT_PROBLEM, "reasons": {"error": f"{type(e).__name__}: {e}"}}
         with self.lock:
             self.video_path = video if "video" in locals() else None
+            self.audio_path = sound if "sound" in locals() else None
+            self.heard = {k: heard.get(k) for k in ("ok", "transcript", "notes", "matched", "error")} if heard else {}
+            self._log("narration", self.heard)
             self._log("learned", {"ok": result["ok"], "via": result.get("via", "frames" if self.source == "table" else "taps"),
                                   "steps": result.get("steps"), "reasons": result.get("reasons"),
                                   "frames": len(frames), "video": str(self.video_path) if self.video_path else None})
@@ -202,7 +238,13 @@ class TeachSession:
                 self.video_path.rename(target)
                 self.video_path = target
                 self.lesson.source_video = str(target.relative_to(teach.REPO_ROOT)).replace("\\", "/")
-            teach.save(self.lesson, self.profile.data.get("name", ""), {"source": self.source})
+            if self.audio_path and self.audio_path.exists():
+                target = self.audio_path.with_name(f"{self.lesson.lesson_id}.ogg")
+                self.audio_path.rename(target)
+                self.audio_path = target
+            teach.save(self.lesson, self.profile.data.get("name", ""),
+                       {"source": self.source, "narration": self.heard or None,
+                        "audio": str(self.audio_path.relative_to(teach.REPO_ROOT)).replace("\\", "/") if self.audio_path else None})
             self.profile.data["xp"] += 10 + 2 * len(self.steps)
             self.profile.data["taught"] = self.profile.data.get("taught", 0) + 1
             self.profile.played_today()
@@ -250,13 +292,56 @@ class TeachSession:
     def ready(self) -> None:
         with self.lock:
             if self.phase == "bank":
-                self._place_next()
+                if self.source == "table" and self.eyes.info.get("gemini"):
+                    self._check_bank("ready")
+                else:
+                    self._place_next()
             elif self.phase == "build_fix":
                 self.build_i += 1
                 self._bank_or_place()
             elif self.phase in ("build_check",) and self.scan_stuck:
                 self.scan_stuck = False
                 self.scanner.start()
+
+    def _check_bank(self, mode: str) -> None:
+        """Gemini Flash lists the colors in the bank (worker thread); tick() acts on the answer."""
+        self.phase, self.bank_mode, self.bank_result, self.mood = "bank_check", mode, None, "look"
+        self.say = "Let me look in my bank..."
+
+        def job():
+            result = self.eyes.bank()
+            with self.lock:
+                self.bank_result = result
+        threading.Thread(target=job, daemon=True).start()
+
+    def _bank_checked(self) -> None:
+        res, s = self.bank_result, self.lesson.steps[self.build_i]
+        self._log("bank_check", {"mode": self.bank_mode, "need": self.bank or [s.color], **(res or {})})
+        if not res or not res.get("ok"):          # no second opinion: go on as before
+            self._place_next() if self.bank_mode == "ready" else self._ask_bank([s.color], empty=True)
+            return
+        seen = res["colors"]
+        if self.bank_mode == "ready":
+            missing = missing_from_bank(self.bank, seen)
+            if missing:
+                self._ask_bank(missing)
+                what = ", ".join(seen) if seen else "nothing"
+                self.say = (f"I see {what} in my bank. I still need "
+                            + " and ".join(f"a {c}" for c in missing) + " block. Then tap Ready!")
+                return
+            self._place_next()
+            return
+        if s.color in seen and not self.place_retried:   # it is there: robot.api misread it, try again
+            self.place_retried = True
+            self._place_next()
+            self.say = f"I can see the {s.color} block in my bank! Let me try again."
+        elif s.color in seen:
+            self._ask_bank([s.color])
+            self.say = (f"I can see the {s.color} block, but I can't pick it out. Can you move it to the "
+                        "middle of the green box, then tap Ready?")
+        else:
+            self._ask_bank([s.color], empty=True)
+            self.say = f"I don't see a {s.color} block in my bank. Can you put one in the green box, then tap Ready?"
 
     def _place_next(self) -> None:
         s = self.lesson.steps[self.build_i]
@@ -300,11 +385,16 @@ class TeachSession:
                         self.say = "Hands away from the board, please, so I can move! Then tap Ready."
                     elif self.pip.error:
                         self._log("place_error", {"step": self.build_i + 1, "error": self.pip.error})
-                        self._ask_bank([s.color], empty=True)
+                        if self.eyes.info.get("gemini"):
+                            self._check_bank("retry")
+                        else:
+                            self._ask_bank([s.color], empty=True)
                     else:
                         self.phase, self.scan_stuck = "build_check", False
                         self.scanner.start()
                         self.mood, self.say = "look", "Let me check..."
+            elif self.phase == "bank_check" and self.bank_result is not None:
+                self._bank_checked()
             elif self.phase == "build_check":
                 st = self.scanner.poll()
                 if st["status"] == "done":
@@ -315,6 +405,7 @@ class TeachSession:
                     self._log("placed", {"step": self.build_i + 1, "cell": s.cell, "level": s.level, "color": s.color,
                                          "landed": landed, "sync": st.get("sync")})
                     if landed:
+                        self.place_retried = False
                         self.build_i += 1
                         self._bank_or_place()
                     else:
@@ -334,6 +425,8 @@ class TeachSession:
                 self.table.record_stop()
             if self.recorder:
                 self.recorder.stop()
+            if self.audio:
+                self.audio.stop()
             self.scanner.stop()
             if self.session_id and self.phase not in ("home",):
                 self._log("session_end", {"phase": self.phase})
@@ -381,6 +474,7 @@ class TeachSession:
                 "scan_stuck": self.scan_stuck,
                 "pip": {"busy": self.pip.busy, "step": self.pip.step, "arm": self.arm_used},
                 "lessons": teach.saved_lessons() if self.phase == "home" else [],
+                "heard": self.heard,
                 # what Pip watched: the unsaved recording while reviewing, the lesson's once saved
                 "video": teach.video_url(self.video_path.stem) if self.video_path else None,
                 "mood": self.mood,

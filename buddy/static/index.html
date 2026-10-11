@@ -365,6 +365,8 @@
     <div class="power-row"><span>Pip's eyes</span><b id="pw-eyes">...</b></div>
     <div class="power-row"><span>Last scan</span><b id="pw-sync">none yet</b></div>
   </div>
+  <button class="btn ghost" id="pw-cam-btn" style="margin:4px 0 8px">👁 Show Pip's eyes</button>
+  <img id="pw-cam" alt="What Pip sees" style="display:none;width:100%;border-radius:14px;background:#000;margin-bottom:8px">
   <p class="note" id="pw-step"></p>
   <div class="two" style="margin-bottom:12px">
     <button class="btn" id="pw-on">Turn on table</button>
@@ -779,6 +781,14 @@ async function powerAct(path, confirmText) {
   try { renderPower(await api(path, {})); } catch (e) { toast(e.message); }
 }
 $("gear").onclick = () => { sfx.tap(); openPower(true); };
+// Pip's eyes in the grown-ups panel: the live camera, refreshed while shown
+let pwCam = null;
+$("pw-cam-btn").onclick = () => {
+  const img = $("pw-cam"), on = img.style.display === "none";
+  img.style.display = on ? "block" : "none"; $("pw-cam-btn").textContent = on ? "Hide Pip's eyes" : "👁 Show Pip's eyes";
+  clearInterval(pwCam);
+  if (on) { const load = () => { if (!powerOpen) { clearInterval(pwCam); return; } img.src = `/buddy/camera.jpg?t=${Date.now()}`; }; load(); pwCam = setInterval(load, 700); }
+};
 $("pw-on").onclick = () => powerAct("/api/table/on", "Pip's arm will wake up and move. Is the area around the arm clear?");
 $("pw-off").onclick = () => powerAct("/api/table/off", "Pip will set the arm down and the camera will turn off. Continue?");
 $("pw-stop").onclick = async () => {

@@ -78,6 +78,39 @@ def local_cell_map() -> dict[str, str]:
     return out
 
 
+FRAME_URL = "http://127.0.0.1:8771/frame"   # perception.publish's frame server (it owns the camera)
+
+
+def camera_jpeg(width: int = 640, quality: int = 70) -> Optional[bytes]:
+    """The camera's newest frame as a small JPEG (the app's "Pip's eyes" view), or None when
+    perception is not sharing frames."""
+    import urllib.request
+    import cv2
+    import numpy as np
+    try:
+        with urllib.request.urlopen(FRAME_URL, timeout=2) as r:
+            shape = tuple(int(v) for v in r.headers["X-Shape"].split(","))
+            img = np.frombuffer(r.read(), np.uint8).reshape(shape)
+    except Exception:
+        return None
+    h, w = img.shape[:2]
+    small = cv2.resize(img, (width, int(h * width / w)), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return buf.tobytes() if ok else None
+
+
+def missing_from_bank(need: list[str], seen: list[str]) -> list[str]:
+    """Colors still needed after matching what Gemini saw in the bank, counting repeats."""
+    left = list(seen)
+    out = []
+    for c in need:
+        if c in left:
+            left.remove(c)
+        else:
+            out.append(c)
+    return out
+
+
 def blocks_to_board(blocks: list[dict], edge_mm: float = EDGE_MM) -> dict[str, list[str]]:
     """The robot's blocks -> a board. Off the grid (the supply spots) is ignored; a block near a
     cell line reads "unknown" so the game asks for a nudge instead of guessing its square."""
@@ -229,17 +262,28 @@ class RobotEyes:
                 self.error = str(e)
         threading.Thread(target=job, daemon=True).start()
 
-    def scan(self) -> dict:
-        """{ok, blocks: [{cell, color, center_mm, edge_mm, score}], naming} or {ok: False, error}."""
+    def _ask(self, command: str, timeout_s: float) -> dict:
         with self.lock:
             try:
                 self._ensure()
-                self.proc.stdin.write("scan\n")
+                self.proc.stdin.write(command + "\n")
                 self.proc.stdin.flush()
-                return self._reply(EYES_SCAN_S)
+                return self._reply(timeout_s)
             except Exception as e:
                 self.error = str(e)
                 return {"ok": False, "error": str(e)}
+
+    def scan(self) -> dict:
+        """{ok, blocks: [{cell, color, center_mm, edge_mm, score}], naming} or {ok: False, error}."""
+        return self._ask("scan", EYES_SCAN_S)
+
+    def bank(self) -> dict:
+        """Gemini Flash's list of the block colors in the robot's cube bank: {ok, colors: [...]}."""
+        return self._ask("bank", EYES_SCAN_S)
+
+    def narration(self, audio: Path) -> dict:
+        """Gemini Flash's transcript of a recording's audio and the placements said in it."""
+        return self._ask(f"narration {Path(audio).resolve()}", 90.0)
 
     def cell_map(self) -> dict[str, str]:
         m = self.info.get("cell_map") or {}

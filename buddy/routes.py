@@ -258,6 +258,17 @@ def teach_page():
     return FileResponse(STATIC / "teach.html", headers={"Cache-Control": "no-store"})
 
 
+@router.get("/buddy/camera.jpg")
+def camera_view():
+    """What the overhead camera sees right now (perception's frame server), for "Pip's eyes"."""
+    from fastapi.responses import Response
+    from buddy.table import camera_jpeg
+    jpg = camera_jpeg()
+    if jpg is None:
+        return JSONResponse({"ok": False, "error": "the camera is off"}, status_code=503)
+    return Response(content=jpg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
 @router.get("/buddy/video/{name}")
 def teach_video(name: str):
     """A Teach the Robot recording (data/buddy/videos), so the child can watch what Pip saw."""

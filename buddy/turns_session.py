@@ -5,7 +5,8 @@ Phases:
   clear        (table) waiting for an empty board before the next pattern
   pip_turn     Pip places a block (the arm on the table; it just appears in practice)
   pip_check    (table) looking at the board: did Pip's block land on its square?
-  need_supply  Pip could not place (no block of that color below the grid, or hands stayed on)
+  bank_check   (table) robot.api found no block of that color: Gemini Flash looks in the bank first
+  need_supply  Pip could not place (no block of that color in the bank, or hands stayed on)
   child_turn   the child places a block, then taps "Your turn, Pip!"
   child_check  (table) looking at the board after the child's tap
   pointing     (table) Pip points at where a misplaced block goes
@@ -67,6 +68,8 @@ class TurnsSession:
         self.xp = 0
         self.gained = 0
         self.scan_stuck = False
+        self.bank_result: Optional[dict] = None   # Gemini's look in the bank after a failed place
+        self.place_retried = False
         self.rounds: list[dict] = []
         self.mood, self.say = "happy", ""
 
@@ -195,10 +198,13 @@ class TurnsSession:
                         cell, color = self.pip_move
                         self._log("turn", {"round": self.round, "who": "pip", "cell": cell, "color": color,
                                            "error": self.pip.error})
-                        self.phase, self.mood = "need_supply", "think"
-                        self.say = ("Hands away from the board, please, so I can move! Then tap Try again."
-                                    if self.pip.error == "hands" else
-                                    f"I need a {color} block below the grid to pick up. Put one there and tap Try again!")
+                        if self.pip.error != "hands" and self.eyes.info.get("gemini"):
+                            self._check_bank(color)   # robot.api can misread bank blocks: ask Gemini first
+                        else:
+                            self.phase, self.mood = "need_supply", "think"
+                            self.say = ("Hands away from the board, please, so I can move! Then tap Try again."
+                                        if self.pip.error == "hands" else
+                                        f"I need a {color} block in my bank (the green box). Put one there and tap Try again!")
                     else:
                         self.phase, self.scan_stuck = "pip_check", False
                         self.scanner.start()
@@ -225,13 +231,42 @@ class TurnsSession:
                 elif status == "stuck" and not self.scan_stuck:
                     self.scan_stuck = True
                     self.mood, self.say = "think", "Hmm, I can't see the board well. Tap Scan again!"
+            elif self.phase == "bank_check" and self.bank_result is not None:
+                self._bank_checked()
             elif self.phase == "pointing" and not self.pip.busy:
                 self.phase = "child_turn"
+
+    def _check_bank(self, color: str) -> None:
+        """Gemini Flash lists the bank's colors (worker thread) before Pip says a color is missing."""
+        self.phase, self.bank_result, self.mood = "bank_check", None, "look"
+        self.say = "Hmm, let me look in my bank..."
+
+        def job():
+            result = self.eyes.bank()
+            with self.lock:
+                self.bank_result = result
+        threading.Thread(target=job, daemon=True).start()
+
+    def _bank_checked(self) -> None:
+        res, (cell, color) = self.bank_result, self.pip_move
+        self._log("bank_check", {"need": color, **(res or {})})
+        seen = res.get("colors", []) if res and res.get("ok") else None
+        if seen is not None and color in seen and not self.place_retried:
+            self.place_retried = True                  # it is there: robot.api misread it, try again
+            self._pip_turn()
+            self.say = f"I can see the {color} block in my bank! Let me try again."
+            return
+        self.phase, self.mood = "need_supply", "think"
+        if seen is not None and color in seen:
+            self.say = f"I can see the {color} block, but I can't pick it out. Move it to the middle of the green box and tap Try again!"
+        else:
+            self.say = f"I don't see a {color} block in my bank. Put one in the green box and tap Try again!"
 
     def _after_pip(self, board: dict, landed: bool) -> None:
         seen = turns.look(self.target, board)
         cell, color = self.pip_move
         if landed:
+            self.place_retried = False
             self.right_before, self.glow = len(seen.right), None
             if seen.done:
                 self._round_done()
@@ -336,7 +371,7 @@ class TurnsSession:
                 "board": board,
                 "right": seen.right if seen else [],
                 "glow": self.glow,
-                "turn": "pip" if self.phase in ("pip_turn", "pip_check", "need_supply") else "child",
+                "turn": "pip" if self.phase in ("pip_turn", "pip_check", "need_supply", "bank_check") else "child",
                 "pip": {"busy": self.pip.busy, "step": self.pip.step, "arm": self.arm_used},
                 "table": self.table.status(),
                 "scan_stuck": self.scan_stuck,

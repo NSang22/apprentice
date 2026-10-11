@@ -77,6 +77,8 @@ class FakeTable:
 
 
 class FakeEyes:
+    info = {}          # no Gemini: a failed place goes straight to asking for the color
+
     def warm(self):
         pass
 
