@@ -105,9 +105,11 @@ class ColorMemory:
             except (ValueError, OSError):
                 self.colors = {}
 
-    def classify(self, sig):
-        """(name, distance, margin) of the nearest remembered colour; name None if unsure."""
-        scored = sorted((min(distance(sig, s) for s in samples), name) for name, samples in self.colors.items() if samples)
+    def classify(self, sig, allowed=None):
+        """(name, distance, margin) of the nearest remembered colour; name None if unsure.
+        allowed: only consider these colour names (None = all remembered)."""
+        scored = sorted((min(distance(sig, s) for s in samples), name) for name, samples in self.colors.items()
+                        if samples and (allowed is None or name in allowed))
         if not scored:
             return None, None, None
         best_d, best = scored[0]

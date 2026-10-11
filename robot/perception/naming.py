@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from . import color, gemini_namer
+from .config import ACTIVE_COLORS
 from .segment import detection_roi, object_mask
 
 PRIOR_PENALTY = 15.0  # a calibrated colour beats an uncalibrated prior guess at equal distance
@@ -36,7 +37,7 @@ class ColorNamer:
             paper = (roi > 0) & (objects == 0) & (hsv[..., 1] < 40) & (hsv[..., 2] > 120)
             gains = color.paper_gains(frame_bgr, paper.astype(np.uint8))
         sigs = [color.signature(frame_bgr, c, gains) for c in contours]
-        names = [self.memory.classify(s)[0] for s in sigs]
+        names = [self.memory.classify(s, ACTIVE_COLORS)[0] for s in sigs]
 
         unsure = [i for i, n in enumerate(names) if n is None]
         clashes = {n for n in names if n is not None and names.count(n) > 1}
@@ -75,10 +76,10 @@ class ColorNamer:
                 done.add(i)
                 continue
             for n, samples in self.memory.colors.items():
-                if samples:
+                if samples and n in ACTIVE_COLORS:
                     pairs.append((min(color.distance(sigs[i], t) for t in samples), i, n))
             for n, h in color.PRIOR.items():
-                if n not in self.memory.colors:
+                if n not in self.memory.colors and n in ACTIVE_COLORS:
                     pairs.append((PRIOR_PENALTY + abs((sigs[i]["hue"] - h + 180) % 360 - 180), i, n))
         for _, i, n in sorted(pairs):
             if i not in done and n not in taken:
@@ -86,7 +87,8 @@ class ColorNamer:
                 done.add(i)
                 taken.add(n)
         self.last_source = "prior" if guessed else "memory"
-        if guessed:
+        if guessed and not getattr(self, "_warned_guess", False):
+            self._warned_guess = True  # once per run: observe() names every photo
             self.log(f"  (guessed colours for {len(guessed)} block(s) without the vision model; may be wrong)")
         return names
 
