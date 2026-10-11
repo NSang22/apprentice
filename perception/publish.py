@@ -81,7 +81,8 @@ def _polyline(img: np.ndarray, pts_px: np.ndarray, color, thickness: int) -> np.
     return pts
 
 
-def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note: str = "") -> np.ndarray:
+def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note: str = "",
+             speed: str = "") -> np.ndarray:
     """Camera frame with the grid, changed regions (cyan), each block's blob (thin white), fitted
     cube outline (its color), corrected centre (dot) and "cell color confidence" label, and hands
     and unknown objects in magenta. Status sits in its own band on top,
@@ -120,6 +121,9 @@ def annotate(frame: np.ndarray, result: FrameResult, perceiver: Perceiver, note:
     h, w = out.shape[:2]
     cv2.rectangle(out, (0, 0), (w, BAND_H), (20, 20, 20), -1)
     cv2.putText(out, result.status, (14, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.9, GOOD if result.ok else BAD, 2, cv2.LINE_AA)
+    if speed:  # right end of the status band: frames per second and time per frame
+        (tw, _), _ = cv2.getTextSize(speed, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+        cv2.putText(out, speed, (w - tw - 14, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (230, 230, 230), 2, cv2.LINE_AA)
     cv2.rectangle(out, (0, h - BAND_H), (w, h), (20, 20, 20), -1)
     bottom = f"hands_clear={result.state.hands_clear}" + (f" ({result.reason})" if result.reason else "")
     bottom += f"   frame {result.state.frame_id}   E: re-take empty board   Q: quit"
@@ -296,12 +300,19 @@ async def run(args: argparse.Namespace) -> None:
         print(f"[perception] self-check: {line}", flush=True)
     period = 1.0 / HZ
     note = ""
+    fps, step_ms, last_t = 0.0, 0.0, None   # smoothed over ~10 frames
     async with serve(publisher.handler, args.host, args.port):
         print(f"[perception] publishing GridState on ws://{args.host}:{args.port} at {HZ:g} Hz", flush=True)
         last_report: list[str] = []
         for frame_id, frame in enumerate(frames):
             started = time.monotonic()
             result = perceiver.step(frame, frame_id)
+            took = time.monotonic() - started
+            step_ms = took * 1000 if not step_ms else 0.9 * step_ms + 0.1 * took * 1000
+            if last_t is not None:
+                rate = 1.0 / max(started - last_t, 1e-6)
+                fps = rate if not fps else 0.9 * fps + 0.1 * rate
+            last_t = started
             if args.debug:
                 report = debug_lines(result)
                 if report != last_report:  # print on change, not 10 times a second
@@ -312,7 +323,8 @@ async def run(args: argparse.Namespace) -> None:
             # "source" is an extra key GridState.from_dict ignores; brain.server records it as provenance.
             broadcast(publisher.clients, json.dumps({**result.state.to_dict(), "source": "perception"}))
             if args.debug:
-                cv2.imshow("Apprentice perception", annotate(frame, result, perceiver, note))
+                cv2.imshow("Apprentice perception",
+                           annotate(frame, result, perceiver, note, f"{fps:.1f} fps   {step_ms:.0f} ms/frame"))
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), 27):
                     break

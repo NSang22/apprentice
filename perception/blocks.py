@@ -1,7 +1,9 @@
 """Blocks, hands, and unknown objects from one frame, with Taher's robot.perception pipeline.
 
 Per frame, with the locked sheet pose and the empty-board reference (perception/grid_lock.py):
-  1. segment.detect finds colorful blobs on the sheet and splits touching blocks by hue.
+  1. segment.detect finds colorful blobs on the sheet and splits touching blocks by hue. It runs
+     on a crop around the locked sheet, scaled to SEG_WIDTH pixels wide (the full frame took
+     ~0.75 s); its blobs are mapped back to full-frame pixels for everything after.
   2. A blob counts only if at least CHANGED_SHARE of it changed since the empty board
      (perception/change.py), so print, tape, or anything already there when the board was
      empty is ignored. Changed area that no blob explains (a hand, a sleeve) is a hand or object.
@@ -34,6 +36,8 @@ from shared.config import CELLS, UNKNOWN
 
 SHEET_W_MM, SHEET_H_MM = 215.9, 279.4
 SHEET_MARGIN_MM = 5.0
+CROP_MARGIN_MM = 15.0      # segmentation sees only the sheet plus this margin, not the whole frame
+SEG_WIDTH = 640            # ... scaled down to at most this many pixels wide
 CHANGED_SHARE = 0.5        # a blob counts only if this share of it changed since the empty board
 FIT_MIN_OVERLAP = 0.6      # fitted cube outline vs blob IoU needed to trust the fit's position
 FIT_FULL = 0.8             # IoU at or above this scores 1.0 (clean blobs fit 0.87-0.92)
@@ -133,37 +137,67 @@ def top_face_lab(frame_bgr: np.ndarray, top_px: np.ndarray) -> np.ndarray:
     return to_lab(frame_bgr[y0:y1, x0:x1])[mask > 0]
 
 
+def crop_box(pose: SheetPose, shape: tuple[int, ...], margin_mm: float = CROP_MARGIN_MM) -> tuple[int, int, int, int]:
+    """(x0, y0, x1, y1): the image rectangle around the sheet plus margin_mm, clipped to the frame."""
+    m = margin_mm
+    pts = pose.to_image([(-m, -m), (SHEET_W_MM + m, -m), (SHEET_W_MM + m, SHEET_H_MM + m), (-m, SHEET_H_MM + m)])
+    h, w = shape[:2]
+    x0, y0 = np.floor(pts.min(axis=0)).astype(int)
+    x1, y1 = np.ceil(pts.max(axis=0)).astype(int)
+    return max(0, x0), max(0, y0), min(w, x1), min(h, y1)
+
+
+def crop_pose(pose: SheetPose, x0: int, y0: int, scale: float = 1.0) -> SheetPose:
+    """The same sheet pose for an image cropped at (x0, y0) and then resized by `scale`."""
+    to_full = np.array([[1.0 / scale, 0.0, x0], [0.0, 1.0 / scale, y0], [0.0, 0.0, 1.0]])
+    return SheetPose(np.asarray(pose.H, np.float64) @ to_full, pose.tag_ids, pose.fit_error_mm, pose.camera_xyz)
+
+
 def detect_blocks(frame_bgr: np.ndarray, pose: SheetPose, reference_sheet: np.ndarray,
-                  refs: dict[str, ColorRef], block_mm: float) -> Analysis:
+                  refs: dict[str, ColorRef], block_mm: float, seg_width: Optional[int] = SEG_WIDTH) -> Analysis:
+    """seg_width: segment.detect runs on the sheet crop scaled down to at most this many pixels
+    wide (None: full resolution). Everything after segmentation (cube fit, color, cells) works on
+    the full-resolution frame."""
     live_sheet = warp_to_sheet(frame_bgr, pose.H)
     mask = change_mask(live_sheet, reference_sheet)
-    changed = changed_in_image(mask, pose.H, frame_bgr.shape)
-    face_px = (block_mm * px_per_mm(pose)) ** 2
-    detections = segment.detect(frame_bgr, None, roi_mask=sheet_roi(pose, frame_bgr.shape), pose=pose)
+    x0, y0, x1, y1 = crop_box(pose, frame_bgr.shape)
+    crop = frame_bgr[y0:y1, x0:x1]
+    scale = min(1.0, seg_width / crop.shape[1]) if seg_width else 1.0
+    small = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1.0 else crop
+    small_pose = crop_pose(pose, x0, y0, scale)
+    detections = segment.detect(small, None, roi_mask=sheet_roi(small_pose, small.shape), pose=small_pose)
+    changed = changed_in_image(mask, crop_pose(pose, x0, y0).H, crop.shape)  # crop coordinates, full resolution
+    ppm = px_per_mm(pose)
+    face_px = (block_mm * ppm) ** 2
+    offset = np.array([x0, y0], np.float64)
     blocks: list[Block] = []
     others: list[Region] = []
-    explained = np.zeros(frame_bgr.shape[:2], np.uint8)
+    explained = np.zeros(crop.shape[:2], np.uint8)
     for d in detections:
-        blob = np.zeros(frame_bgr.shape[:2], np.uint8)
-        cv2.fillPoly(blob, [d.contour.astype(np.int32)], 255)
+        contour_crop = np.asarray(d.contour, np.float64).reshape(-1, 2) / scale
+        contour = contour_crop + offset                       # full-frame pixels
+        center = (d.center_px[0] / scale + x0, d.center_px[1] / scale + y0)
+        blob = np.zeros(crop.shape[:2], np.uint8)
+        cv2.fillPoly(blob, [contour_crop.astype(np.int32)], 255)
         area = np.count_nonzero(blob)
         if area == 0 or np.count_nonzero(changed[blob > 0]) < CHANGED_SHARE * area:
             continue  # it was there on the empty board
         explained |= blob
-        area_mm2 = area / px_per_mm(pose) ** 2
+        area_mm2 = area / ppm ** 2
         if d.score < 0:  # segment.detect: much bigger than one cube
-            others.append(Region("hand", d.contour, area_mm2, f"{area / face_px:.1f} block faces big"))
+            others.append(Region("hand", contour, area_mm2, f"{area / face_px:.1f} block faces big"))
             continue
-        xy, yaw, overlap, outline, top = measure(frame_bgr, pose, d.contour, d.center_px, block_mm)
+        xy, yaw, overlap, outline, top = measure(frame_bgr, pose, contour, center, block_mm)
         try:
             median, _, _ = sample_stats(top_face_lab(frame_bgr, top))
             color, margin, d1, d2 = classify(median, refs)
         except ValueError:
             median, color, margin, d1, d2 = (0.0, 0.0, 0.0), UNKNOWN, 0.0, 0.0, 0.0
         cx, cy = pose.to_image([xy], block_mm)[0]
-        blocks.append(Block(color, xy, (float(cx), float(cy)), d.contour, outline, top, yaw, overlap,
+        blocks.append(Block(color, xy, (float(cx), float(cy)), contour, outline, top, yaw, overlap,
                             median, d1, d2, margin, mm_to_cell(*xy), edge_margin_mm(*xy)))
-    others += _leftovers(changed, explained, face_px, px_per_mm(pose))
+    others += [Region(r.kind, r.contour_px + offset, r.area_mm2, r.why)
+               for r in _leftovers(changed, explained, face_px, ppm)]
     return Analysis(blocks, others, mask, live_sheet)
 
 
