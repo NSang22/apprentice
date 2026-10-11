@@ -33,14 +33,14 @@ or the module fails, the 2D board takes over automatically.
 | SessionState | Monitor |
 |---|---|
 | no data yet | "Waiting for the camera", connection pill "Connecting" |
-| `phase` "ready" | ready screen: `lesson_title`, a thumbnail of `final_board`, `hint_text` ("Waiting for the camera" / "Please clear the board to start."), and "Press Space to start" once the board is clear |
+| `phase` "ready" | ready screen: `lesson_title`, a thumbnail of `final_board`, "Waiting for the camera" while `board_seen` is false, else `hint_text` ("Please clear the board to start."), and "Press Space to start" once the board is clear |
 | `expected_step` | big instruction "Place the blue cube on C1" (robot mode: "Blue cube to C1"), ghost cube pulsing in its cell |
 | `PASS` | green check, held 1.6 s so it survives the instant step advance |
 | `WRONG_*`, `EXTRA`, `MISSING` with `fault_cell` | calm amber card with `hint_text`, amber ring on `fault_cell` |
-| `WAITING` | "Waiting for the camera" |
-| `hint_level` 2 | ghost pulses harder, arrow from `fault_cell` to `expected_cell` |
-| `hint_level` 3 | "Watch how it was done": `show_me` clip looped between start and end, muted. Skipped when `show_me` is null or the clip fails to load |
-| `hint_level` 4 and the arm busy | banner "The robot is pointing to the right spot." |
+| `board_seen` false | "Waiting for the camera" (camera text only ever comes from this flag, never from `hint_text`) |
+| `hint_level` 2 | ghost pulses harder, arc arrow from `fault_cell` to `expected_cell` (it swings sideways when it would point straight at the camera) |
+| `hint_level` 3 | "Watch how it was done": `show_me` clip under the instruction (never over the board), looped between start and end, muted. Skipped when `show_me` is null or the clip fails to load |
+| `robot_status` "pointing" | banner "The robot is pointing to the right spot.", 3D arm reaches over `expected_cell` |
 | robot mode | robot panel from `robot_status`: Placing, Fixing it, Going home, Checking, Checks out |
 | `phase` "complete" | "All done!" with the finished structure |
 | `phase` "stopped" | calm "Let's sort it out together" screen with `hint_text` and "Press R to try again" |
@@ -49,8 +49,9 @@ or the module fails, the 2D board takes over automatically.
 The board is drawn from the student's side, `human_side` in each SessionState (set in
 `brain/settings.py`). For `row3`: column A on the left, row 3 nearest, robot side at the top.
 
-`robot_status` has no "pointing" value (the shared enum is frozen), so the monitor treats
-human mode at `hint_level` 4 with `robot_status` "fixing" (the hover) as pointing.
+The ghost (2D and 3D) sits at `expected_cell` / `expected_level`, colored from `final_board`.
+`phase` and `robot_status` values are defined once, in `shared/schemas.py`; the monitor does
+not keep its own copies.
 
 ## Checking it
 
