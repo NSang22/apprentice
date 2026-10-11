@@ -133,7 +133,8 @@ class Feed:
             self.board, self.hands_clear, self.arm_clear, self.jitter, self.frame_id, self.rng
         )
         self.frame_id += 1
-        broadcast(self.clients, json.dumps(frame.to_dict()))
+        # "source" is an extra key GridState.from_dict ignores; brain.server records it as provenance.
+        broadcast(self.clients, json.dumps({**frame.to_dict(), "source": "fake_feed"}))
 
     async def tick_forever(self, until: Optional[float] = None) -> None:
         """Publish at HZ on absolute deadlines (no drift) until `until`, or forever."""

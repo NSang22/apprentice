@@ -87,6 +87,12 @@ class FakeRobot:
 
     # ------------------------------------------------------------ helpers
 
+    def clear_board(self) -> None:
+        """Take every cube off (stands in for a person clearing the table on reset)."""
+        with self._lock:
+            for stack in self.board.values():
+                stack.clear()
+
     def snapshot(self) -> tuple[Board, bool]:
         with self._lock:
             return copy_board(self.board), self.at_home

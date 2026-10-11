@@ -165,9 +165,35 @@ Every call returns `{"ok": true}` or `{"ok": false, "error": "<reason>"}`. Calls
   "hint_text": "Close! Move the blue cube one cell to the left.",
   "show_me": { "video": "videos/expert_staircase.mp4", "start": 11.0, "end": 15.0 },
   "progress": { "human": ["pass", "pass", "retry", "active"], "robot": ["pass", "pass", "pass", "pass"] },
-  "board": { "...": [] }
+  "board": { "...": [] },
+  "lesson_title": "Staircase",
+  "final_board": { "...": [] },
+  "human_side": "row3",
+  "phase": "running",
+  "expected_cell": "B2",
+  "expected_level": 1,
+  "robot_status": "idle"
 }
 ```
+
+The last seven fields are optional (older producers omit them; defaults in `shared/schemas.py`):
+
+| Field | Meaning |
+|---|---|
+| `lesson_title`, `final_board` | From the lesson, for the overview before a session starts |
+| `human_side` | `HUMAN_SIDE` from `brain/settings.py`: which edge the student stands at, so the UI draws the board their way |
+| `phase` | `ready` (waiting for start, nothing is checked), `running`, `complete`, or `stopped` (robot needs a hand) |
+| `expected_cell`, `expected_level` | The slot that needs a cube, from the latest check. Usually the current step's target; for a knocked older cube, where that cube belongs |
+| `robot_status` | `idle`, `placing`, `checking` (robot mode, waiting for the camera), `fixing` (pick, re-place, or a hint hover), `homing`, or `stopped` |
+
+**UI commands.** UI clients may send JSON on the same socket:
+
+| Message | Effect |
+|---|---|
+| `{"cmd": "start"}` | Begin the lesson. Refused while the stable board has cubes on it; `hint_text` then reads "Please clear the board to start." |
+| `{"cmd": "reset"}` | End the current session in the journal (`session_end`, outcome `reset`) and open a new session in `ready` at step 0 |
+
+`python -m brain.server --autostart` skips `ready` and starts at once.
 
 ### 5.5 Verdicts
 
@@ -266,31 +292,43 @@ python -m brain.check_live --lesson tests/fixtures/staircase-v1.json
 python -m brain.check_live
 
 # Brain server, no hardware: stabilizer + session + journal, SessionState on ws :8766
+# It waits in phase "ready" until a UI sends {"cmd": "start"} (README 5.4); --autostart starts at once.
 # Journal: data/sessions/<session_id>.jsonl. Hint directions follow HUMAN_SIDE in brain/settings.py.
 # Human mode: start a feed, then the server (second terminal)
 python -m brain.fake_feed --script tests/scripts/staircase_with_mistake.json
-python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode human               # hints stop at level 3
-python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode human --robot fake  # level 4 hover (fake arm)
+python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode human --autostart  # hints stop at level 3
+python -m brain.server --lesson tests/fixtures/staircase-v1.json --mode human --robot fake --autostart  # level 4 hover (fake arm)
 # Robot mode: fake arm plus an in-process feed of its board, one command, no feed needed
-python -m brain.server --mode robot --robot fake --grid sim                                 # default demo lesson
-python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2               # 2nd place lands on the wrong cell, robot fixes it
-python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --fake-wrong-on 3 --fake-wrong-on 4  # hits the retry cap and stops
+python -m brain.server --mode robot --robot fake --grid sim --autostart  # default demo lesson
+python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --autostart  # 2nd place lands on the wrong cell, robot fixes it
+python -m brain.server --mode robot --robot fake --grid sim --fake-wrong-on 2 --fake-wrong-on 3 --fake-wrong-on 4 --autostart  # hits the retry cap and stops
+
+# Real perception: GridState on ws :8765 from the overhead camera, a video, or still images
+# --debug opens an annotated window and prints area / hue / fill confidence per cube
+python -m perception.publish --camera 1 --debug
+python -m perception.publish --video videos/demo.mp4
+python -m perception.publish --images "robot/samples/overhead_*.png" --debug
+
+# Monitor UI (ui/): reads SessionState from brain.server on ws :8766, no network needed
+python ui/serve.py      # then open http://localhost:8000 and press F11; keys 2 / 3 switch 2D / 3D board
 
 # Robot module on its own (LeRobot venv, see robot/README.md and docs/SETUP_NOTES.md)
 python -m robot.scripts.tests.scene_snapshot robot/samples/overhead_02.png   # offline, no hardware
 python -m robot.scripts.tests.pick_place_test red_cube B2                     # moves the arm
+
+# Analytics (offline, standard library only)
+python -m analytics.fake_journal --seed 7   # synthetic_*.jsonl journals in data/sessions/, written by the real brain; --lesson picks the lesson
+python -m analytics.report --sessions data/sessions --out data/analytics/metrics.json   # every metric, per provenance; add --tasks robot/outputs/tasks, --include-synthetic
 ```
 
 Planned, not built yet:
 
 ```bash
 python -m brain.extractor --video videos/expert_staircase.mp4 --out lessons/staircase-v1.json  # planned: lesson from an expert video
-python -m perception.publish   # planned: real GridState on ws :8765
 python -m robot.api            # planned: robot HTTP API on :8770
 # planned full system: perception.publish + robot.api, then the brain (this flag already works;
 # with --robot http, arm_clear also requires the robot's GET /status at_home)
 #   python -m brain.server --mode robot --robot http://localhost:8770 --grid ws://<perception-host>:8765
-# planned: the monitor UI on SessionState ws :8766
 ```
 
 ---

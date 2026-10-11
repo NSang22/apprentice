@@ -8,12 +8,13 @@ returns to the start position, and disconnects (torque off).
     python -m robot.scripts.tests.first_move --dry-run  # connect + checks only, torque stays off
 """
 
+import os
 import sys
 import time
 
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
-PORT = "COM7"
+PORT = os.environ.get("ROBOT_PORT", "COM7")
 ROBOT_ID = "my_follower"
 JOINT = "wrist_roll.pos"
 NUDGE_DEG = 10.0

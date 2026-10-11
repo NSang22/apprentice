@@ -1,0 +1,51 @@
+{"t":1791672413.208283,"session":"s-20261010-184653","mode":"robot","kind":"session_start","data":{"lesson_id":"sample-flat-v1","title":"Flat pattern","steps":5,"human_side":"row3","max_retries":2,"robot":"FakeRobot"}}
+{"t":1791672413.2087107,"session":"s-20261010-184653","mode":"robot","kind":"gate","data":{"gate":null}}
+{"t":1791672413.2089667,"session":"s-20261010-184653","mode":"robot","kind":"note","data":{"warning":"lesson gate missing or failed"}}
+{"t":1791672413.20916,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":0,"cmd":"home"}}
+{"t":1791672413.8096583,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":0,"cmd":"home","ok":true,"error":null}}
+{"t":1791672414.3010106,"session":"s-20261010-184653","mode":"robot","kind":"board","data":{"step":0,"board":{"A1":[],"A2":[],"A3":[],"B1":[],"B2":[],"B3":[],"C1":[],"C2":[],"C3":[]}}}
+{"t":1791672414.3015282,"session":"s-20261010-184653","mode":"robot","kind":"verdict","data":{"step":0,"verdict":"MISSING","fault_cell":null,"fault_level":null,"expected_cell":"A1","expected_level":0,"detail":"waiting for red at A1 level 0","retry":0}}
+{"t":1791672414.3020136,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":0,"cmd":"place","color":"red","cell":"A1","level":0}}
+{"t":1791672414.9024968,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":0,"cmd":"place","ok":true,"error":null}}
+{"t":1791672414.9032915,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":0,"cmd":"home"}}
+{"t":1791672415.5060158,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":0,"cmd":"home","ok":true,"error":null}}
+{"t":1791672416.0477946,"session":"s-20261010-184653","mode":"robot","kind":"board","data":{"step":0,"board":{"A1":["red"],"A2":[],"A3":[],"B1":[],"B2":[],"B3":[],"C1":[],"C2":[],"C3":[]}}}
+{"t":1791672416.0481322,"session":"s-20261010-184653","mode":"robot","kind":"verdict","data":{"step":0,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"A1","expected_level":0,"detail":"step 0 matches","retry":0}}
+{"t":1791672416.0483084,"session":"s-20261010-184653","mode":"robot","kind":"step_advance","data":{"from_step":0,"to_step":1,"first_try":true}}
+{"t":1791672416.0484314,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"place","color":"blue","cell":"C1","level":0}}
+{"t":1791672416.6488333,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"place","ok":true,"error":null}}
+{"t":1791672416.6491392,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"home"}}
+{"t":1791672417.2498567,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"home","ok":true,"error":null}}
+{"t":1791672417.743498,"session":"s-20261010-184653","mode":"robot","kind":"board","data":{"step":1,"board":{"A1":["red"],"A2":[],"A3":[],"B1":["blue"],"B2":[],"B3":[],"C1":[],"C2":[],"C3":[]}}}
+{"t":1791672417.7440886,"session":"s-20261010-184653","mode":"robot","kind":"verdict","data":{"step":1,"verdict":"WRONG_CELL","fault_cell":"B1","fault_level":0,"expected_cell":"C1","expected_level":0,"detail":"blue at B1, expected C1","retry":0}}
+{"t":1791672417.744379,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"pick","cell":"B1","level":0}}
+{"t":1791672418.3451517,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"pick","ok":true,"error":null}}
+{"t":1791672418.345967,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"place","color":"blue","cell":"C1","level":0}}
+{"t":1791672418.9469965,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"place","ok":true,"error":null}}
+{"t":1791672418.947274,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":1,"cmd":"home"}}
+{"t":1791672419.548514,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":1,"cmd":"home","ok":true,"error":null}}
+{"t":1791672420.0322254,"session":"s-20261010-184653","mode":"robot","kind":"board","data":{"step":1,"board":{"A1":["red"],"A2":[],"A3":[],"B1":[],"B2":[],"B3":[],"C1":["blue"],"C2":[],"C3":[]}}}
+{"t":1791672420.0346987,"session":"s-20261010-184653","mode":"robot","kind":"verdict","data":{"step":1,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"C1","expected_level":0,"detail":"step 1 matches","retry":1}}
+{"t":1791672420.0349998,"session":"s-20261010-184653","mode":"robot","kind":"step_advance","data":{"from_step":1,"to_step":2,"first_try":false}}
+{"t":1791672420.0360258,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":2,"cmd":"place","color":"yellow","cell":"B2","level":0}}
+{"t":1791672420.6369061,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":2,"cmd":"place","ok":true,"error":null}}
+{"t":1791672420.6379294,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":2,"cmd":"home"}}
+{"t":1791672421.2387533,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":2,"cmd":"home","ok":true,"error":null}}
+{"t":1791672421.774041,"session":"s-20261010-184653","mode":"robot","kind":"board","data":{"step":2,"board":{"A1":["red"],"A2":[],"A3":[],"B1":[],"B2":["yellow"],"B3":[],"C1":["blue"],"C2":[],"C3":[]}}}
+{"t":1791672421.774768,"session":"s-20261010-184653","mode":"robot","kind":"verdict","data":{"step":2,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"B2","expected_level":0,"detail":"step 2 matches","retry":0}}
+{"t":1791672421.7758713,"session":"s-20261010-184653","mode":"robot","kind":"step_advance","data":{"from_step":2,"to_step":3,"first_try":true}}
+{"t":1791672421.777752,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":3,"cmd":"place","color":"red","cell":"A3","level":0}}
+{"t":1791672422.379171,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":3,"cmd":"place","ok":true,"error":null}}
+{"t":1791672422.379812,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":3,"cmd":"home"}}
+{"t":1791672422.9804797,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":3,"cmd":"home","ok":true,"error":null}}
+{"t":1791672423.59716,"session":"s-20261010-184653","mode":"robot","kind":"board","data":{"step":3,"board":{"A1":["red"],"A2":[],"A3":["red"],"B1":[],"B2":["yellow"],"B3":[],"C1":["blue"],"C2":[],"C3":[]}}}
+{"t":1791672423.5975463,"session":"s-20261010-184653","mode":"robot","kind":"verdict","data":{"step":3,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"A3","expected_level":0,"detail":"step 3 matches","retry":0}}
+{"t":1791672423.5977688,"session":"s-20261010-184653","mode":"robot","kind":"step_advance","data":{"from_step":3,"to_step":4,"first_try":true}}
+{"t":1791672423.5979264,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":4,"cmd":"place","color":"blue","cell":"C3","level":0}}
+{"t":1791672424.1986384,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":4,"cmd":"place","ok":true,"error":null}}
+{"t":1791672424.1991708,"session":"s-20261010-184653","mode":"robot","kind":"robot_cmd","data":{"step":4,"cmd":"home"}}
+{"t":1791672424.8004515,"session":"s-20261010-184653","mode":"robot","kind":"robot_result","data":{"step":4,"cmd":"home","ok":true,"error":null}}
+{"t":1791672425.3301206,"session":"s-20261010-184653","mode":"robot","kind":"board","data":{"step":4,"board":{"A1":["red"],"A2":[],"A3":["red"],"B1":[],"B2":["yellow"],"B3":[],"C1":["blue"],"C2":[],"C3":["blue"]}}}
+{"t":1791672425.330624,"session":"s-20261010-184653","mode":"robot","kind":"verdict","data":{"step":4,"verdict":"PASS","fault_cell":null,"fault_level":null,"expected_cell":"C3","expected_level":0,"detail":"step 4 matches","retry":0}}
+{"t":1791672425.3308659,"session":"s-20261010-184653","mode":"robot","kind":"step_advance","data":{"from_step":4,"to_step":5,"first_try":true}}
+{"t":1791672425.3310745,"session":"s-20261010-184653","mode":"robot","kind":"session_end","data":{"outcome":"complete","step":5}}

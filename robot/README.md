@@ -25,6 +25,9 @@ Entry points run as modules **from the repo root**, so that `robot.*` imports re
 ```bash
 source ~/lerobot/.venv/Scripts/activate      # setup in ../docs/SETUP_NOTES.md
 
+python -m robot.calibration_gui              # dashboard: camera/sheet check + one-click
+                                              # launchers for every calibration step below
+
 python -m robot.scripts.tests.scene_snapshot                            # what the camera sees
 python -m robot.scripts.tests.scene_snapshot robot/samples/overhead_02.png   # offline, no hardware
 python -m robot.scripts.tests.pick_place_test red_cube B2                # place red in cell B2

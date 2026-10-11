@@ -178,3 +178,51 @@ def test_poll_robot_status_reads_at_home(tmp_path, reply, expected):
     asyncio.run(poll_briefly())
     assert server.at_home is expected
     assert time.monotonic() - server.at_home_t < ROBOT_STATUS_MAX_AGE_S
+
+
+# ---------------------------------------------------------------- UI commands: start and reset
+
+
+def test_start_and_reset_commands(tmp_path):
+    from brain.server import Command
+
+    made = []
+
+    def new_session():
+        j = Journal(f"s-new{len(made)}", "human", directory=tmp_path)
+        s = Session(LESSON, "human", j)
+        made.append(j)
+        return s, j
+
+    old_journal = Journal("s-old", "human", directory=tmp_path)
+    server = BrainServer(Session(LESSON, "human", old_journal), old_journal, new_session=new_session)
+    server.command(Command(cmd="start"))
+    server.session.on_board(server.session.board)  # empty board: step 0 still to place
+    b = empty_board()
+    b["A1"] = ["red"]
+    server.session.on_board(b)
+    assert server.session.step_index == 1
+
+    server.command(Command(cmd="reset"))
+    ends = [l for l in read_journal(old_journal.path) if l["kind"] == "session_end"]
+    assert [e["data"]["outcome"] for e in ends] == ["reset"]
+    assert server.session.phase == "ready" and server.session.step_index == 0
+    assert server.journal is made[0] and json.loads(server.latest)["phase"] == "ready"
+    assert server.parse_command("not json") is None and server.parse_command('{"cmd": "fly"}') is None
+
+
+# ---------------------------------------------------------------- provenance in session_start
+
+
+def test_session_start_records_provenance(tmp_path):
+    journal = Journal("s-prov", "human", directory=tmp_path)
+    server = BrainServer(Session(LESSON, "human", journal), journal,
+                         grid="ws://localhost:8765", robot_spec="http://localhost:8770")
+    frame_msg = json.dumps({**frame().to_dict(), "source": "fake_feed"})
+    assert server.parse(frame_msg) is not None  # extra "source" key parses fine
+    server.session.start()
+    journal.close()
+    start = [l for l in read_journal(journal.path) if l["kind"] == "session_start"][0]["data"]
+    assert {"grid_source", "robot", "mode", "lesson_id", "human_side", "git_commit", "git_dirty"} <= start.keys()
+    assert start["grid_source"] == "fake_feed" and start["robot"] == "http:http://localhost:8770"
+    assert start["mode"] == "human" and start["git_dirty"] in (True, False, "unknown")

@@ -52,17 +52,21 @@ Key conventions (details in README section 5):
 - Keep functions small and pure where possible (stabilizer, checker, extractor, gate should be pure functions over boards and steps). Put I/O at the edges.
 - Read config values (stable frame count, confidence threshold, ports) from `shared/config.py`. No magic numbers scattered in code.
 
-## Testing
+## Testing (keep it fast: speed matters more than coverage now)
 
-- Every pure function in `brain/` gets unit tests in `tests/`. Cover at minimum: correct placement, wrong cell, wrong color, wrong level, extra cube, a knocked cube elsewhere on the board, hands in frame, jittery frames, an expert correction (cube placed then moved).
+- **Test only core logic:** stabilizer, checker, extractor, session, and pure helpers like cell mapping. Write a **few** tests per feature: the happy path plus the one or two failures that would break the demo. No exhaustive permutations, no large parametrized tables.
+- **Do not write tests** for UI code, servers, CLI argument parsing, scripts, or perception visuals. Check those by running them once (perception: `--debug` window; UI: look at it).
+- While iterating, run **only the test file you touched** (`pytest tests/test_x.py -q`). Run the full suite **once**, at the end.
+- Don't do live end-to-end dry runs, screenshots, or multi-process smoke tests unless your human asks.
+- Don't rewrite or expand existing tests unless your change breaks them.
 - Scripted board sequences live in `tests/scripts/*.json` and double as fake feed inputs.
-- Run `pytest` before you tell your human a task is done. Report what you tested and what you did not.
+- Report in two lines: what you tested and what you didn't.
 
 ## Definition of done
 
 A task is done when:
-1. It works against the fakes (or real hardware, if the task says so).
-2. Tests pass.
+1. It works against the fakes (or real hardware, if the task says so), checked by running it once.
+2. Tests for any core logic you changed pass (see Testing; no new tests for UI, servers, or scripts).
 3. It writes the right journal events.
 4. Your human can run it with one command, and that command appears in README section 8.
 5. You added a line to `docs/challenges-log.md` if anything took more than 20 minutes to figure out.

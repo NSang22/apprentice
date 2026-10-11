@@ -7,6 +7,7 @@
 """
 
 import logging
+import os
 import time
 
 import numpy as np
@@ -35,7 +36,7 @@ logging.getLogger("lerobot.robots.utils").addFilter(_OncePerFewSeconds())
 
 READ_RETRIES = 3  # a garbled status packet on the servo bus is usually a one-off (run 20:37 died on one)
 
-PORT = "COM7"
+PORT = os.environ.get("ROBOT_PORT", "COM7")  # COM7 on Windows; a /dev/tty* path on Jetson (jetson-kushi/env.example)
 ROBOT_ID = "my_follower"
 JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 SAG_JOINTS = ["shoulder_lift", "elbow_flex", "wrist_flex"]
